@@ -34,15 +34,21 @@ cargo check --quiet --manifest-path src-tauri/Cargo.toml >/dev/null
 perl -i -pe 'BEGIN{$d=0} if(!$d && /"version"\s*:/){s/("version"\s*:\s*)"[^"]*"/${1}"'"$VERSION"'"/; $d=1}' \
   src-tauri/tauri.conf.json
 
-# 4. CHANGELOG — auto-draft with git-cliff if available, else stamp [Unreleased]
+# 4. CHANGELOG — stamp [Unreleased] as the new version; if git-cliff is
+#    available, also draft the section's bullets from the commits since the
+#    last tag. NEVER `git-cliff -o` (full regeneration): the public history
+#    starts at v0.26.0, so older sections exist only in the committed file.
+TODAY="$(date +%F)"
+perl -i -pe 'BEGIN{$d=0} if(!$d && /^## \[Unreleased\]/){s/^## \[Unreleased\].*$/## [Unreleased]\n\n## ['"$VERSION"'] - '"$TODAY"'/; $d=1}' \
+  CHANGELOG.md
 if command -v git-cliff >/dev/null 2>&1; then
-  git-cliff --tag "v$VERSION" -o CHANGELOG.md
-  echo "CHANGELOG.md regenerated with git-cliff."
-else
-  TODAY="$(date +%F)"
-  perl -i -pe 'BEGIN{$d=0} if(!$d && /^## \[Unreleased\]/){s/^## \[Unreleased\].*$/## [Unreleased]\n\n## ['"$VERSION"'] - '"$TODAY"'/; $d=1}' \
+  SECTION="$(git-cliff --unreleased --strip all)"
+  SECTION="$SECTION" VERSION="$VERSION" perl -0777 -i -pe \
+    's/^(## \[\Q$ENV{VERSION}\E\][^\n]*\n)/$1 . "\n" . $ENV{SECTION} . "\n"/me' \
     CHANGELOG.md
-  echo "git-cliff not found — stamped [Unreleased] as [$VERSION]."
+  echo "CHANGELOG.md: [$VERSION] section drafted with git-cliff — polish the prose."
+else
+  echo "git-cliff not found — stamped [Unreleased] as [$VERSION]; fill the section by hand."
 fi
 
 # 5. THIRD-PARTY-NOTICES — regenerate so the attribution bundled into the

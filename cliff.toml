@@ -1,6 +1,8 @@
-# git-cliff configuration — generates a Keep a Changelog–style CHANGELOG.md
-# from Conventional Commits. Optional tool: `cargo install git-cliff` (or brew).
-# Usage: `git cliff --tag vX.Y.Z -o CHANGELOG.md`, then hand-polish the prose.
+# git-cliff configuration — drafts the next release's section from Conventional
+# Commits. Optional tool: `cargo install git-cliff` (or brew). Used by
+# scripts/release.sh as `git cliff --unreleased --strip all` (section body only);
+# NEVER regenerate the whole file with `-o` — the public git history starts at
+# v0.26.0, so the earlier sections exist only in the committed CHANGELOG.md.
 
 [changelog]
 header = """
@@ -8,12 +10,12 @@ header = """
 
 All notable changes to Syzify are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org/).
-Pre-1.0: minor = new feature, patch = fix. History before 0.25.0 lives in the PRD roadmap.
+Pre-1.0: minor = new feature, patch = fix. This changelog starts at 0.25.0.
 
 """
 body = """
 {% for group, commits in commits | group_by(attribute="group") %}
-## {{ group | upper_first }}
+### {{ group | upper_first }}
 {% for commit in commits %}
 - {{ commit.message | upper_first }}{% endfor %}
 {% endfor %}

@@ -2,8 +2,7 @@
 
 All notable changes to Syzify are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org/).
-Pre-1.0: `minor` = new feature, `patch` = fix. Detailed history before 0.25.0 lives
-in the [PRD roadmap](PRD.md#102-v11--complete).
+Pre-1.0: `minor` = new feature, `patch` = fix. This changelog starts at 0.25.0.
 
 ## [Unreleased]
 
@@ -34,7 +33,8 @@ in the [PRD roadmap](PRD.md#102-v11--complete).
 - Share image crop: rotation. **Orientation** — the ±90° buttons turn the cropped output a
   quarter-turn, swapping width↔height so a landscape crop becomes a vertical (portrait)
   image; the overlay metrics/route stay upright and readable. **Straighten** — a slider
-  levels a tilted horizon. The crop box itself is rotatable in the editor — drag the top knob
+  levels a tilted horizon. The crop box itself is rotatable in the edito
+- r — drag the top knob
   to tilt the frame to any angle (Shift snaps to 15°, snaps square near 0/90/180°), or use the
   Rotate slider; the export de-rotates that tilted region to an upright image. The frame is
   kept inside the photo as it rotates (no blank corners for a fitting box), the compose preview
