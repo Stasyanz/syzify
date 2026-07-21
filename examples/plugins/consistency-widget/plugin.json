@@ -1,0 +1,11 @@
+{
+  "id": "com.syzify.example.consistency",
+  "name": "Consistency Widget (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.25.0",
+  "author": "Syzify",
+  "description": "Reference WASM plugin: a 4-week consistency dashboard widget plus an example activity-detail panel.",
+  "entry": "plugin.wasm",
+  "contributes": ["dashboard.widget", "activity.detail.panel"],
+  "permissions": ["read:dashboard", "read:activities"]
+}

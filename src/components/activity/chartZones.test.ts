@@ -1,0 +1,349 @@
+import { describe, expect, it } from "vitest";
+import {
+  bandGradientStops,
+  bucketMaxBars,
+  ELEVATION_BANDS_M,
+  CADENCE_ZONE_COLORS,
+  cadenceZoneRanges,
+  DEFAULT_HR_RANGES,
+  HR_FALLBACK_COLOR,
+  HR_ZONE_COLORS,
+  hrVisRange,
+  hrZoneRanges,
+  powerVisRange,
+  powerZoneRanges,
+  speedVisRange,
+  speedZoneRanges,
+  zoneColorFor,
+} from "./chartZones";
+import type { TimeInZone } from "../../lib/types";
+
+const zone = (
+  zone_index: number,
+  zone_high_boundary: number | null,
+  zone_type = "hr",
+): TimeInZone => ({
+  id: null,
+  activity_id: "a",
+  zone_type,
+  zone_index,
+  time_s: 60,
+  zone_high_boundary,
+});
+
+describe("hrZoneRanges", () => {
+  it("builds contiguous top-anchored ranges from unsorted FIT boundaries", () => {
+    // Garmin-style 5 boundaries → 6 ranges, deliberately out of order.
+    const ranges = hrZoneRanges([
+      zone(3, 165),
+      zone(0, 115),
+      zone(4, 185),
+      zone(1, 135),
+      zone(2, 150),
+    ]);
+    expect(ranges).toHaveLength(6);
+    // Contiguous cover of [0, ∞).
+    expect(ranges[0].from).toBe(0);
+    for (let i = 1; i < ranges.length; i++) {
+      expect(ranges[i].from).toBe(ranges[i - 1].to);
+    }
+    expect(ranges[5].to).toBe(Infinity);
+    // Hot end anchored: top range dark red; the two coolest share green.
+    expect(ranges[5].color).toBe(HR_ZONE_COLORS[4]);
+    expect(ranges[0].color).toBe(HR_ZONE_COLORS[0]);
+    expect(ranges[1].color).toBe(HR_ZONE_COLORS[0]);
+  });
+
+  it("ignores power zones and degenerate boundaries", () => {
+    const ranges = hrZoneRanges([
+      zone(0, 115),
+      zone(1, 115), // repeated — dropped
+      zone(2, 0), // zero — dropped
+      zone(3, null), // missing — dropped
+      zone(4, 185),
+      zone(0, 250, "power"), // other metric — dropped
+    ]);
+    // Two usable boundaries → 3 ranges, hottest at the top.
+    expect(ranges.map((r) => r.to)).toEqual([115, 185, Infinity]);
+    expect(ranges[2].color).toBe(HR_ZONE_COLORS[4]);
+  });
+
+  it("falls back to the design defaults without usable boundaries", () => {
+    expect(hrZoneRanges([])).toBe(DEFAULT_HR_RANGES);
+    expect(hrZoneRanges([zone(0, 115)])).toBe(DEFAULT_HR_RANGES);
+    expect(hrZoneRanges([zone(0, null), zone(1, null)])).toBe(DEFAULT_HR_RANGES);
+  });
+});
+
+describe("powerZoneRanges", () => {
+  it("builds ranges from power boundaries, ignoring hr rows", () => {
+    // Coggan-style 6 boundaries → 7 ranges, hottest on top.
+    const ranges = powerZoneRanges([
+      zone(0, 150, "power"),
+      zone(1, 200, "power"),
+      zone(2, 250, "power"),
+      zone(3, 300, "power"),
+      zone(4, 350, "power"),
+      zone(5, 420, "power"),
+      zone(0, 115), // hr row — must not leak in
+    ]);
+    expect(ranges).not.toBeNull();
+    expect(ranges!).toHaveLength(7);
+    expect(ranges![0].from).toBe(0);
+    expect(ranges![6].to).toBe(Infinity);
+    expect(ranges![6].color).toBe(HR_ZONE_COLORS[4]);
+    // Extra bottom ranges share the coolest color.
+    expect(ranges![0].color).toBe(HR_ZONE_COLORS[0]);
+    expect(ranges![1].color).toBe(HR_ZONE_COLORS[0]);
+  });
+
+  it("returns null without usable power boundaries — no FTP, no zones", () => {
+    expect(powerZoneRanges([])).toBeNull();
+    expect(powerZoneRanges([zone(0, 250, "power")])).toBeNull();
+    // HR boundaries alone must not enable power bars.
+    expect(powerZoneRanges([zone(0, 115), zone(1, 135)])).toBeNull();
+  });
+});
+
+describe("powerVisRange", () => {
+  it("pads by 10 and rounds to tens with a 0 floor and no ceiling", () => {
+    expect(powerVisRange(140, 380)).toEqual([130, 390]);
+    expect(powerVisRange(5, 1250)).toEqual([0, 1260]);
+  });
+});
+
+describe("cadenceZoneRanges", () => {
+  const runValues = (base: number) =>
+    Array.from({ length: 100 }, (_, i) => base + (i % 10));
+
+  it("prefers FIT boundaries for any sport", () => {
+    const ranges = cadenceZoneRanges(
+      [zone(0, 70, "cadence"), zone(1, 85, "cadence")],
+      "ride",
+      runValues(75),
+    );
+    expect(ranges).not.toBeNull();
+    expect(ranges!.map((r) => r.to)).toEqual([70, 85, Infinity]);
+    // Cadence palette anchors its top (purple) to the highest range.
+    expect(ranges![2].color).toBe(CADENCE_ZONE_COLORS[4]);
+  });
+
+  it("falls back to Garmin run thresholds, halved for per-leg data", () => {
+    // Per-leg rpm (~78): thresholds halve to 75.5/81.5/87/92.5.
+    const perLeg = cadenceZoneRanges([], "run", runValues(75));
+    expect(perLeg!.map((r) => r.to)).toEqual([75.5, 81.5, 87, 92.5, Infinity]);
+    // Full-spm data (~160): thresholds stay 151/163/174/185.
+    const fullSpm = cadenceZoneRanges([], "run", runValues(155));
+    expect(fullSpm!.map((r) => r.to)).toEqual([151, 163, 174, 185, Infinity]);
+    // A healthy 165 spm lands in the green band.
+    expect(zoneColorFor(165, fullSpm!)).toBe(CADENCE_ZONE_COLORS[2]);
+  });
+
+  it("returns null for non-run sports and empty data without FIT zones", () => {
+    expect(cadenceZoneRanges([], "ride", runValues(85))).toBeNull();
+    expect(cadenceZoneRanges([], "run", [])).toBeNull();
+    expect(cadenceZoneRanges([], "run", [0, 0])).toBeNull();
+    // HR boundaries must not enable cadence bars.
+    expect(cadenceZoneRanges([zone(0, 115), zone(1, 135)], "ride", runValues(85))).toBeNull();
+  });
+});
+
+describe("speedZoneRanges", () => {
+  it("prefers FIT boundaries (m/s) converted to the display unit", () => {
+    const ranges = speedZoneRanges(
+      [zone(0, 5, "speed"), zone(1, 10, "speed")],
+      "run", // FIT zones apply to any sport
+      3.6,
+    );
+    expect(ranges).not.toBeNull();
+    expect(ranges!.map((r) => r.to)).toEqual([18, 36, Infinity]);
+    expect(ranges![2].color).toBe(HR_ZONE_COLORS[4]);
+  });
+
+  it("falls back to fixed ride thresholds in the display unit", () => {
+    const kmh = speedZoneRanges([], "ride", 3.6);
+    // Round away the m/s round-trip float noise (15/3.6*3.6 ≠ exactly 15).
+    expect(kmh!.map((r) => Math.round(r.to * 1000) / 1000)).toEqual([
+      15, 25, 30, 35, Infinity,
+    ]);
+    // Imperial: same physical thresholds expressed in mph.
+    const mph = speedZoneRanges([], "ride", 2.23694);
+    expect(mph!.map((r) => Math.round(r.to * 10) / 10)).toEqual([
+      9.3, 15.5, 18.6, 21.7, Infinity,
+    ]);
+    // Five ranges map the warm palette exactly: green bottom, dark-red top.
+    expect(kmh![0].color).toBe(HR_ZONE_COLORS[0]);
+    expect(kmh![4].color).toBe(HR_ZONE_COLORS[4]);
+  });
+
+  it("returns null off the bike without FIT zones", () => {
+    expect(speedZoneRanges([], "other", 3.6)).toBeNull();
+    // Cadence boundaries must not enable speed bars.
+    expect(
+      speedZoneRanges([zone(0, 70, "cadence"), zone(1, 85, "cadence")], "other", 3.6),
+    ).toBeNull();
+  });
+});
+
+describe("speedVisRange", () => {
+  it("pads by 2 and rounds to fives with a 0 floor", () => {
+    expect(speedVisRange(12.4, 38.2)).toEqual([10, 45]);
+    expect(speedVisRange(1, 20)).toEqual([0, 25]);
+  });
+});
+
+describe("ELEVATION_BANDS_M", () => {
+  /** bandGradientStops would NOT throw on a misordered array — the clamp
+   * silently eats non-monotonic boundaries and paints wrong colors. This
+   * guard makes any future edit to the scale fail loudly instead. */
+  it("is strictly ascending and ends at Infinity", () => {
+    for (let i = 1; i < ELEVATION_BANDS_M.length; i++) {
+      expect(ELEVATION_BANDS_M[i].to).toBeGreaterThan(ELEVATION_BANDS_M[i - 1].to);
+    }
+    expect(ELEVATION_BANDS_M[ELEVATION_BANDS_M.length - 1].to).toBe(Infinity);
+  });
+});
+
+describe("bandGradientStops", () => {
+  const BANDS = [
+    { to: 200, color: "green" },
+    { to: 1000, color: "sand" },
+    { to: Infinity, color: "snow" },
+  ];
+  // Linear y-mapping over a 100px plot showing 0..2000 units: top px 0.
+  const yPosOf = (v: number) => 100 - (v / 2000) * 100;
+
+  it("paints sharp top-down bands at the ceiling positions", () => {
+    const stops = bandGradientStops(BANDS, yPosOf, 0, 100);
+    // snow 0 → y(1000)=0.5, sand 0.5 → y(200)=0.9, green 0.9 → 1.
+    expect(stops).toEqual([
+      { offset: 0, color: "snow" },
+      { offset: 0.5, color: "snow" },
+      { offset: 0.5, color: "sand" },
+      { offset: 0.9, color: "sand" },
+      { offset: 0.9, color: "green" },
+      { offset: 1, color: "green" },
+    ]);
+  });
+
+  /** Canvas rejects non-monotonic or out-of-range offsets with an
+   * exception — these invariants are what keeps the chart alive. */
+  const assertValid = (stops: { offset: number; color: string }[]) => {
+    for (let i = 0; i < stops.length; i++) {
+      expect(stops[i].offset).toBeGreaterThanOrEqual(0);
+      expect(stops[i].offset).toBeLessThanOrEqual(1);
+      if (i > 0) expect(stops[i].offset).toBeGreaterThanOrEqual(stops[i - 1].offset);
+    }
+  };
+
+  it("gives the whole range to the single band containing it", () => {
+    // Visible 250..450 sits strictly inside the 200..1000 band: both
+    // boundaries project outside the plot (above and below).
+    const yPosOf = (v: number) => ((450 - v) / 200) * 100;
+    const stops = bandGradientStops(BANDS, yPosOf, 0, 100);
+    assertValid(stops);
+    const sand = stops.filter((s) => s.color === "sand");
+    expect(sand[0].offset).toBe(0);
+    expect(sand[sand.length - 1].offset).toBe(1);
+    // Neighbors collapse to zero width.
+    const snow = stops.filter((s) => s.color === "snow");
+    expect(snow[0].offset).toBe(snow[1].offset);
+  });
+
+  it("covers everything with the top band on an all-alpine range", () => {
+    // Visible 5000..6000: every finite ceiling is far below the bottom.
+    const yPosOf = (v: number) => ((6000 - v) / 1000) * 100;
+    const stops = bandGradientStops(BANDS, yPosOf, 0, 100);
+    assertValid(stops);
+    const snow = stops.filter((s) => s.color === "snow");
+    expect(snow[0].offset).toBe(0);
+    expect(snow[snow.length - 1].offset).toBe(1);
+  });
+
+  it("keeps offsets valid with a ceiling exactly on the plot edge", () => {
+    // Visible 0..1000: the 1000 boundary lands exactly on the top edge.
+    const stops = bandGradientStops(BANDS, (v) => 100 - v / 10, 0, 100);
+    assertValid(stops);
+    // Degenerate zero-width snow stop at the very top is allowed.
+    const snow = stops.filter((s) => s.color === "snow");
+    expect(snow[0].offset).toBe(0);
+    expect(snow[1].offset).toBe(0);
+  });
+
+  it("survives a NaN projection without producing invalid offsets", () => {
+    const stops = bandGradientStops(BANDS, () => NaN, 0, 100);
+    assertValid(stops);
+    // The bottom band (constant projection) still covers the plot.
+    expect(stops[stops.length - 1]).toEqual({ offset: 1, color: "green" });
+  });
+
+  it("clamps to a monotonic 0..1 — sea-level rides stay all green", () => {
+    // Visible range 0..100 units: every ceiling maps far above the top.
+    const seaLevel = bandGradientStops(BANDS, (v) => 100 - v, 0, 100);
+    for (const s of seaLevel) expect(s.offset).toBeGreaterThanOrEqual(0);
+    // Monotonic non-decreasing (canvas requirement)…
+    for (let i = 1; i < seaLevel.length; i++) {
+      expect(seaLevel[i].offset).toBeGreaterThanOrEqual(seaLevel[i - 1].offset);
+    }
+    // …with the mountain bands collapsed and green covering everything.
+    expect(seaLevel[seaLevel.length - 1]).toEqual({ offset: 1, color: "green" });
+    expect(seaLevel.filter((s) => s.color === "green")[0].offset).toBeLessThan(0.2);
+  });
+});
+
+describe("zoneColorFor", () => {
+  it("picks the range containing the value, falling back for misses", () => {
+    expect(zoneColorFor(90, DEFAULT_HR_RANGES)).toBe(HR_ZONE_COLORS[0]);
+    expect(zoneColorFor(130, DEFAULT_HR_RANGES)).toBe(HR_ZONE_COLORS[2]);
+    expect(zoneColorFor(200, DEFAULT_HR_RANGES)).toBe(HR_ZONE_COLORS[4]);
+    // Boundary belongs to the upper range (design: v >= lo && v < hi).
+    expect(zoneColorFor(120, DEFAULT_HR_RANGES)).toBe(HR_ZONE_COLORS[2]);
+    expect(zoneColorFor(-5, DEFAULT_HR_RANGES)).toBe(HR_FALLBACK_COLOR);
+  });
+});
+
+describe("hrVisRange", () => {
+  it("pads by 10, rounds to tens and clamps to 40..220", () => {
+    expect(hrVisRange(83, 172)).toEqual([70, 190]);
+    expect(hrVisRange(45, 210)).toEqual([40, 220]);
+    expect(hrVisRange(0, 300)).toEqual([40, 220]);
+  });
+});
+
+describe("bucketMaxBars", () => {
+  it("keeps short spikes via window max and maps indices both ways", () => {
+    const xs = Array.from({ length: 10 }, (_, i) => i);
+    const vals = [100, 100, 180, 100, 100, 100, 100, 100, 100, 100];
+    const b = bucketMaxBars(xs, vals, 5); // x-windows of width 1.8
+    expect(b.values).toEqual([100, 180, 100, 100, 100]);
+    expect(b.srcIdx[1]).toBe(2); // the spike sample represents its bar
+    expect(b.barOf[2]).toBe(1);
+    expect(b.barOf[9]).toBe(4);
+    expect(b.xs).toHaveLength(5);
+  });
+
+  it("centers bars on equal x-windows so widths can't collapse", () => {
+    // Samples bunched on the x axis (dense trackpoints on a distance axis):
+    // equal-x windows keep bar centers a fixed span apart, leaving a gap
+    // for the empty middle window instead of squeezing centers together.
+    const b = bucketMaxBars([0, 1, 9], [1, 2, 3], 3); // windows of width 3
+    expect(b.values).toEqual([2, 3]);
+    expect(b.xs).toEqual([1.5, 7.5]); // window centers, 2 windows apart
+    expect(b.barOf).toEqual([0, 0, 1]);
+    // The window width feeds the x-scale padding that keeps the first and
+    // last bars (centered on the scale edges) from being clipped in half.
+    expect(b.step).toBe(3);
+  });
+
+  it("caps the bar count and survives short/degenerate series", () => {
+    const xs = Array.from({ length: 1000 }, (_, i) => i);
+    const vals = xs.map((i) => 100 + (i % 50));
+    expect(bucketMaxBars(xs, vals, 40).values.length).toBeLessThanOrEqual(40);
+
+    const tiny = bucketMaxBars([0, 1], [5, 7], 40);
+    expect(tiny.values).toEqual([5, 7]);
+    expect(bucketMaxBars([], [], 40).values).toEqual([]);
+    // Zero x-span (all samples at one x) folds into a single bar.
+    expect(bucketMaxBars([5, 5], [1, 9], 40).values).toEqual([9]);
+  });
+});

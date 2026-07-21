@@ -1,0 +1,718 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Syzify — "Trailhead" design system.
+   Warm topographic palette, earthy neutrals, terracotta accent.
+   Dark mode is class-based (`.dark` on <html>), toggled via the
+   theme store in src/lib/theme.ts — NOT prefers-color-scheme, so
+   the in-app Light/Dark/System control stays authoritative.
+   ============================================================ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Archivo (self-hosted variable font, SIL OFL — public/fonts/OFL.txt).
+   Subset files + unicode-ranges mirror the Google Fonts split; Cyrillic
+   isn't covered by Archivo and falls back to system-ui. ── */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/archivo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/archivo-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/archivo-vietnamese.woff2") format("woff2");
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+
+:root {
+  /* surfaces & text — light */
+  --bg: #f3efe7;          /* app background (warm off-white) */
+  --surface: #faf7f1;     /* panel backgrounds */
+  --card: #ffffff;        /* cards / floating elements */
+  --card-2: #f7f3eb;      /* subtle card variant */
+  --border: #e6dfd1;      /* default border */
+  --border-2: #d8cfbd;    /* stronger border */
+  --ink: #221f1a;         /* primary text */
+  --muted: #6f675a;       /* secondary text */
+  --faint: #a39a88;       /* placeholder / disabled */
+  --accent: #d8521d;      /* primary accent (terracotta) */
+  --accent-2: #b8420f;    /* accent hover / darker */
+  --accent-soft: #fbe6d8; /* accent tint background */
+  --accent-ink: #ffffff;  /* text on accent */
+  --good: #3f7d4e;        /* success / positive */
+  --good-soft: #e6f0e8;   /* success tint background */
+  --warn: #b07514;        /* warning */
+  --warn-soft: #f6ecd6;   /* warning tint background */
+  --danger: #be3d2a;      /* error / destructive */
+  --danger-soft: #fbe2db; /* error tint background */
+
+  /* shape */
+  --radius: 12px;         /* cards, panels */
+  --radius-sm: 8px;       /* buttons, inputs, small elements */
+
+  /* type — Archivo is self-hosted (public/fonts, @font-face above); the
+     fallback stack still covers scripts Archivo lacks (e.g. Cyrillic). */
+  --font-head: "Archivo", system-ui, -apple-system, sans-serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: "Archivo", system-ui, -apple-system, sans-serif;
+
+  /* sport identity hues (Trailhead, warm-tuned) — family base shades; the
+     full per-sport palette lives in src/lib/sportColors.ts (charts need
+     concrete strings). Keep these in sync with that file. */
+  --sport-run: #c2410c;
+  --sport-ride: #35894f;
+  --sport-walk: #ca8a04;
+  --sport-hike: #d8521d;
+  --sport-swim: #0891b2;
+  --sport-strength: #6d28d9;
+  --sport-other: #78716c;
+}
+
+.dark {
+  --bg: #16130e;
+  --surface: #1c1813;
+  --card: #241f18;
+  --card-2: #2c261d;
+  --border: #352f24;
+  --border-2: #473f30;
+  --ink: #f2ece0;
+  --muted: #b4a892;
+  --faint: #7e7460;
+  --accent: #ef6a2c;
+  --accent-2: #ff8a52;
+  --accent-soft: rgba(239, 106, 44, 0.16);
+  --accent-ink: #16130e;
+  --good: #6ab07a;
+  --good-soft: rgba(106, 176, 122, 0.16);
+  --warn: #d6a44a;
+  --warn-soft: rgba(214, 164, 74, 0.16);
+  --danger: #e0705c;
+  --danger-soft: rgba(224, 112, 92, 0.16);
+}
+
+/* Expose the tokens to Tailwind so utilities like `bg-surface`,
+   `text-ink`, `text-accent`, `border-border-2`, `rounded-card`,
+   `font-head` work. `inline` keeps the var reference live so the
+   `.dark` overrides above take effect at runtime. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-border: var(--border);
+  --color-border-2: var(--border-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-good: var(--good);
+
+  --color-sport-run: var(--sport-run);
+  --color-sport-ride: var(--sport-ride);
+  --color-sport-walk: var(--sport-walk);
+  --color-sport-hike: var(--sport-hike);
+  --color-sport-swim: var(--sport-swim);
+  --color-sport-strength: var(--sport-strength);
+  --color-sport-other: var(--sport-other);
+
+  --radius-card: var(--radius);
+  --radius-field: var(--radius-sm);
+
+  --font-head: var(--font-head);
+  --font-body: var(--font-body);
+  --font-num: var(--font-num);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tabular numerals for stats/metrics rendered with the numeric font. */
+.font-num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Leaflet chrome (rendered outside the React tree) — themed to the design.
+   Base popup/tooltip + the activity-marker popup card (`.mp-popup`), whose
+   content reuses the shared `.cal-pop-*` card classes below. */
+.leaflet-container {
+  font-family: var(--font-body);
+  background: var(--card-2);
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--card);
+  color: var(--ink);
+}
+.leaflet-popup-content-wrapper {
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+.leaflet-popup-content {
+  margin: 10px 13px;
+}
+.leaflet-popup-close-button {
+  color: var(--muted) !important;
+}
+/* Activity-marker popup: card chrome on the wrapper, no tip, no padding. */
+.mp-popup .leaflet-popup-content-wrapper {
+  padding: 0;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--border-2);
+  box-shadow: 0 12px 32px rgba(60, 40, 20, 0.18);
+}
+.dark .mp-popup .leaflet-popup-content-wrapper {
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+.mp-popup .leaflet-popup-content {
+  margin: 0;
+}
+.mp-popup .leaflet-popup-tip-container {
+  display: none;
+}
+.leaflet-bar {
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+.leaflet-bar a {
+  background: var(--card);
+  color: var(--ink);
+  border-bottom-color: var(--border);
+}
+.leaflet-bar a:hover {
+  background: var(--card-2);
+}
+.leaflet-tooltip {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--border-2);
+  box-shadow: 0 8px 24px rgba(60, 40, 20, 0.18);
+}
+.leaflet-tooltip-top::before {
+  border-top-color: var(--border-2);
+}
+
+/* ── Shared popup card (calendar tooltip + map marker popup) ── */
+.cal-pop {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding-bottom: 9px;
+  width: 220px;
+  display: none;
+  z-index: 60;
+  cursor: default;
+}
+.cal-cell.has:hover .cal-pop,
+.cal-pop:hover {
+  display: block;
+}
+.cal-pop.pop-l { left: 0; transform: none; }
+.cal-pop.pop-r { left: auto; right: 0; transform: none; }
+.cal-pop-card {
+  background: var(--card);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(60, 40, 20, 0.18);
+  padding: 7px;
+}
+.dark .cal-pop-card {
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+.cal-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.cal-pop-row:hover {
+  background: var(--card-2);
+}
+.cal-pop-ic {
+  width: 27px;
+  height: 27px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+.cal-pop-t {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cal-pop-m {
+  font-family: var(--font-num);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.cal-pop-arrow {
+  margin-left: 2px;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+
+/* ── Map cluster bubbles (zoom-dependent activity counts) ── */
+.mcl-wrap { background: none; border: none; }
+.mcl {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-num);
+  font-weight: 700;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 2.5px solid var(--card);
+  box-shadow: 0 2px 8px rgba(30, 20, 10, 0.35);
+  cursor: pointer;
+}
+.mcl-list { display: flex; flex-direction: column; min-width: 220px; }
+/* Context-menu popup on the route map: the same 7px inset as .cal-pop-card,
+   so the row's hover highlight reads against the card background (a single
+   edge-to-edge row would swallow the whole card and hide its own hover).
+   Hover is accent-tinted, not card-2: on the dark card a one-row menu needs
+   more contrast than list rows get. */
+.map-menu { padding: 7px; }
+.map-menu .cal-pop-row:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.map-menu .cal-pop-row:hover .lucide {
+  color: #fff;
+}
+/* Leaflet scrolls the popup content itself when maxHeight is set — match
+   the themed scrollbar so long cluster lists look native to the app. */
+.mp-popup .leaflet-popup-content::-webkit-scrollbar { width: 10px; }
+.mp-popup .leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.mp-popup .leaflet-popup-content::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+
+/* Themed scrollbar to match the warm shell. */
+.scroll-themed::-webkit-scrollbar {
+  width: 10px;
+}
+.scroll-themed::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.scroll-themed::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+
+/* ============================================================
+   Trailhead component classes — ported verbatim from the
+   claude.ai/design source so the navbar, filter drawer and
+   dashboard match the mockup pixel-for-pixel. Tokens above feed
+   them, so they adapt to dark mode automatically.
+   ============================================================ */
+
+/* ── Navbar + centered icon rail ── */
+.navbar {
+  position: relative; /* the rail centers against the window, not the flex box */
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.navbar .wordmark { flex: 1; }
+/* Overlay titlebar (macOS): native traffic lights float over the navbar's
+   left edge (trafficLightPosition in tauri.conf.json) — reserve room so the
+   logo clears them. */
+.navbar.mac-overlay { padding-left: 94px; }
+.navbar-right { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.navbar .rail {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.rail {
+  width: auto;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+}
+.rail .ri {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--border-2);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail .ri.on { background: var(--accent-soft); color: var(--accent-2); }
+.rail .ri:hover:not(.on) { background: var(--card-2); color: var(--accent-2); border-color: var(--accent); }
+.navbar-right .ri,
+.navbar-right .themebtn,
+.filter-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--border-2);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+.navbar-right .ri.on { background: var(--accent-soft); color: var(--accent-2); }
+.navbar-right .ri:hover:not(.on),
+.navbar-right .themebtn:hover,
+.filter-icon-btn:hover { color: var(--accent-2); border-color: var(--accent); }
+.filter-icon-btn { position: relative; }
+.filter-icon-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+.filter-icon-btn .ft-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+/* ── Hover tooltips (data-tip) ──
+   WKWebView never renders native title="" tooltips, so icon-only buttons
+   carry a CSS one instead: inverted card below the control, fading in after
+   a hover delay. `.tip-left` right-aligns it for controls hugging the
+   window's right edge (the tooltip would otherwise be clipped). */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: var(--card);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+[data-tip]:hover::after {
+  opacity: 1;
+  transition-delay: 0.45s;
+}
+[data-tip].tip-left::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* ── Filter drawer (right slide-in) ── */
+@keyframes filtersSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes filtersSlideOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
+.filters-backdrop { position: absolute; inset: 0; z-index: 1999; }
+.filters {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 280px;
+  z-index: 2000;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.1);
+  animation: filtersSlideIn 0.12s cubic-bezier(0.2, 0.8, 0.4, 1);
+}
+.dark .filters { box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4); }
+.filters.closing { animation: filtersSlideOut 0.1s cubic-bezier(0.6, 0, 0.8, 0.4) forwards; }
+.filters-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 0; }
+.filters-x { color: var(--faint); cursor: pointer; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; }
+.filters-x:hover { color: var(--accent-2); background: var(--card-2); }
+.filters-count { padding: 8px 18px 0; font-size: 12px; color: var(--muted); }
+.filters-count b { color: var(--ink); font-weight: 700; }
+.filters-body { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+.filters-foot { padding: 12px 18px; border-top: 1px solid var(--border); }
+.filters-reset { width: 100%; font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card); color: var(--accent-2); cursor: pointer; }
+.filters-reset:hover:not(:disabled) { border-color: var(--accent); }
+.filters-reset:disabled { color: var(--faint); cursor: default; opacity: 0.55; }
+.fgroup .fh { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-bottom: 9px; }
+.fsearch { display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--border-2); border-radius: 9px; padding: 8px 11px; color: var(--faint); }
+.fsearch input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; font-size: 13px; color: var(--ink); outline: none; }
+.field { display: flex; align-items: center; gap: 6px; }
+.field input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 7px 9px; border: 1px solid var(--border-2); border-radius: 7px; background: var(--card); color: var(--ink); }
+.fdates { display: flex; flex-direction: row; gap: 8px; }
+
+/* ── Search field (free-text over title / notes / location) ── */
+.fsearch { display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--card); color: var(--muted); }
+.fsearch:focus-within { border-color: var(--accent); }
+.fsearch input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 8px 0; border: none; background: transparent; color: var(--ink); }
+.fsearch input:focus { outline: none; }
+.fsearch input::placeholder { color: var(--faint); }
+.fsearch .fsearch-x { display: grid; place-items: center; cursor: pointer; color: var(--faint); }
+.fsearch .fsearch-x:hover { color: var(--accent-2); }
+
+/* ── Toasts (warm card with a tinted, color-coded icon badge) ── */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  max-width: 24rem;
+  box-shadow: 0 10px 30px rgba(34, 31, 26, 0.14);
+  color: var(--ink);
+}
+.toast-ic { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0; }
+.toast.t-success .toast-ic { background: var(--good-soft); color: var(--good); }
+.toast.t-error   .toast-ic { background: var(--danger-soft); color: var(--danger); }
+.toast.t-warning .toast-ic { background: var(--warn-soft); color: var(--warn); }
+.toast.t-info    .toast-ic { background: var(--accent-soft); color: var(--accent-2); }
+.toast-msg { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; padding-top: 6px; }
+.toast-x { flex-shrink: 0; display: grid; place-items: center; padding: 4px; color: var(--faint); border: 0; background: transparent; cursor: pointer; border-radius: 7px; }
+.toast-x:hover { color: var(--muted); background: var(--card-2); }
+
+/* ── Custom date picker (calendar popover, no manual text entry) ── */
+.dp { position: relative; flex: 1; min-width: 0; }
+.dp-field { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 4px; background: var(--card); border: 1px solid var(--border-2); border-radius: 9px; padding: 7px 9px; font: inherit; cursor: pointer; text-align: left; }
+.dp.open .dp-field, .dp-field:hover { border-color: var(--accent); }
+.dp-ftop { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dp-flabel { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.dp-fval { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp-field:not(.has) .dp-fval { color: var(--faint); }
+.dp-ftop > svg { color: var(--faint); flex-shrink: 0; }
+.dp.open .dp-ftop > svg { color: var(--accent); }
+/* 252px: wide enough for the month+year dropdowns ("September 2027") plus
+   the nav chevrons on one header line. */
+.dp-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 252px; z-index: 80; background: var(--card); border: 1px solid var(--border-2); border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18); padding: 12px; }
+.dp-right .dp-pop { left: auto; right: 0; }
+.dark .dp-pop { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5); }
+.dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.dp-month { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.dp-nav { display: flex; gap: 2px; }
+.dp-nav button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; background: none; border-radius: 7px; color: var(--accent-2); cursor: pointer; }
+.dp-nav button:hover { background: var(--accent-soft); }
+.dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.dp-dow { text-align: center; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); padding-bottom: 4px; }
+.dp-day { aspect-ratio: 1; display: grid; place-items: center; border: 0; background: none; border-radius: 8px; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
+/* Blank cells match the day-cell height so a fully-empty padding week
+   (6-week grids, see buildMonthGrid minWeeks) still occupies its row. */
+.dp-empty { aspect-ratio: 1; }
+.dp-day:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-2); }
+.dp-day:disabled { color: var(--faint); opacity: 0.4; cursor: default; }
+.dp-day.today { color: var(--accent-2); font-weight: 700; }
+.dp-day.sel, .dp-day.sel:hover { background: var(--accent); color: #fff; font-weight: 700; }
+.dp-foot { width: 100%; margin-top: 10px; font: inherit; font-size: 12px; font-weight: 600; color: var(--accent-2); background: var(--card-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px; cursor: pointer; }
+.dp-foot:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.dp-foot:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Chips & segmented control ── */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--card); color: var(--muted); cursor: pointer; }
+.chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chip.tag.on { background: var(--accent-soft); color: var(--accent-2); border-color: #f0c4ac; }
+.dark .chip.tag.on { border-color: rgba(239, 106, 44, 0.45); }
+.btn { font: inherit; font-weight: 600; font-size: 13px; border-radius: 9px; padding: 8px 14px; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--border-2); }
+.btn.ghost:hover { background: var(--card-2); }
+.btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
+.btn.danger:hover { background: #b91c1c; border-color: #b91c1c; }
+.iconbtn { width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--card); display: grid; place-items: center; color: var(--muted); cursor: pointer; }
+.iconbtn:hover { color: var(--ink); background: var(--card-2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.seg { display: inline-flex; background: var(--card-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+.seg button { font: inherit; font-size: 12.5px; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 5px 11px; border-radius: 6px; cursor: pointer; }
+.seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(60, 40, 20, 0.12); }
+.dark .seg button.on { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); }
+
+/* ── Dashboard ── */
+.threecol { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: stretch; }
+.threecol .dash-card { display: flex; flex-direction: column; min-width: 0; }
+.threecol .bars { height: 132px; }
+.dash-card, .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+.dash-card h3, .card h3 { font-family: var(--font-head); font-weight: 700; font-size: 15px; margin: 0 0 4px; }
+.eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+.bars { display: flex; align-items: flex-end; gap: 8px; height: 150px; margin-top: 16px; }
+.bars .col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; justify-content: flex-end; }
+.bars .col > i { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; opacity: 0.92; display: block; }
+.bars .col.dim > i { background: var(--border-2); }
+.bars .col span { font-size: 9.5px; color: var(--faint); }
+.dark .bars .col > i { opacity: 1; }
+.vbar { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; }
+.vbar span { display: block; width: 100%; min-height: 2px; cursor: pointer; }
+.bars .col .vval { display: block; width: 100%; min-height: 11px; text-align: center; overflow: visible; font-size: 11px; font-weight: 600; line-height: 1; margin-bottom: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.vol-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; font-size: 12px; color: var(--muted); }
+.vol-legend span { display: flex; align-items: center; gap: 6px; }
+.vol-legend i { width: 9px; height: 9px; border-radius: 3px; display: block; }
+.legrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+.legrow .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.legrow .pct { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rec-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.rec-filter .chip { font-size: 11.5px; padding: 4px 9px; }
+
+/* ── Settings screen (design: cards with label/description rows) ── */
+.page-title { font-family: var(--font-head); font-weight: 800; font-size: 21px; letter-spacing: -0.02em; margin: 0; }
+.set-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 15px 0; border-top: 1px solid var(--border); }
+.set-row:first-of-type { border-top: 0; padding-top: 8px; }
+.sl { font-weight: 600; font-size: 14px; }
+.sd { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.sd.code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-wf-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--card-2); border-radius: 9px; padding: 12px 14px; }
+.set-paths { display: flex; flex-direction: column; gap: 6px; }
+.set-path-row { display: flex; align-items: center; gap: 10px; background: var(--card-2); border: 1px solid var(--border-2); border-radius: 9px; padding: 10px 12px; }
+.set-path { font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-path-add { width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; color: var(--accent); cursor: pointer; display: grid; place-items: center; flex-shrink: 0; }
+.set-path-add:hover { background: var(--accent-soft); }
+.set-path-add.danger { color: var(--faint); }
+.set-path-add.danger:hover { color: #dc2626; background: rgba(220, 38, 38, 0.08); }
+
+/* ── Mini calendar (dashboard card) ── */
+.cal-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-top: 8px; }
+.cal-title { font-family: var(--font-head); font-weight: 700; font-size: 14px; text-align: center; }
+.cal-nav { display: flex; gap: 4px; justify-content: flex-end; }
+.cal-nav button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--card); color: var(--muted); cursor: pointer; }
+.cal-nav button:hover { color: var(--accent-2); border-color: var(--accent); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; margin-top: 12px; }
+.cal-dow { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); text-align: center; padding-bottom: 2px; }
+.cal-cell { min-width: 0; min-height: 60px; position: relative; border-radius: 9px; border: 1px solid var(--border); background: var(--card-2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; font-weight: 600; color: var(--ink); }
+.cal-cell.out { border: none; background: transparent; }
+.cal-cell.has { cursor: pointer; background: var(--accent-soft); }
+.cal-cell.has:hover { border-color: var(--accent); }
+.cal-cell.today { box-shadow: inset 0 0 0 2px var(--accent); }
+.cal-num { font-size: 12.5px; }
+.cal-dots { display: flex; gap: 3px; min-height: 6px; }
+.cal-dots i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+
+/* Activity pills inside a day cell (library calendar) */
+.cal-titles { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cal-pill {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 5px;
+  padding: 2px 6px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.cal-pill svg { flex-shrink: 0; }
+.cal-pill-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* "This month" aside next to the dashboard calendar */
+.cal-aside {
+  width: 200px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cal-aside-h { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+.cal-sum { display: flex; flex-direction: column; gap: 12px; }
+.cal-sum .k { font-family: var(--font-num); font-weight: 800; font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.cal-sum .k span { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+.cal-sum .l { font-size: 11px; color: var(--faint); margin-top: 3px; }
+.cal-legend { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; font-size: 12px; color: var(--muted); }
+.cal-legend div { display: flex; align-items: center; gap: 6px; }
+.cal-legend i { width: 8px; height: 8px; border-radius: 50%; display: block; flex-shrink: 0; }
+
+/* Activity header record chips (trophy + value) */
+.det-badges-inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.badge-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 20px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.badge-pill svg { color: var(--accent-2); flex-shrink: 0; }
+
+/* Personal records rows */
+.rec { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 10px; }
+.rec.link { cursor: pointer; transition: background 0.12s; }
+.rec.link:hover { background: var(--card-2); }
+.rec .ic { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-2); display: grid; place-items: center; flex-shrink: 0; }
+.rec .rl { font-size: 11px; color: var(--muted); }
+.rec .rv { font-family: var(--font-num); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.rec .rv span { color: var(--faint); font-weight: 600; font-size: 12px; }

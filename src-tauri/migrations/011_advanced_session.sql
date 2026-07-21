@@ -1,0 +1,9 @@
+ALTER TABLE activity ADD COLUMN min_hr REAL;
+ALTER TABLE activity ADD COLUMN moving_time_s REAL;
+ALTER TABLE activity ADD COLUMN sub_sport TEXT;
+ALTER TABLE activity ADD COLUMN avg_respiration_rate REAL;
+ALTER TABLE activity ADD COLUMN max_respiration_rate REAL;
+ALTER TABLE activity ADD COLUMN hrv_rmssd REAL;
+ALTER TABLE activity ADD COLUMN hrv_sdrr REAL;
+ALTER TABLE activity ADD COLUMN end_lat REAL;
+ALTER TABLE activity ADD COLUMN end_lon REAL;

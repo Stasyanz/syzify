@@ -1,0 +1,10 @@
+{
+  "id": "com.syzify.example.sleep-analytics",
+  "name": "Sleep Analytics (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.25.0",
+  "author": "Syzify",
+  "description": "Reference manifest: correlates sleep with training load. Reads activities and HRV, stores its own sleep data, needs no network.",
+  "contributes": ["activity.detail.panel", "dashboard.widget", "import.datasource"],
+  "permissions": ["read:activities", "read:hrv", "data:own"]
+}

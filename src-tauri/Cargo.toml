@@ -1,0 +1,74 @@
+[package]
+name = "syzify"
+version = "0.26.0"
+description = "Syzify — local-first workout viewer and journal"
+authors = ["Stanislav Zainullin"]
+edition = "2021"
+# AGPL-3.0 + Syzify Plugin Exception (see LICENSE-PLUGIN-EXCEPTION.md at the repo
+# root); SPDX cannot express custom exceptions, so only the base license id here.
+license = "AGPL-3.0-only"
+# Not a library — and crates.io would show the bare AGPL id without the exception.
+publish = false
+
+[lib]
+name = "syzify_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite_migration = "1"
+
+# Parsing
+gpx = "0.10"
+fitparser = "0.7"
+quick-xml = "0.36"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+
+# File watching
+notify = "7"
+
+# HTTP (for tile downloads)
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
+# Backup
+zip = "2"
+
+# Gzip decompression (Strava exports)
+flate2 = "1"
+
+# Async
+tokio = { version = "1", features = ["fs"] }
+
+# Encryption
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+rand = "0.8"
+
+# Image processing (photo attachments + thumbnails)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+base64 = "0.22"
+kamadak-exif = "0.6"
+extism = "1"
+ed25519-dalek = "2"
+
+# The SHA256 core stays optimized even in dev builds — password checks run
+# PBKDF2 with 600k iterations: ~4.3s/check without this, ~1.7s with it
+# (release: ~0.15s). The rest of the debug slowdown lives in the generic
+# pbkdf2_hmac instantiated in this crate, unreachable by package overrides.
+[profile.dev.package.sha2]
+opt-level = 3

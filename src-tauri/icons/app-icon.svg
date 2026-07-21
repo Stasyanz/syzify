@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Syzify app icon: ascending mountain ridge + "boulder" dot near the summit.
+       Trailhead palette: warm ink tile, cream ridge, terracotta accent
+       (mirrors the ink/paper/accent tokens in src/App.css). -->
+  <rect x="0" y="0" width="1024" height="1024" rx="205" ry="205" fill="#221f1a"/>
+  <g transform="translate(160,72) scale(22)">
+    <path d="M2 32 L10 16 L15 20 L23 8 L30 32 Z" fill="#f2ece0" stroke-linejoin="round"/>
+    <circle cx="17.6" cy="9.8" r="3.2" fill="#ef6a2c"/>
+  </g>
+</svg>

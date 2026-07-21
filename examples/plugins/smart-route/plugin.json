@@ -1,0 +1,11 @@
+{
+  "id": "com.syzify.example.smart-route",
+  "name": "Smart Route Planner (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.25.0",
+  "author": "Syzify",
+  "description": "Reference WASM plugin: a route.planner page that suggests a loop from current weather. Uses brokered network access; its host is disclosed on the Plugins screen.",
+  "entry": "plugin.wasm",
+  "contributes": ["route.planner"],
+  "permissions": ["net:host=api.open-meteo.com"]
+}

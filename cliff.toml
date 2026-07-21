@@ -1,0 +1,42 @@
+# git-cliff configuration — generates a Keep a Changelog–style CHANGELOG.md
+# from Conventional Commits. Optional tool: `cargo install git-cliff` (or brew).
+# Usage: `git cliff --tag vX.Y.Z -o CHANGELOG.md`, then hand-polish the prose.
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to Syzify are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org/).
+Pre-1.0: minor = new feature, patch = fix. History before 0.25.0 lives in the PRD roadmap.
+
+"""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+## {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+# Conventional types -> changelog sections.
+commit_parsers = [
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^refactor", group = "Changed" },
+    { message = "^perf", group = "Performance" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore|^ci|^test|^style|^build", skip = true },
+    { message = "^Merge", skip = true },
+]
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"

@@ -1,0 +1,9 @@
+pub mod activities;
+pub mod dashboard;
+pub mod export;
+pub mod import;
+pub mod photos;
+pub mod plugins;
+pub mod settings;
+pub mod tags;
+pub mod tiles;
