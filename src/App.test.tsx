@@ -43,13 +43,13 @@ async function bootApp(status: Promise<unknown>): Promise<RenderResult> {
 }
 
 describe("App boot", () => {
-  it("shows a spinner while the encryption status is loading", async () => {
+  it("shows the pulsing logo while the encryption status is loading", async () => {
     await bootApp(new Promise(() => {}));
     const status = screen.getByRole("status");
-    expect(status.querySelector(".animate-spin")).toBeTruthy();
+    expect(status.querySelector("svg.boot-logo")).toBeTruthy();
   });
 
-  it("replaces the spinner once the status resolves (locked vault)", async () => {
+  it("replaces the splash once the status resolves (locked vault)", async () => {
     await bootApp(
       Promise.resolve({
         enabled: true,

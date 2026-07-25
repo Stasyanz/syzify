@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router";
-import { Loader2 } from "lucide-react";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library } from "./routes/Library";
 import { DashboardPage } from "./routes/Dashboard";
@@ -87,15 +86,22 @@ function AppContent() {
   }, [qc]);
 
   if (isLoading) {
-    // Same look as the static boot spinner in index.html, so the handoff
-    // from the pre-React splash to this state is seamless.
+    // Same markup as the static boot splash in index.html (inline copy of
+    // app-icon.svg; the boot-logo pulse keyframes live in index.html's
+    // <style>, which stays in <head> after mount) — seamless handoff.
     return (
       <div
         role="status"
         aria-label="Loading"
         className="h-screen flex items-center justify-center bg-bg"
       >
-        <Loader2 size={28} strokeWidth={2.5} className="animate-spin text-accent" />
+        <svg className="boot-logo" viewBox="0 0 1024 1024" width="72" height="72" aria-hidden="true">
+          <rect x="0" y="0" width="1024" height="1024" rx="205" ry="205" fill="#221f1a" />
+          <g transform="translate(160,72) scale(22)">
+            <path d="M2 32 L10 16 L15 20 L23 8 L30 32 Z" fill="#f2ece0" strokeLinejoin="round" />
+            <circle cx="17.6" cy="9.8" r="3.2" fill="#ef6a2c" />
+          </g>
+        </svg>
       </div>
     );
   }

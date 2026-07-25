@@ -4,10 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Syzify</title>
-    <!-- Boot spinner: shown while the JS bundle loads/executes, replaced the
-         moment React mounts into #root. CSS-only (CSP forbids inline JS);
-         theme via prefers-color-scheme since the .dark class isn't set yet.
-         Colors mirror the --bg / --accent tokens in App.css. -->
+    <!-- Boot splash: pulsing app logo shown while the JS bundle loads, replaced
+         the moment React mounts into #root. CSS-only (CSP forbids inline JS);
+         background theme via prefers-color-scheme since the .dark class isn't
+         set yet. Colors mirror the --bg tokens in App.css; the logo is the
+         inline copy of src-tauri/icons/app-icon.svg (dark tile works on both
+         themes). The boot-logo class is reused by the React loading state in
+         App.tsx — these styles stay in <head> after mount. -->
     <style>
       html,
       body,
@@ -22,26 +25,28 @@
         justify-content: center;
         background: #f3efe7;
       }
-      .boot-spin {
-        width: 28px;
-        height: 28px;
-        border: 3px solid rgba(216, 82, 29, 0.2);
-        border-top-color: #d8521d;
-        border-radius: 50%;
-        animation: boot-rot 0.8s linear infinite;
+      .boot-logo {
+        animation: boot-pulse 1.6s ease-in-out infinite;
       }
-      @keyframes boot-rot {
-        to {
-          transform: rotate(360deg);
+      @keyframes boot-pulse {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(0.9);
+          opacity: 0.8;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-logo {
+          animation: none;
         }
       }
       @media (prefers-color-scheme: dark) {
         .boot {
           background: #16130e;
-        }
-        .boot-spin {
-          border-color: rgba(239, 106, 44, 0.25);
-          border-top-color: #ef6a2c;
         }
       }
     </style>
@@ -49,7 +54,16 @@
 
   <body>
     <div id="root">
-      <div class="boot"><div class="boot-spin"></div></div>
+      <div class="boot">
+        <!-- Inline copy of src-tauri/icons/app-icon.svg — keep in sync. -->
+        <svg class="boot-logo" viewBox="0 0 1024 1024" width="72" height="72" aria-hidden="true">
+          <rect x="0" y="0" width="1024" height="1024" rx="205" ry="205" fill="#221f1a" />
+          <g transform="translate(160,72) scale(22)">
+            <path d="M2 32 L10 16 L15 20 L23 8 L30 32 Z" fill="#f2ece0" stroke-linejoin="round" />
+            <circle cx="17.6" cy="9.8" r="3.2" fill="#ef6a2c" />
+          </g>
+        </svg>
+      </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
