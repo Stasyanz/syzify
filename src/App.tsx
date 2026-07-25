@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router";
+import { Loader2 } from "lucide-react";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library } from "./routes/Library";
 import { DashboardPage } from "./routes/Dashboard";
@@ -86,9 +87,15 @@ function AppContent() {
   }, [qc]);
 
   if (isLoading) {
+    // Same look as the static boot spinner in index.html, so the handoff
+    // from the pre-React splash to this state is seamless.
     return (
-      <div className="h-screen flex items-center justify-center bg-bg">
-        <p className="text-sm text-faint">Loading...</p>
+      <div
+        role="status"
+        aria-label="Loading"
+        className="h-screen flex items-center justify-center bg-bg"
+      >
+        <Loader2 size={28} strokeWidth={2.5} className="animate-spin text-accent" />
       </div>
     );
   }

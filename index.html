@@ -2,13 +2,55 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>Syzify</title>
+    <!-- Boot spinner: shown while the JS bundle loads/executes, replaced the
+         moment React mounts into #root. CSS-only (CSP forbids inline JS);
+         theme via prefers-color-scheme since the .dark class isn't set yet.
+         Colors mirror the --bg / --accent tokens in App.css. -->
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      .boot {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f3efe7;
+      }
+      .boot-spin {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(216, 82, 29, 0.2);
+        border-top-color: #d8521d;
+        border-radius: 50%;
+        animation: boot-rot 0.8s linear infinite;
+      }
+      @keyframes boot-rot {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        .boot {
+          background: #16130e;
+        }
+        .boot-spin {
+          border-color: rgba(239, 106, 44, 0.25);
+          border-top-color: #ef6a2c;
+        }
+      }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot"><div class="boot-spin"></div></div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
