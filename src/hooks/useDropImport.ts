@@ -3,6 +3,7 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { isWorkoutPath } from "../lib/fileTypes";
+import { invalidateActivityData } from "../lib/activityInvalidation";
 
 /// Whether a physical drop position lands on a component that handles its own
 /// file drops (e.g. the photo gallery). Such drops must not be treated as
@@ -21,8 +22,7 @@ export function useDropImport() {
   const importMutation = useMutation({
     mutationFn: (paths: string[]) => api.importFiles(paths),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["activities"] });
-      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+      invalidateActivityData(queryClient);
       const parts = [
         `Imported ${data.imported} activit${data.imported === 1 ? "y" : "ies"}`,
       ];

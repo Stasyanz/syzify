@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
+import { invalidateActivityData } from "../lib/activityInvalidation";
 
 export function useWatchFolderListener() {
   const [pendingFiles, setPendingFiles] = useState<string[]>([]);
@@ -38,9 +39,7 @@ export function useWatchFolderListener() {
               // Auto-import immediately
               try {
                 const result = await api.importFiles(files);
-                queryClient.invalidateQueries({ queryKey: ["activities"] });
-                queryClient.invalidateQueries({ queryKey: ["calendar"] });
-                queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                invalidateActivityData(queryClient);
                 const parts = [
                   `Auto-imported ${result.imported} activit${result.imported === 1 ? "y" : "ies"}`,
                 ];
@@ -85,8 +84,7 @@ export function useWatchFolderListener() {
     setImporting(true);
     try {
       const result = await api.importFiles(pendingFiles);
-      queryClient.invalidateQueries({ queryKey: ["activities"] });
-      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+      invalidateActivityData(queryClient);
       const parts = [
         `Imported ${result.imported} activit${result.imported === 1 ? "y" : "ies"}`,
       ];

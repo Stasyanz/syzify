@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useNavigate } from "react-router";
 import { Check } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
 import { ActivityListItem } from "./ActivityListItem";
@@ -77,7 +78,7 @@ export function ActivityList() {
     setMerging(true);
     try {
       const id = await api.mergeIntoTriathlon([...selected]);
-      await queryClient.invalidateQueries({ queryKey: ["activities"] });
+      await invalidateActivityData(queryClient);
       exitSelect();
       navigate(`/activity/${id}`);
     } catch (e) {

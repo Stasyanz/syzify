@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Download, Pencil, ChevronLeft, ChevronRight, Share2, Trophy, Check, Split } from "lucide-react";
 import { api } from "../lib/tauri";
+import { invalidateActivityData } from "../lib/activityInvalidation";
 import {
   formatDistance,
   formatElevation,
@@ -284,7 +285,7 @@ export function ActivityDetailPage() {
   async function handleUnmerge() {
     try {
       await api.unmergeTriathlon(activity.id);
-      await queryClient.invalidateQueries({ queryKey: ["activities"] });
+      await invalidateActivityData(queryClient);
       navigate("/library");
     } catch (e) {
       addToast("error", String(e));
@@ -308,10 +309,9 @@ export function ActivityDetailPage() {
             sportType={activity.sport_type}
             onChanged={() => {
               queryClient.invalidateQueries({ queryKey: ["activity", id] });
-              queryClient.invalidateQueries({ queryKey: ["activities"] });
-              queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-              // A sport change recomputes best-efforts and record eligibility.
-              queryClient.invalidateQueries({ queryKey: ["recordBadges", id] });
+              // A sport change reshapes aggregates everywhere (dashboard,
+              // calendar colors, filters) and recomputes record eligibility.
+              invalidateActivityData(queryClient);
             }}
           />
           <div className="min-w-0">
@@ -538,12 +538,11 @@ export function ActivityDetailPage() {
           onSaved={() => {
             setEditing(false);
             queryClient.invalidateQueries({ queryKey: ["activity", id] });
-            queryClient.invalidateQueries({ queryKey: ["activities"] });
-            // The edit modal can change sport_type → badges may change.
-            queryClient.invalidateQueries({ queryKey: ["recordBadges", id] });
+            // The edit modal can change sport_type → aggregates and badges.
+            invalidateActivityData(queryClient);
           }}
           onDeleted={() => {
-            queryClient.invalidateQueries({ queryKey: ["activities"] });
+            invalidateActivityData(queryClient);
             navigate("/library");
           }}
         />

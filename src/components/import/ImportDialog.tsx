@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
+import { invalidateActivityData } from "../../lib/activityInvalidation";
 
 /** "icon" → compact navbar button; "button" → full accent CTA (empty state). */
 export function ImportDialog({ variant = "button" }: { variant?: "icon" | "button" }) {
@@ -13,7 +14,7 @@ export function ImportDialog({ variant = "button" }: { variant?: "icon" | "butto
   const importMutation = useMutation({
     mutationFn: (paths: string[]) => api.importFiles(paths),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["activities"] });
+      invalidateActivityData(queryClient);
       const parts = [`Imported ${data.imported} activit${data.imported === 1 ? "y" : "ies"}`];
       if (data.skipped > 0) parts.push(`skipped ${data.skipped} (duplicates)`);
       if (data.failed.length > 0) parts.push(`${data.failed.length} failed`);

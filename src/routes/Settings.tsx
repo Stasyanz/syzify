@@ -13,6 +13,7 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 import { api } from "../lib/tauri";
+import { invalidateActivityData } from "../lib/activityInvalidation";
 import { useToastStore } from "../stores/toastStore";
 import { useFeedbackStore } from "../stores/feedbackStore";
 import { useThemeStore, type ThemeMode } from "../lib/theme";
@@ -271,8 +272,7 @@ export function SettingsPage() {
     if (!path || typeof path !== "string") return;
     try {
       const r = await api.runImportDatasource(ds.id, path);
-      queryClient.invalidateQueries({ queryKey: ["activities"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      invalidateActivityData(queryClient);
       addToast(
         "success",
         `${ds.name} — imported ${r.imported}, skipped ${r.skipped}${
