@@ -69,12 +69,25 @@ export function hrZoneRanges(zones: TimeInZone[]): ZoneRange[] {
   return bounds.length < 2 ? DEFAULT_HR_RANGES : rangesFromBoundaries(bounds);
 }
 
-/** Power zone ranges — FIT boundaries only. Unlike HR there is NO sensible
- * default (zones hang off personal FTP), so without boundaries this returns
- * null and the power chart stays a plain line. */
-export function powerZoneRanges(zones: TimeInZone[]): ZoneRange[] | null {
+/** Coggan power zone ceilings as fractions of FTP — the de-facto standard
+ * (Z1 recovery <55% … Z7 neuromuscular >150%). Used when the device wrote
+ * time-in-power-zone without the boundary array (Edge units do exactly
+ * that for power while still writing HR boundaries). */
+const COGGAN_FTP_FACTORS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
+
+/** Power zone ranges — the device's FIT boundaries first; else Coggan
+ * %-of-FTP zones when the file carried an FTP (threshold_power). Power zones
+ * hang off personal FTP, so with neither the chart stays a plain line. */
+export function powerZoneRanges(
+  zones: TimeInZone[],
+  ftpW?: number | null,
+): ZoneRange[] | null {
   const bounds = zoneBoundaries(zones, "power");
-  return bounds.length < 2 ? null : rangesFromBoundaries(bounds);
+  if (bounds.length >= 2) return rangesFromBoundaries(bounds);
+  if (ftpW != null && isFinite(ftpW) && ftpW > 0) {
+    return rangesFromBoundaries(COGGAN_FTP_FACTORS.map((f) => Math.round(f * ftpW)));
+  }
+  return null;
 }
 
 /** Cadence palette, low → high. Unlike HR/power, HIGH cadence is GOOD, so
@@ -227,6 +240,26 @@ export function bandGradientStops(
     prev = t;
   }
   return stops;
+}
+
+/** Target px between bar centers — the design's HRChart look (~40 bars on
+ * a half-width card at the default 1200px window). */
+const BAR_TARGET_PX = 14;
+
+/**
+ * Zone-bar count for a chart panel `panelW` CSS-px wide. Sized for the
+ * HALF-width card (the 2-col grid minus its gap) — the full-width first
+ * slot shares the count and just gets proportionally wider bars, same as
+ * the old fixed 40 did. Quantized to steps of 5 so a live window drag
+ * re-buckets occasionally, not per-pixel; clamped so a tiny window still
+ * reads as bars (20) and a huge one doesn't dissolve into a comb (80).
+ * A non-positive width (not yet measured) returns the design default 40.
+ */
+export function zoneBarCount(panelW: number): number {
+  if (!isFinite(panelW) || panelW <= 0) return 40;
+  const halfCard = (panelW - 16) / 2;
+  const stepped = Math.round(halfCard / BAR_TARGET_PX / 5) * 5;
+  return Math.min(80, Math.max(20, stepped));
 }
 
 export interface BarBuckets {

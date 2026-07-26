@@ -14,6 +14,7 @@ import {
   powerZoneRanges,
   speedVisRange,
   speedZoneRanges,
+  zoneBarCount,
   zoneColorFor,
 } from "./chartZones";
 import type { TimeInZone } from "../../lib/types";
@@ -102,6 +103,44 @@ describe("powerZoneRanges", () => {
     expect(powerZoneRanges([zone(0, 250, "power")])).toBeNull();
     // HR boundaries alone must not enable power bars.
     expect(powerZoneRanges([zone(0, 115), zone(1, 135)])).toBeNull();
+  });
+
+  it("derives Coggan zones from FTP when boundaries are missing", () => {
+    // Edge units write time-in-power-zone WITHOUT the boundary array; the
+    // session FTP (299 W here) then anchors the standard %-of-FTP zones.
+    const ranges = powerZoneRanges([], 299);
+    expect(ranges).not.toBeNull();
+    expect(ranges!).toHaveLength(7);
+    // 55/75/90/105/120/150% of 299, rounded to whole watts.
+    expect(ranges!.map((r) => r.to)).toEqual([164, 224, 269, 314, 359, 449, Infinity]);
+    expect(ranges![6].color).toBe(HR_ZONE_COLORS[4]);
+  });
+
+  it("real FIT boundaries beat the FTP fallback; bad FTP stays a line", () => {
+    const ranges = powerZoneRanges([zone(0, 100, "power"), zone(1, 200, "power")], 299);
+    expect(ranges!.map((r) => r.to)).toEqual([100, 200, Infinity]);
+    expect(powerZoneRanges([], 0)).toBeNull();
+    expect(powerZoneRanges([], null)).toBeNull();
+    expect(powerZoneRanges([], NaN)).toBeNull();
+  });
+});
+
+describe("zoneBarCount", () => {
+  it("targets ~14px per half-card bar, in steps of 5, clamped 20..80", () => {
+    // Default 1200px window → the design's classic 40 bars.
+    expect(zoneBarCount(1200)).toBe(40);
+    // Narrow window floors at 20, huge window ceils at 80.
+    expect(zoneBarCount(500)).toBe(20);
+    expect(zoneBarCount(3000)).toBe(80);
+    // Quantized: +40px of width within one 5-bar step must not change the
+    // count (no rebucket churn during a live window drag).
+    expect(zoneBarCount(1190)).toBe(zoneBarCount(1150));
+  });
+
+  it("falls back to 40 when the panel is unmeasured", () => {
+    expect(zoneBarCount(0)).toBe(40);
+    expect(zoneBarCount(-5)).toBe(40);
+    expect(zoneBarCount(NaN)).toBe(40);
   });
 });
 

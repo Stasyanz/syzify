@@ -490,6 +490,7 @@ export function ActivityDetailPage() {
                 trackpoints={viewTrackpoints!}
                 sport={focusedLeg?.sport_type ?? activity.sport_type}
                 timeInZones={data.time_in_zones}
+                ftpW={activity.threshold_power_w}
               />
 
               {/* Laps */}

@@ -15,6 +15,7 @@ import {
   powerZoneRanges,
   speedVisRange,
   speedZoneRanges,
+  zoneBarCount,
   zoneColorFor,
   type ElevationBand,
   type ZoneRange,
@@ -41,6 +42,9 @@ interface Props {
   /** The activity's stored time-in-zone rows — HR boundaries paint the
    * zone bands behind the heart-rate chart (FIT only; absent elsewhere). */
   timeInZones?: TimeInZone[];
+  /** FTP (threshold_power from the FIT session) — fallback source for Coggan
+   * power zones when the device wrote no power boundaries. */
+  ftpW?: number | null;
 }
 
 type ChartType = "elevation" | "hr" | "pace" | "speed" | "cadence" | "power";
@@ -465,14 +469,14 @@ function normalizeOrder(order: ChartType[]): ChartType[] {
   return [...order.filter((k) => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter((k) => !seen.has(k))];
 }
 
-/** Bar count of the design's HRChart (max value per window). */
-const ZONE_BAR_COUNT = 40;
-
-export function ChartPanel({ trackpoints, sport, timeInZones }: Props) {
+export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
   const showPace = isPaceSport(sport);
   const showSwimPace = isSwimSport(sport);
   const hrRanges = useMemo(() => hrZoneRanges(timeInZones ?? []), [timeInZones]);
-  const powerRanges = useMemo(() => powerZoneRanges(timeInZones ?? []), [timeInZones]);
+  const powerRanges = useMemo(
+    () => powerZoneRanges(timeInZones ?? [], ftpW),
+    [timeInZones, ftpW],
+  );
 
   // One card per available metric (pace for foot sports, min/100 pace for
   // swim sports, speed otherwise).
@@ -635,8 +639,25 @@ export function ChartPanel({ trackpoints, sport, timeInZones }: Props) {
     return { xValues, indexMap, reverseMap, chartValues };
   }, [trackpoints, xAxis, available, seriesByKey]);
 
-  // Zone-colored bar charts (the design HRChart): ~40 bars, each the max of
-  // its window, with both cursor-sync maps re-derived at bar resolution
+  // Bar count follows the panel's real width (~14px per bar on a half-width
+  // card, see zoneBarCount) instead of a fixed 40. The observer re-attaches
+  // when chartData flips non-null — before that the panel isn't rendered and
+  // panelRef is empty.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [barCount, setBarCount] = useState(zoneBarCount(0));
+  const hasChartData = chartData != null;
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const update = () => setBarCount(zoneBarCount(el.clientWidth));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasChartData]);
+
+  // Zone-colored bar charts (the design HRChart): each bar the max of its
+  // window, with both cursor-sync maps re-derived at bar resolution
   // (bar → its max sample's trackpoint; trackpoint → its window's bar).
   // HR always qualifies (design defaults exist); power only with real FIT
   // boundaries — without FTP-based zones it stays a line.
@@ -669,7 +690,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones }: Props) {
       if (!vals) continue;
       const zones = zonesFor(vals);
       if (!zones) continue;
-      const b = bucketMaxBars(chartData.xValues, vals, ZONE_BAR_COUNT);
+      const b = bucketMaxBars(chartData.xValues, vals, barCount);
       const indexMap = b.srcIdx.map((chartIdx) => chartData.indexMap[chartIdx]);
       const reverseMap = new Map<number, number>();
       chartData.indexMap.forEach((tpIdx, chartIdx) =>
@@ -686,7 +707,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones }: Props) {
       });
     }
     return out;
-  }, [chartData, hrRanges, powerRanges, timeInZones, sport]);
+  }, [chartData, hrRanges, powerRanges, timeInZones, sport, barCount]);
 
   if (!chartData) return null;
 
@@ -695,7 +716,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones }: Props) {
   const xUnit = xAxis === "time" ? "min" : distanceUnit();
 
   return (
-    <div className="space-y-3">
+    <div ref={panelRef} className="space-y-3">
       {/* Offer the axis toggle only when both axes carry data — with no
           distance there is nothing to switch to. */}
       {hasTimeData && hasDistanceData && (
