@@ -10,6 +10,7 @@ import { PluginPage } from "./routes/PluginPage";
 import { UnlockModal } from "./components/UnlockModal";
 import { api } from "./lib/tauri";
 import { ToastContainer } from "./components/ui/Toast";
+import { ConfirmDialogHost } from "./components/ui/ConfirmDialog";
 import { useDropImport } from "./hooks/useDropImport";
 import { useWatchFolderListener } from "./hooks/useWatchFolderListener";
 import { ImportProgressOverlay } from "./components/import/ImportProgressOverlay";
@@ -156,6 +157,7 @@ function AppContent() {
           </Routes>
         </div>
         <ToastContainer />
+        <ConfirmDialogHost />
         <ImportProgressOverlay />
         <FeedbackModal />
         {dragging && (

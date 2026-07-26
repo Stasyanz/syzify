@@ -29,14 +29,15 @@ vi.mock("../../lib/tauri", () => ({
     deletePhoto: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), ask: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
   }),
 }));
 
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../stores/confirmStore";
 import { api } from "../../lib/tauri";
 import { PhotoGallery } from "./PhotoGallery";
 
@@ -68,9 +69,9 @@ describe("PhotoGallery", () => {
     });
   });
 
-  /// The dialog is ASYNC (Tauri's shim): the delete must wait for the
-  /// answer — with window.confirm the Promise was always truthy and the
-  /// photo was gone before the user clicked Cancel.
+  /// The dialog is ASYNC: the delete must wait for the answer — with
+  /// window.confirm the (shimmed) Promise was always truthy and the photo
+  /// was gone before the user clicked Cancel.
   it("deletes only after the confirm dialog resolves true", async () => {
     const { container } = renderGallery();
     const del = await waitFor(() => {
@@ -79,13 +80,13 @@ describe("PhotoGallery", () => {
       return b as HTMLButtonElement;
     });
 
-    vi.mocked(ask).mockResolvedValue(false);
+    vi.mocked(confirmDialog).mockResolvedValue(false);
     del.click();
     // Give the async handler a tick — Cancel must not delete.
-    await waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(api.deletePhoto).not.toHaveBeenCalled();
 
-    vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(confirmDialog).mockResolvedValue(true);
     del.click();
     await waitFor(() => expect(api.deletePhoto).toHaveBeenCalledWith("ph-1"));
   });

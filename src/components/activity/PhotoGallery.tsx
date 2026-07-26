@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../stores/confirmStore";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { isImagePath } from "../../lib/fileTypes";
 import { moveItem } from "../../lib/reorder";
@@ -211,12 +212,11 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                   </button>
                   <button
                     onClick={async () => {
-                      // NOT window.confirm: Tauri shims it to an ASYNC dialog
-                      // returning a Promise — always truthy, so the "if" fired
-                      // before the user answered and Cancel couldn't stop it.
-                      const ok = await ask("Delete this photo?", {
+                      const ok = await confirmDialog({
                         title: "Delete photo",
-                        kind: "warning",
+                        message: "Delete this photo?",
+                        confirmLabel: "Delete",
+                        danger: true,
                       });
                       if (ok) deleteMutation.mutate(p.id);
                     }}

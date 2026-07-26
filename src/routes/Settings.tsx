@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { open, save, ask } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -13,6 +13,7 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 import { api } from "../lib/tauri";
+import { confirmDialog } from "../stores/confirmStore";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 import { useToastStore } from "../stores/toastStore";
 import { useFeedbackStore } from "../stores/feedbackStore";
@@ -149,10 +150,11 @@ export function SettingsPage() {
       ? `\n\nNote: "${selected}" is a protected macOS folder — you'll need to grant Syzify Full Disk Access for it to open on the next launch.`
       : "";
 
-    const confirmed = await ask(
-      `Move the vault to "${selected}"?\n\nAll files will be moved there and the app will restart.${warning}`,
-      { title: "Move vault", kind: "warning" }
-    );
+    const confirmed = await confirmDialog({
+      title: "Move vault",
+      message: `Move the vault to "${selected}"?\n\nAll files will be moved there and the app will restart.${warning}`,
+      confirmLabel: "Move",
+    });
     if (!confirmed) return;
 
     setRelocating(true);
@@ -229,10 +231,12 @@ export function SettingsPage() {
     // encryption state). The backend closes the live DB first; on success we
     // restart, exactly like relocate. The replaced data isn't destroyed — it
     // moves into a pre-restore folder inside the vault.
-    const confirmed = await ask(
-      "Restore the vault from this backup?\n\nYour current vault will be replaced and the app will restart. The replaced data is kept in a “pre-restore” folder inside the vault until you delete it.",
-      { title: "Restore backup", kind: "warning" }
-    );
+    const confirmed = await confirmDialog({
+      title: "Restore backup",
+      message:
+        "Restore the vault from this backup?\n\nYour current vault will be replaced and the app will restart. The replaced data is kept in a “pre-restore” folder inside the vault until you delete it.",
+      confirmLabel: "Restore",
+    });
     if (!confirmed) return;
     setRestoring(true);
     try {
