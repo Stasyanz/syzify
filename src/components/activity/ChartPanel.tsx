@@ -229,7 +229,7 @@ function SingleChart({
   /** Y-range for bar mode (hrVisRange / powerVisRange). */
   barRange?: (min: number, max: number) => [number, number];
   /** Bar window width in x units (bar mode only) — pads the x scale by half
-   * a window per side so the edge bars aren't clipped to half-width. */
+  1 * a window per side so the edge bars aren't clipped to half-width. */
   barStep?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);

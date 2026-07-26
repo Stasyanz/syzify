@@ -88,6 +88,14 @@ fn select_time_in_zones(
         .collect()
 }
 
+/// First two elements of a FIT array field, as a pair. Power-phase arrays
+/// are [start, end] (degrees, 0° = top dead center); `*_position` arrays
+/// are [seated, standing] (the FIT rider_position_type order).
+fn field_pair(field: &fitparser::FitDataField) -> (Option<f64>, Option<f64>) {
+    let v = field_to_f64_vec(field);
+    (v.first().copied(), v.get(1).copied())
+}
+
 /// Whether the file recorded a barometer channel (a device_info message with
 /// local_device_type == "barometer") — i.e. the altitude stream is barometric
 /// rather than GPS-derived. Exports advertise this in the GPX `creator` so
@@ -405,6 +413,50 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
                         "left_right_balance" => {
                             sm.avg_left_right_balance =
                                 field_to_f64(field).and_then(|v| decode_lr_balance(v, true));
+                        }
+                        "avg_left_pco" => {
+                            sm.avg_left_pco_mm = field_to_f64(field);
+                        }
+                        "avg_right_pco" => {
+                            sm.avg_right_pco_mm = field_to_f64(field);
+                        }
+                        "avg_left_power_phase" => {
+                            (sm.avg_left_power_phase_start_deg, sm.avg_left_power_phase_end_deg) =
+                                field_pair(field);
+                        }
+                        "avg_left_power_phase_peak" => {
+                            (
+                                sm.avg_left_power_phase_peak_start_deg,
+                                sm.avg_left_power_phase_peak_end_deg,
+                            ) = field_pair(field);
+                        }
+                        "avg_right_power_phase" => {
+                            (sm.avg_right_power_phase_start_deg, sm.avg_right_power_phase_end_deg) =
+                                field_pair(field);
+                        }
+                        "avg_right_power_phase_peak" => {
+                            (
+                                sm.avg_right_power_phase_peak_start_deg,
+                                sm.avg_right_power_phase_peak_end_deg,
+                            ) = field_pair(field);
+                        }
+                        "avg_power_position" => {
+                            (sm.avg_power_seated_w, sm.avg_power_standing_w) = field_pair(field);
+                        }
+                        "max_power_position" => {
+                            (sm.max_power_seated_w, sm.max_power_standing_w) = field_pair(field);
+                        }
+                        "avg_cadence_position" => {
+                            (sm.avg_cadence_seated, sm.avg_cadence_standing) = field_pair(field);
+                        }
+                        "max_cadence_position" => {
+                            (sm.max_cadence_seated, sm.max_cadence_standing) = field_pair(field);
+                        }
+                        "time_standing" => {
+                            sm.time_standing_s = field_to_f64(field);
+                        }
+                        "stand_count" => {
+                            sm.stand_count = field_to_f64(field).map(|v| v as i64);
                         }
                         _ => {}
                     }

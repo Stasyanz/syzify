@@ -76,6 +76,27 @@ pub struct SessionMetrics {
     pub avg_right_pedal_smoothness: Option<f64>,
     /// Power balance as the RIGHT-pedal percentage (FIT flag bit decoded).
     pub avg_left_right_balance: Option<f64>,
+    // Cycling Dynamics — see the matching Activity fields.
+    pub avg_left_pco_mm: Option<f64>,
+    pub avg_right_pco_mm: Option<f64>,
+    pub avg_left_power_phase_start_deg: Option<f64>,
+    pub avg_left_power_phase_end_deg: Option<f64>,
+    pub avg_left_power_phase_peak_start_deg: Option<f64>,
+    pub avg_left_power_phase_peak_end_deg: Option<f64>,
+    pub avg_right_power_phase_start_deg: Option<f64>,
+    pub avg_right_power_phase_end_deg: Option<f64>,
+    pub avg_right_power_phase_peak_start_deg: Option<f64>,
+    pub avg_right_power_phase_peak_end_deg: Option<f64>,
+    pub avg_power_seated_w: Option<f64>,
+    pub avg_power_standing_w: Option<f64>,
+    pub max_power_seated_w: Option<f64>,
+    pub max_power_standing_w: Option<f64>,
+    pub avg_cadence_seated: Option<f64>,
+    pub avg_cadence_standing: Option<f64>,
+    pub max_cadence_seated: Option<f64>,
+    pub max_cadence_standing: Option<f64>,
+    pub time_standing_s: Option<f64>,
+    pub stand_count: Option<i64>,
 }
 
 /// Sum of the Some values; None when every input is None (so a metric no
@@ -181,6 +202,33 @@ impl SessionMetrics {
             avg_left_pedal_smoothness: first(|s| s.avg_left_pedal_smoothness),
             avg_right_pedal_smoothness: first(|s| s.avg_right_pedal_smoothness),
             avg_left_right_balance: first(|s| s.avg_left_right_balance),
+
+            // Cycling Dynamics: only the ride leg ever reports them — the
+            // averages pass through first(); the standing totals add (same
+            // result for one reporting leg, correct if several ever do).
+            avg_left_pco_mm: first(|s| s.avg_left_pco_mm),
+            avg_right_pco_mm: first(|s| s.avg_right_pco_mm),
+            avg_left_power_phase_start_deg: first(|s| s.avg_left_power_phase_start_deg),
+            avg_left_power_phase_end_deg: first(|s| s.avg_left_power_phase_end_deg),
+            avg_left_power_phase_peak_start_deg: first(|s| s.avg_left_power_phase_peak_start_deg),
+            avg_left_power_phase_peak_end_deg: first(|s| s.avg_left_power_phase_peak_end_deg),
+            avg_right_power_phase_start_deg: first(|s| s.avg_right_power_phase_start_deg),
+            avg_right_power_phase_end_deg: first(|s| s.avg_right_power_phase_end_deg),
+            avg_right_power_phase_peak_start_deg: first(|s| s.avg_right_power_phase_peak_start_deg),
+            avg_right_power_phase_peak_end_deg: first(|s| s.avg_right_power_phase_peak_end_deg),
+            avg_power_seated_w: first(|s| s.avg_power_seated_w),
+            avg_power_standing_w: first(|s| s.avg_power_standing_w),
+            max_power_seated_w: opt_max(sessions.iter().map(|s| s.max_power_seated_w)),
+            max_power_standing_w: opt_max(sessions.iter().map(|s| s.max_power_standing_w)),
+            avg_cadence_seated: first(|s| s.avg_cadence_seated),
+            avg_cadence_standing: first(|s| s.avg_cadence_standing),
+            max_cadence_seated: opt_max(sessions.iter().map(|s| s.max_cadence_seated)),
+            max_cadence_standing: opt_max(sessions.iter().map(|s| s.max_cadence_standing)),
+            time_standing_s: opt_sum(sessions.iter().map(|s| s.time_standing_s)),
+            stand_count: {
+                let counts: Vec<i64> = sessions.iter().filter_map(|s| s.stand_count).collect();
+                if counts.is_empty() { None } else { Some(counts.iter().sum()) }
+            },
 
             end_lat: sessions.iter().rev().find_map(|s| s.end_lat),
             end_lon: sessions.iter().rev().find_map(|s| s.end_lon),

@@ -180,7 +180,7 @@ mod tests {
             avg_left_torque_effectiveness: None, avg_right_torque_effectiveness: None,
             avg_left_pedal_smoothness: None, avg_right_pedal_smoothness: None,
             avg_left_right_balance: None,
-            created_at: String::new(), updated_at: String::new(), parent_id: None,
+            ..Default::default()
         }
     }
 

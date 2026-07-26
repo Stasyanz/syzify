@@ -18,6 +18,7 @@ import { getSportColor } from "../lib/sportColors";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
+import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
 import { isFocusableLeg, legTimeWindow, sliceTrackpoints } from "../components/activity/legFocus";
 import { LapsTable } from "../components/activity/LapsTable";
@@ -492,6 +493,8 @@ export function ActivityDetailPage() {
                 timeInZones={data.time_in_zones}
                 ftpW={activity.threshold_power_w}
               />
+
+              <CyclingDynamicsPanel activity={activity} />
 
               {/* Laps */}
               <LapsTable

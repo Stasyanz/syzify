@@ -15,8 +15,14 @@ pub fn insert_activity(conn: &Connection, activity: &Activity) -> Result<()> {
          training_stress_score, intensity_factor, training_effect_aerobic, training_effect_anaerobic, training_load_peak,
          avg_vertical_oscillation_mm, avg_stance_time_ms, avg_stance_time_percent, avg_step_length_mm, total_strides,
          min_hr, moving_time_s, sub_sport, avg_respiration_rate, max_respiration_rate, hrv_rmssd, hrv_sdrr, end_lat, end_lon,
-         avg_left_torque_effectiveness, avg_right_torque_effectiveness, avg_left_pedal_smoothness, avg_right_pedal_smoothness, avg_left_right_balance, parent_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52)",
+         avg_left_torque_effectiveness, avg_right_torque_effectiveness, avg_left_pedal_smoothness, avg_right_pedal_smoothness, avg_left_right_balance,
+         avg_left_pco_mm, avg_right_pco_mm,
+         avg_left_power_phase_start_deg, avg_left_power_phase_end_deg, avg_left_power_phase_peak_start_deg, avg_left_power_phase_peak_end_deg,
+         avg_right_power_phase_start_deg, avg_right_power_phase_end_deg, avg_right_power_phase_peak_start_deg, avg_right_power_phase_peak_end_deg,
+         avg_power_seated_w, avg_power_standing_w, max_power_seated_w, max_power_standing_w,
+         avg_cadence_seated, avg_cadence_standing, max_cadence_seated, max_cadence_standing,
+         time_standing_s, stand_count, parent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55, ?56, ?57, ?58, ?59, ?60, ?61, ?62, ?63, ?64, ?65, ?66, ?67, ?68, ?69, ?70, ?71, ?72)",
         params![
             activity.id,
             activity.start_time,
@@ -69,6 +75,26 @@ pub fn insert_activity(conn: &Connection, activity: &Activity) -> Result<()> {
             activity.avg_left_pedal_smoothness,
             activity.avg_right_pedal_smoothness,
             activity.avg_left_right_balance,
+            activity.avg_left_pco_mm,
+            activity.avg_right_pco_mm,
+            activity.avg_left_power_phase_start_deg,
+            activity.avg_left_power_phase_end_deg,
+            activity.avg_left_power_phase_peak_start_deg,
+            activity.avg_left_power_phase_peak_end_deg,
+            activity.avg_right_power_phase_start_deg,
+            activity.avg_right_power_phase_end_deg,
+            activity.avg_right_power_phase_peak_start_deg,
+            activity.avg_right_power_phase_peak_end_deg,
+            activity.avg_power_seated_w,
+            activity.avg_power_standing_w,
+            activity.max_power_seated_w,
+            activity.max_power_standing_w,
+            activity.avg_cadence_seated,
+            activity.avg_cadence_standing,
+            activity.max_cadence_seated,
+            activity.max_cadence_standing,
+            activity.time_standing_s,
+            activity.stand_count,
             activity.parent_id,
         ],
     )?;
@@ -87,6 +113,12 @@ const ACTIVITY_COLUMNS: &str = "id, start_time, timezone_offset, sport_type, tit
      avg_vertical_oscillation_mm, avg_stance_time_ms, avg_stance_time_percent, avg_step_length_mm, total_strides, \
      min_hr, moving_time_s, sub_sport, avg_respiration_rate, max_respiration_rate, hrv_rmssd, hrv_sdrr, end_lat, end_lon, \
      avg_left_torque_effectiveness, avg_right_torque_effectiveness, avg_left_pedal_smoothness, avg_right_pedal_smoothness, avg_left_right_balance, \
+     avg_left_pco_mm, avg_right_pco_mm, \
+     avg_left_power_phase_start_deg, avg_left_power_phase_end_deg, avg_left_power_phase_peak_start_deg, avg_left_power_phase_peak_end_deg, \
+     avg_right_power_phase_start_deg, avg_right_power_phase_end_deg, avg_right_power_phase_peak_start_deg, avg_right_power_phase_peak_end_deg, \
+     avg_power_seated_w, avg_power_standing_w, max_power_seated_w, max_power_standing_w, \
+     avg_cadence_seated, avg_cadence_standing, max_cadence_seated, max_cadence_standing, \
+     time_standing_s, stand_count, \
      created_at, updated_at, parent_id";
 
 /// Canonical column list for an [`ActivitySummary`] (aliased `a`), in the order
@@ -148,9 +180,29 @@ fn row_to_activity(row: &rusqlite::Row) -> Result<Activity> {
         avg_left_pedal_smoothness: row.get(48)?,
         avg_right_pedal_smoothness: row.get(49)?,
         avg_left_right_balance: row.get(50)?,
-        created_at: row.get(51)?,
-        updated_at: row.get(52)?,
-        parent_id: row.get(53)?,
+        avg_left_pco_mm: row.get(51)?,
+        avg_right_pco_mm: row.get(52)?,
+        avg_left_power_phase_start_deg: row.get(53)?,
+        avg_left_power_phase_end_deg: row.get(54)?,
+        avg_left_power_phase_peak_start_deg: row.get(55)?,
+        avg_left_power_phase_peak_end_deg: row.get(56)?,
+        avg_right_power_phase_start_deg: row.get(57)?,
+        avg_right_power_phase_end_deg: row.get(58)?,
+        avg_right_power_phase_peak_start_deg: row.get(59)?,
+        avg_right_power_phase_peak_end_deg: row.get(60)?,
+        avg_power_seated_w: row.get(61)?,
+        avg_power_standing_w: row.get(62)?,
+        max_power_seated_w: row.get(63)?,
+        max_power_standing_w: row.get(64)?,
+        avg_cadence_seated: row.get(65)?,
+        avg_cadence_standing: row.get(66)?,
+        max_cadence_seated: row.get(67)?,
+        max_cadence_standing: row.get(68)?,
+        time_standing_s: row.get(69)?,
+        stand_count: row.get(70)?,
+        created_at: row.get(71)?,
+        updated_at: row.get(72)?,
+        parent_id: row.get(73)?,
     })
 }
 
@@ -888,9 +940,7 @@ mod tests {
             avg_left_torque_effectiveness: None, avg_right_torque_effectiveness: None,
             avg_left_pedal_smoothness: None, avg_right_pedal_smoothness: None,
             avg_left_right_balance: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-            parent_id: None,
+            ..Default::default()
         }
     }
 
@@ -906,6 +956,51 @@ mod tests {
         assert_eq!(loaded.distance_m, Some(5000.0));
         assert_eq!(loaded.title, Some("Morning Run".to_string()));
         assert_eq!(loaded.calories, Some(350.0));
+    }
+
+    /// Cycling Dynamics columns roundtrip — insert placeholders and
+    /// row_to_activity indices march in lockstep, so a shifted index would
+    /// surface here as a wrong or missing value.
+    #[test]
+    fn cycling_dynamics_roundtrip() {
+        let conn = db::test_db();
+        let a = Activity {
+            avg_left_pco_mm: Some(0.0),
+            avg_right_pco_mm: Some(9.0),
+            avg_left_power_phase_start_deg: Some(324.8),
+            avg_left_power_phase_end_deg: Some(230.6),
+            avg_left_power_phase_peak_start_deg: Some(70.3),
+            avg_left_power_phase_peak_end_deg: Some(125.2),
+            avg_right_power_phase_start_deg: Some(355.8),
+            avg_right_power_phase_end_deg: Some(208.1),
+            avg_right_power_phase_peak_start_deg: Some(68.9),
+            avg_right_power_phase_peak_end_deg: Some(113.9),
+            avg_power_seated_w: Some(231.0),
+            avg_power_standing_w: Some(161.0),
+            max_power_seated_w: Some(1013.0),
+            max_power_standing_w: Some(956.0),
+            avg_cadence_seated: Some(83.0),
+            avg_cadence_standing: Some(55.0),
+            max_cadence_seated: Some(111.0),
+            max_cadence_standing: Some(105.0),
+            time_standing_s: Some(1156.9),
+            stand_count: Some(90),
+            ..sample_activity("dyn-1")
+        };
+        insert_activity(&conn, &a).unwrap();
+
+        let loaded = get_activity_by_id(&conn, "dyn-1").unwrap().unwrap();
+        assert_eq!(loaded.avg_right_pco_mm, Some(9.0));
+        assert_eq!(loaded.avg_left_power_phase_start_deg, Some(324.8));
+        assert_eq!(loaded.avg_right_power_phase_peak_end_deg, Some(113.9));
+        assert_eq!(loaded.avg_power_standing_w, Some(161.0));
+        assert_eq!(loaded.max_power_seated_w, Some(1013.0));
+        assert_eq!(loaded.avg_cadence_standing, Some(55.0));
+        assert_eq!(loaded.time_standing_s, Some(1156.9));
+        assert_eq!(loaded.stand_count, Some(90));
+        // The tail columns after the new block must not have shifted.
+        assert_eq!(loaded.parent_id, None);
+        assert!(!loaded.created_at.is_empty());
     }
 
     #[test]

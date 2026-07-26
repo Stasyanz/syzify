@@ -31,6 +31,7 @@ fn migration_list() -> Vec<M<'static>> {
         M::up(include_str!("../../migrations/022_avg_speed_backfill.sql")),
         M::up(include_str!("../../migrations/023_multisport_legs.sql")),
         M::up(include_str!("../../migrations/024_multisport_merge.sql")),
+        M::up(include_str!("../../migrations/025_cycling_dynamics_position.sql")),
     ]
 }
 

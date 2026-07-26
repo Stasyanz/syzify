@@ -48,6 +48,28 @@ export interface Activity {
   avg_left_pedal_smoothness: number | null;
   avg_right_pedal_smoothness: number | null;
   avg_left_right_balance: number | null; // % of power from the right pedal
+  // Cycling Dynamics (dual-sided pedals). Angles in degrees, 0° = top dead
+  // center, clockwise.
+  avg_left_pco_mm: number | null;
+  avg_right_pco_mm: number | null;
+  avg_left_power_phase_start_deg: number | null;
+  avg_left_power_phase_end_deg: number | null;
+  avg_left_power_phase_peak_start_deg: number | null;
+  avg_left_power_phase_peak_end_deg: number | null;
+  avg_right_power_phase_start_deg: number | null;
+  avg_right_power_phase_end_deg: number | null;
+  avg_right_power_phase_peak_start_deg: number | null;
+  avg_right_power_phase_peak_end_deg: number | null;
+  avg_power_seated_w: number | null;
+  avg_power_standing_w: number | null;
+  max_power_seated_w: number | null;
+  max_power_standing_w: number | null;
+  avg_cadence_seated: number | null;
+  avg_cadence_standing: number | null;
+  max_cadence_seated: number | null;
+  max_cadence_standing: number | null;
+  time_standing_s: number | null;
+  stand_count: number | null;
   created_at: string;
   updated_at: string;
   /** The multisport container this activity is a merged leg of; null for
