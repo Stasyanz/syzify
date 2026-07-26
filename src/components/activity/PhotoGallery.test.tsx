@@ -24,18 +24,26 @@ const { photo } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/tauri", () => ({
-  api: { getPhotos: vi.fn().mockResolvedValue([photo]) },
+  api: {
+    getPhotos: vi.fn().mockResolvedValue([photo]),
+    deletePhoto: vi.fn().mockResolvedValue(undefined),
+  },
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), ask: vi.fn() }));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
   }),
 }));
 
+import { ask } from "@tauri-apps/plugin-dialog";
+import { api } from "../../lib/tauri";
 import { PhotoGallery } from "./PhotoGallery";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 function renderGallery() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -58,5 +66,27 @@ describe("PhotoGallery", () => {
       const img = container.querySelector('img[src="photo://localhost/ph-1?size=thumb"]');
       if (!img) throw new Error("thumbnail not rendered yet");
     });
+  });
+
+  /// The dialog is ASYNC (Tauri's shim): the delete must wait for the
+  /// answer — with window.confirm the Promise was always truthy and the
+  /// photo was gone before the user clicked Cancel.
+  it("deletes only after the confirm dialog resolves true", async () => {
+    const { container } = renderGallery();
+    const del = await waitFor(() => {
+      const b = container.querySelector('button[title="Delete"]');
+      if (!b) throw new Error("delete button not rendered yet");
+      return b as HTMLButtonElement;
+    });
+
+    vi.mocked(ask).mockResolvedValue(false);
+    del.click();
+    // Give the async handler a tick — Cancel must not delete.
+    await waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    expect(api.deletePhoto).not.toHaveBeenCalled();
+
+    vi.mocked(ask).mockResolvedValue(true);
+    del.click();
+    await waitFor(() => expect(api.deletePhoto).toHaveBeenCalledWith("ph-1"));
   });
 });

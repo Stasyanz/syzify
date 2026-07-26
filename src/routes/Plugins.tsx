@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { Puzzle, Plus, Trash2, Globe, ShieldCheck, Fingerprint } from "lucide-react";
 import type { PluginInfo } from "../lib/types";
 import { api } from "../lib/tauri";
@@ -71,8 +71,11 @@ export function PluginsPage() {
   }
 
   async function handleUninstall(plugin: PluginInfo) {
-    const ok = window.confirm(
-      `Uninstall “${plugin.name}”? Its stored data will be removed too.`
+    // NOT window.confirm: Tauri's shim returns a Promise (always truthy),
+    // so the uninstall ran before the user answered.
+    const ok = await ask(
+      `Uninstall “${plugin.name}”? Its stored data will be removed too.`,
+      { title: "Uninstall plugin", kind: "warning" }
     );
     if (!ok) return;
     try {
