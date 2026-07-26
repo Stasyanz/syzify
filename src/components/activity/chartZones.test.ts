@@ -126,18 +126,20 @@ describe("powerZoneRanges", () => {
 });
 
 describe("zoneBarCount", () => {
-  it("targets ~14px per half-card bar, in steps of 5, clamped 20..80", () => {
-    // Default 1200px window → the design's classic 40 bars.
-    expect(zoneBarCount(1200)).toBe(40);
-    // Narrow window floors at 20, huge window ceils at 80.
-    expect(zoneBarCount(500)).toBe(20);
-    expect(zoneBarCount(3000)).toBe(80);
-    // Quantized: +40px of width within one 5-bar step must not change the
-    // count (no rebucket churn during a live window drag).
-    expect(zoneBarCount(1190)).toBe(zoneBarCount(1150));
+  it("targets ~14px per bar of the CARD width, in steps of 5, clamped 20..120", () => {
+    // Half-width card of the default 1200px window ((1200-16)/2 = 592) →
+    // the design's classic 40 bars; the full-width first slot gets ~2×.
+    expect(zoneBarCount(592)).toBe(40);
+    expect(zoneBarCount(1200)).toBe(85);
+    // Tiny card floors at 20, huge card ceils at 120.
+    expect(zoneBarCount(250)).toBe(20);
+    expect(zoneBarCount(2500)).toBe(120);
+    // Quantized: +30px within one 5-bar step must not change the count
+    // (no rebucket churn during a live window drag).
+    expect(zoneBarCount(590)).toBe(zoneBarCount(560));
   });
 
-  it("falls back to 40 when the panel is unmeasured", () => {
+  it("falls back to 40 when the card is unmeasured", () => {
     expect(zoneBarCount(0)).toBe(40);
     expect(zoneBarCount(-5)).toBe(40);
     expect(zoneBarCount(NaN)).toBe(40);

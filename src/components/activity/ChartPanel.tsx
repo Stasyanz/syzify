@@ -639,22 +639,27 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
     return { xValues, indexMap, reverseMap, chartValues };
   }, [trackpoints, xAxis, available, seriesByKey]);
 
-  // Bar count follows the panel's real width (~14px per bar on a half-width
-  // card, see zoneBarCount) instead of a fixed 40. The observer re-attaches
-  // when chartData flips non-null — before that the panel isn't rendered and
-  // panelRef is empty.
+  // Bar counts follow the panel's real width (~14px per bar, see
+  // zoneBarCount), per SLOT: the full-width first card fits ~2× the bars of
+  // a half-width one. The observer re-attaches when chartData flips
+  // non-null — before that the panel isn't rendered and panelRef is empty.
   const panelRef = useRef<HTMLDivElement>(null);
-  const [barCount, setBarCount] = useState(zoneBarCount(0));
+  const [panelW, setPanelW] = useState(0);
   const hasChartData = chartData != null;
   useEffect(() => {
     const el = panelRef.current;
     if (!el) return;
-    const update = () => setBarCount(zoneBarCount(el.clientWidth));
+    const update = () => setPanelW(Math.round(el.clientWidth));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
   }, [hasChartData]);
+  // gap-4 = 16px between the grid's two columns.
+  const halfCount = zoneBarCount(panelW > 0 ? (panelW - 16) / 2 : 0);
+  const fullCount = zoneBarCount(panelW);
+  // The chart occupying the col-span-2 first slot (reorder moves it).
+  const firstKey = ordered[0]?.key;
 
   // Zone-colored bar charts (the design HRChart): each bar the max of its
   // window, with both cursor-sync maps re-derived at bar resolution
@@ -690,7 +695,11 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
       if (!vals) continue;
       const zones = zonesFor(vals);
       if (!zones) continue;
-      const b = bucketMaxBars(chartData.xValues, vals, barCount);
+      const b = bucketMaxBars(
+        chartData.xValues,
+        vals,
+        key === firstKey ? fullCount : halfCount,
+      );
       const indexMap = b.srcIdx.map((chartIdx) => chartData.indexMap[chartIdx]);
       const reverseMap = new Map<number, number>();
       chartData.indexMap.forEach((tpIdx, chartIdx) =>
@@ -707,7 +716,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
       });
     }
     return out;
-  }, [chartData, hrRanges, powerRanges, timeInZones, sport, barCount]);
+  }, [chartData, hrRanges, powerRanges, timeInZones, sport, firstKey, halfCount, fullCount]);
 
   if (!chartData) return null;
 

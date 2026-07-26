@@ -247,19 +247,17 @@ export function bandGradientStops(
 const BAR_TARGET_PX = 14;
 
 /**
- * Zone-bar count for a chart panel `panelW` CSS-px wide. Sized for the
- * HALF-width card (the 2-col grid minus its gap) — the full-width first
- * slot shares the count and just gets proportionally wider bars, same as
- * the old fixed 40 did. Quantized to steps of 5 so a live window drag
- * re-buckets occasionally, not per-pixel; clamped so a tiny window still
- * reads as bars (20) and a huge one doesn't dissolve into a comb (80).
+ * Zone-bar count for one chart card `cardW` CSS-px wide — the caller passes
+ * the actual slot width (the full-width first slot gets ~2× the bars of a
+ * half-width card). Quantized to steps of 5 so a live window drag
+ * re-buckets occasionally, not per-pixel; clamped so a tiny card still
+ * reads as bars (20) and a huge one doesn't dissolve into a comb (120).
  * A non-positive width (not yet measured) returns the design default 40.
  */
-export function zoneBarCount(panelW: number): number {
-  if (!isFinite(panelW) || panelW <= 0) return 40;
-  const halfCard = (panelW - 16) / 2;
-  const stepped = Math.round(halfCard / BAR_TARGET_PX / 5) * 5;
-  return Math.min(80, Math.max(20, stepped));
+export function zoneBarCount(cardW: number): number {
+  if (!isFinite(cardW) || cardW <= 0) return 40;
+  const stepped = Math.round(cardW / BAR_TARGET_PX / 5) * 5;
+  return Math.min(120, Math.max(20, stepped));
 }
 
 export interface BarBuckets {
