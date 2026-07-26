@@ -1102,6 +1102,36 @@ mod tests {
         assert_eq!(select_time_in_zones(unlabeled).len(), 2);
     }
 
+    /// Cycling Dynamics arrays: power phase = [start, end], *_position =
+    /// [seated, standing]. Short/empty/non-array values must yield Nones,
+    /// not panic or misalign.
+    #[test]
+    fn field_pair_extracts_first_two_elements() {
+        use fitparser::{FitDataField, Value};
+        let arr = |vals: Vec<Value>| {
+            FitDataField::new("avg_power_position".into(), 0, Value::Array(vals), "watts".into())
+        };
+
+        assert_eq!(
+            field_pair(&arr(vec![Value::UInt16(231), Value::UInt16(161)])),
+            (Some(231.0), Some(161.0))
+        );
+        // Longer arrays (some devices append extras): first two only.
+        assert_eq!(
+            field_pair(&arr(vec![
+                Value::Float64(324.8),
+                Value::Float64(230.6),
+                Value::Float64(1.0)
+            ])),
+            (Some(324.8), Some(230.6))
+        );
+        assert_eq!(field_pair(&arr(vec![Value::UInt16(83)])), (Some(83.0), None));
+        assert_eq!(field_pair(&arr(vec![])), (None, None));
+        // Scalar (non-array) field → no pair.
+        let scalar = FitDataField::new("x".into(), 0, Value::UInt16(5), "".into());
+        assert_eq!(field_pair(&scalar), (None, None));
+    }
+
     #[test]
     fn parse_fit_invalid_file_returns_error() {
         let result = parse_fit("/nonexistent/path.fit", "test");
