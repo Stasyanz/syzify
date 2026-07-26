@@ -119,26 +119,34 @@ export function powerZoneRanges(
 }
 
 /** Cadence palette, low → high. Unlike HR/power, HIGH cadence is GOOD, so
- * the scale runs red (plodding) → orange → green → teal → purple (elite),
- * reusing the app's sport hues for the cool end. */
+ * the scale runs red (plodding) → orange → green → teal → brown. The brown
+ * top matches the power sprint band — house code for "off the scale"
+ * (purple sat outside the earthy palette). */
 export const CADENCE_ZONE_COLORS = [
-  "#c0392b", // < Z1: overstriding
+  "#c0392b", // < Z1: overstriding / grinding
   "#e07c3a",
-  "#4a9e5c", // the healthy 163–174 spm band
+  "#4a9e5c", // the healthy band (163–174 spm run, 75–90 rpm ride)
   "#0e7490",
-  "#7c3aed", // 185+: elite turnover
+  "#7a4a2b", // elite turnover / spinning
 ];
 
 /** Garmin's universal running-cadence thresholds, in full steps/min. */
 const RUN_CADENCE_SPM_BOUNDS = [151, 163, 174, 185];
 
+/** Fixed ride-cadence thresholds, in rpm — a product decision like the ride
+ * speed bounds: no authority defines cycling cadence zones (Strava/Garmin
+ * both draw a plain line for bikes), but the physiology is well known:
+ * <60 grinding, 75–90 the optimal band, 105+ spinning/sprint. */
+const RIDE_CADENCE_RPM_BOUNDS = [60, 75, 90, 105];
+
 /**
  * Cadence zone ranges: the device's FIT boundaries when it recorded them
  * (any sport, same priority as power), else Garmin's universal RUNNING
- * thresholds — which only make sense for runs, so other sports stay a line.
- * Devices disagree on units: FIT run cadence is usually single-leg rpm
- * (~75–95) while the thresholds are full spm (~150–190) — when the data's
- * median sits below 120 the samples are per-leg and the thresholds halve.
+ * thresholds for runs or the fixed rpm bands for rides; other sports stay
+ * a line. Devices disagree on units: FIT run cadence is usually single-leg
+ * rpm (~75–95) while the thresholds are full spm (~150–190) — when the
+ * data's median sits below 120 the samples are per-leg and the thresholds
+ * halve. Ride cadence is crank rpm, no such ambiguity.
  */
 export function cadenceZoneRanges(
   zones: TimeInZone[],
@@ -148,6 +156,9 @@ export function cadenceZoneRanges(
   const bounds = zoneBoundaries(zones, "cadence");
   if (bounds.length >= 2) return rangesFromBoundaries(bounds, CADENCE_ZONE_COLORS);
 
+  if (sport === "ride") {
+    return rangesFromBoundaries(RIDE_CADENCE_RPM_BOUNDS, CADENCE_ZONE_COLORS);
+  }
   if (sport !== "run") return null;
   const nonZero = values.filter((v) => v > 0).sort((a, b) => a - b);
   if (nonZero.length === 0) return null;

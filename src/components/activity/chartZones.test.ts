@@ -170,7 +170,7 @@ describe("cadenceZoneRanges", () => {
     );
     expect(ranges).not.toBeNull();
     expect(ranges!.map((r) => r.to)).toEqual([70, 85, Infinity]);
-    // Cadence palette anchors its top (purple) to the highest range.
+    // Cadence palette anchors its top (brown) to the highest range.
     expect(ranges![2].color).toBe(CADENCE_ZONE_COLORS[4]);
   });
 
@@ -185,12 +185,20 @@ describe("cadenceZoneRanges", () => {
     expect(zoneColorFor(165, fullSpm!)).toBe(CADENCE_ZONE_COLORS[2]);
   });
 
-  it("returns null for non-run sports and empty data without FIT zones", () => {
-    expect(cadenceZoneRanges([], "ride", runValues(85))).toBeNull();
+  it("rides get the fixed rpm bands (crank rpm — no per-leg halving)", () => {
+    const ranges = cadenceZoneRanges([], "ride", runValues(85));
+    expect(ranges!.map((r) => r.to)).toEqual([60, 75, 90, 105, Infinity]);
+    // 85 rpm sits in the optimal green band; 110+ is the brown top.
+    expect(zoneColorFor(85, ranges!)).toBe(CADENCE_ZONE_COLORS[2]);
+    expect(zoneColorFor(110, ranges!)).toBe(CADENCE_ZONE_COLORS[4]);
+  });
+
+  it("returns null for other sports and empty run data without FIT zones", () => {
+    expect(cadenceZoneRanges([], "swim", runValues(85))).toBeNull();
     expect(cadenceZoneRanges([], "run", [])).toBeNull();
     expect(cadenceZoneRanges([], "run", [0, 0])).toBeNull();
     // HR boundaries must not enable cadence bars.
-    expect(cadenceZoneRanges([zone(0, 115), zone(1, 135)], "ride", runValues(85))).toBeNull();
+    expect(cadenceZoneRanges([zone(0, 115), zone(1, 135)], "swim", runValues(85))).toBeNull();
   });
 });
 
