@@ -42,7 +42,9 @@ async function bootApp(status: Promise<unknown>): Promise<RenderResult> {
   return render(<App />);
 }
 
-describe("App boot", () => {
+// bootApp re-imports the whole App module graph (vi.resetModules), which
+// can take seconds under a full-suite run — hence the raised timeouts.
+describe("App boot", { timeout: 20_000 }, () => {
   it("shows the pulsing logo while the encryption status is loading", async () => {
     await bootApp(new Promise(() => {}));
     const status = screen.getByRole("status");
