@@ -17,6 +17,7 @@ pub struct TrackPoint {
     pub stance_time_percent: Option<f64>,
     pub step_length_mm: Option<f64>,
     pub grade_percent: Option<f64>,
+    /// Power balance as the RIGHT-pedal percentage (FIT flag bit decoded).
     pub left_right_balance: Option<f64>,
     pub left_torque_effectiveness: Option<f64>,
     pub right_torque_effectiveness: Option<f64>,
@@ -43,7 +44,7 @@ pub struct TrackPointColumns {
     pub step_length_mm: Vec<Option<f64>>,
     pub grade_percent: Vec<Option<f64>>,
     pub distance_m: Vec<Option<f64>>, // cumulative distance
-    pub left_right_balance: Vec<Option<f64>>,
+    pub left_right_balance: Vec<Option<f64>>, // % of power from the right pedal
     pub left_torque_effectiveness: Vec<Option<f64>>,
     pub right_torque_effectiveness: Vec<Option<f64>>,
     pub left_pedal_smoothness: Vec<Option<f64>>,

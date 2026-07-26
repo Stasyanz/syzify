@@ -47,7 +47,7 @@ export interface Activity {
   avg_right_torque_effectiveness: number | null;
   avg_left_pedal_smoothness: number | null;
   avg_right_pedal_smoothness: number | null;
-  avg_left_right_balance: number | null;
+  avg_left_right_balance: number | null; // % of power from the right pedal
   created_at: string;
   updated_at: string;
   /** The multisport container this activity is a merged leg of; null for
@@ -188,7 +188,7 @@ export interface TrackPointColumns {
   step_length_mm: (number | null)[];
   grade_percent: (number | null)[];
   distance_m: (number | null)[];
-  left_right_balance: (number | null)[];
+  left_right_balance: (number | null)[]; // % of power from the right pedal
   left_torque_effectiveness: (number | null)[];
   right_torque_effectiveness: (number | null)[];
   left_pedal_smoothness: (number | null)[];

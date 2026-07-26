@@ -46,6 +46,48 @@ fn compose_device_name(
     }
 }
 
+/// Decode a FIT left/right balance value to the RIGHT-pedal percentage.
+///
+/// The raw value carries a flag bit saying "the payload refers to the right
+/// pedal": record-level is uint8 (bit 7 = right, bits 0-6 = percent),
+/// session/lap-level (`scale100`) is uint16 (bit 15 = right, low bits =
+/// percent × 100). Stored raw it reads as nonsense (171 is really "right
+/// 43%"). A value without the flag has an UNDEFINED side per the FIT profile
+/// (real devices always set it) — dropped rather than guessed. The SDK also
+/// decodes a bare flag byte (0x80, no percentage) to the enum string
+/// "right"; that never reaches here because `field_to_f64` yields None.
+fn decode_lr_balance(raw: f64, scale100: bool) -> Option<f64> {
+    let (flag, max_scaled, scale) = if scale100 {
+        (f64::from(0x8000), 10_000.0, 100.0)
+    } else {
+        (f64::from(0x80), 100.0, 1.0)
+    };
+    let value = raw - flag;
+    if value < 0.0 || value > max_scaled {
+        return None;
+    }
+    Some(value / scale)
+}
+
+/// Choose which TimeInZone messages feed the activity's zone rows. Garmin
+/// writes one message per LAP plus one per SESSION (`reference_mesg` labels
+/// each); ingesting all of them duplicated every zone row — invisible today
+/// (the UI only reads boundaries, which dedup), but any "time in zones"
+/// feature would multiply times by the lap count + 1. Keep session-scoped
+/// messages when any exist; unlabeled files keep everything.
+fn select_time_in_zones(
+    groups: Vec<(Option<String>, Vec<TimeInZone>)>,
+) -> Vec<TimeInZone> {
+    let has_session = groups
+        .iter()
+        .any(|(r, _)| r.as_deref() == Some("session"));
+    groups
+        .into_iter()
+        .filter(|(r, _)| !has_session || r.as_deref() == Some("session"))
+        .flat_map(|(_, rows)| rows)
+        .collect()
+}
+
 /// Whether the file recorded a barometer channel (a device_info message with
 /// local_device_type == "barometer") — i.e. the altitude stream is barometric
 /// rather than GPS-derived. Exports advertise this in the GPX `creator` so
@@ -80,7 +122,9 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
     let mut laps: Vec<Lap> = Vec::new();
     let mut lengths: Vec<SwimLength> = Vec::new();
     let mut sets: Vec<ExerciseSet> = Vec::new();
-    let mut time_in_zones: Vec<TimeInZone> = Vec::new();
+    // One entry per TimeInZone message: (its reference_mesg, its rows).
+    // Resolved after the loop — see select_time_in_zones.
+    let mut time_in_zone_groups: Vec<(Option<String>, Vec<TimeInZone>)> = Vec::new();
     let mut hrv_samples: Vec<HrvSample> = Vec::new();
 
     for msg in &messages {
@@ -163,7 +207,8 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
                             tp.grade_percent = field_to_f64(field);
                         }
                         "left_right_balance" => {
-                            tp.left_right_balance = field_to_f64(field);
+                            tp.left_right_balance =
+                                field_to_f64(field).and_then(|v| decode_lr_balance(v, false));
                         }
                         "left_torque_effectiveness" => {
                             tp.left_torque_effectiveness = field_to_f64(field);
@@ -358,7 +403,8 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
                             sm.avg_right_pedal_smoothness = field_to_f64(field);
                         }
                         "left_right_balance" => {
-                            sm.avg_left_right_balance = field_to_f64(field);
+                            sm.avg_left_right_balance =
+                                field_to_f64(field).and_then(|v| decode_lr_balance(v, true));
                         }
                         _ => {}
                     }
@@ -576,6 +622,8 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
                 sets.push(set);
             }
             MesgNum::TimeInZone => {
+                let mut reference_mesg: Option<String> = None;
+                let mut time_in_zones: Vec<TimeInZone> = Vec::new();
                 let mut hr_times: Vec<f64> = Vec::new();
                 let mut power_times: Vec<f64> = Vec::new();
                 let mut cadence_times: Vec<f64> = Vec::new();
@@ -587,6 +635,9 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
 
                 for field in msg.fields() {
                     match field.name() {
+                        "reference_mesg" => {
+                            reference_mesg = Some(format!("{}", field.value()));
+                        }
                         "time_in_hr_zone" => {
                             hr_times = field_to_f64_vec(field);
                         }
@@ -661,6 +712,8 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
                         zone_high_boundary: speed_boundaries.get(i).copied(),
                     });
                 }
+
+                time_in_zone_groups.push((reference_mesg, time_in_zones));
             }
             MesgNum::Hrv => {
                 for field in msg.fields() {
@@ -728,7 +781,7 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
         laps,
         lengths,
         sets,
-        time_in_zones,
+        time_in_zones: select_time_in_zones(time_in_zone_groups),
         hrv_samples,
         legs,
     })
@@ -942,6 +995,59 @@ mod tests {
             resolve_sport(&["transition".to_string()]),
             Some("transition".to_string())
         );
+    }
+
+    /// Balance decoding: the flag bit says "payload = right pedal". Raw
+    /// record bytes like 171 mean right 43%, session values like 37026 mean
+    /// right 42.58% — stored raw they read as impossible percentages.
+    #[test]
+    fn decode_lr_balance_strips_flag_and_scales() {
+        // Record-level uint8: 128 + percent.
+        assert_eq!(decode_lr_balance(171.0, false), Some(43.0));
+        assert_eq!(decode_lr_balance(128.0, false), Some(0.0));
+        assert_eq!(decode_lr_balance(228.0, false), Some(100.0));
+        // Flagless side is undefined per the FIT profile → dropped.
+        assert_eq!(decode_lr_balance(43.0, false), None);
+        // 255 is the uint8 invalid marker (would be "right 127%").
+        assert_eq!(decode_lr_balance(255.0, false), None);
+
+        // Session-level uint16: 32768 + percent × 100.
+        assert_eq!(decode_lr_balance(37026.0, true), Some(42.58));
+        assert_eq!(decode_lr_balance(32768.0, true), Some(0.0));
+        assert_eq!(decode_lr_balance(42768.0, true), Some(100.0));
+        assert_eq!(decode_lr_balance(4258.0, true), None);
+        assert_eq!(decode_lr_balance(65535.0, true), None);
+    }
+
+    /// Garmin writes TimeInZone once per lap AND once per session; keeping
+    /// all of them duplicated every zone row (times × lap count + 1). Only
+    /// session-scoped messages survive when any exist; unlabeled files keep
+    /// everything.
+    #[test]
+    fn select_time_in_zones_prefers_session_scope() {
+        let row = |zone_type: &str, time_s: f64| TimeInZone {
+            id: None,
+            activity_id: "a".to_string(),
+            zone_type: zone_type.to_string(),
+            zone_index: 0,
+            time_s,
+            zone_high_boundary: None,
+        };
+        let groups = vec![
+            (Some("lap".to_string()), vec![row("hr", 100.0)]),
+            (Some("lap".to_string()), vec![row("hr", 200.0)]),
+            (Some("session".to_string()), vec![row("hr", 300.0), row("power", 250.0)]),
+        ];
+        let selected = select_time_in_zones(groups);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|z| z.time_s >= 250.0));
+
+        // No session-labeled message (or no labels at all) → keep everything.
+        let unlabeled = vec![
+            (None, vec![row("hr", 100.0)]),
+            (Some("lap".to_string()), vec![row("hr", 200.0)]),
+        ];
+        assert_eq!(select_time_in_zones(unlabeled).len(), 2);
     }
 
     #[test]

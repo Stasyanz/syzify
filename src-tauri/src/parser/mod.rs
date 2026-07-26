@@ -74,6 +74,7 @@ pub struct SessionMetrics {
     pub avg_right_torque_effectiveness: Option<f64>,
     pub avg_left_pedal_smoothness: Option<f64>,
     pub avg_right_pedal_smoothness: Option<f64>,
+    /// Power balance as the RIGHT-pedal percentage (FIT flag bit decoded).
     pub avg_left_right_balance: Option<f64>,
 }
 
