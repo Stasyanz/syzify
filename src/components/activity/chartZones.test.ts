@@ -8,6 +8,7 @@ import {
   DEFAULT_HR_RANGES,
   HR_FALLBACK_COLOR,
   HR_ZONE_COLORS,
+  POWER_ZONE_COLORS,
   hrVisRange,
   hrZoneRanges,
   powerVisRange,
@@ -77,8 +78,8 @@ describe("hrZoneRanges", () => {
 });
 
 describe("powerZoneRanges", () => {
-  it("builds ranges from power boundaries, ignoring hr rows", () => {
-    // Coggan-style 6 boundaries → 7 ranges, hottest on top.
+  it("builds ranges from power boundaries, one distinct color per zone", () => {
+    // Coggan-style 6 boundaries → 7 ranges — exactly the power palette.
     const ranges = powerZoneRanges([
       zone(0, 150, "power"),
       zone(1, 200, "power"),
@@ -92,10 +93,9 @@ describe("powerZoneRanges", () => {
     expect(ranges!).toHaveLength(7);
     expect(ranges![0].from).toBe(0);
     expect(ranges![6].to).toBe(Infinity);
-    expect(ranges![6].color).toBe(HR_ZONE_COLORS[4]);
-    // Extra bottom ranges share the coolest color.
-    expect(ranges![0].color).toBe(HR_ZONE_COLORS[0]);
-    expect(ranges![1].color).toBe(HR_ZONE_COLORS[0]);
+    // Every zone gets its own color — Z6 vs Z7 used to merge into one red.
+    expect(ranges!.map((r) => r.color)).toEqual(POWER_ZONE_COLORS);
+    expect(new Set(ranges!.map((r) => r.color)).size).toBe(7);
   });
 
   it("returns null without usable power boundaries — no FTP, no zones", () => {
@@ -110,10 +110,15 @@ describe("powerZoneRanges", () => {
     // session FTP (299 W here) then anchors the standard %-of-FTP zones.
     const ranges = powerZoneRanges([], 299);
     expect(ranges).not.toBeNull();
-    expect(ranges!).toHaveLength(7);
-    // 55/75/90/105/120/150% of 299, rounded to whole watts.
-    expect(ranges!.map((r) => r.to)).toEqual([164, 224, 269, 314, 359, 449, Infinity]);
-    expect(ranges![6].color).toBe(HR_ZONE_COLORS[4]);
+    // 7 Coggan zones + the all-out sprint band above 3×FTP.
+    expect(ranges!).toHaveLength(8);
+    // 55/75/90/105/120/150/300% of 299, rounded to whole watts.
+    expect(ranges!.map((r) => r.to)).toEqual([164, 224, 269, 314, 359, 449, 897, Infinity]);
+    expect(ranges!.slice(0, 7).map((r) => r.color)).toEqual(POWER_ZONE_COLORS);
+    // The sprint band has its own color — a 1000 W max effort no longer
+    // shares the Z7 purple with a 500 W surge.
+    expect(ranges![7].color).not.toBe(POWER_ZONE_COLORS[6]);
+    expect(new Set(ranges!.map((r) => r.color)).size).toBe(8);
   });
 
   it("real FIT boundaries beat the FTP fallback; bad FTP stays a line", () => {

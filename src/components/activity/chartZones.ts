@@ -75,6 +75,28 @@ export function hrZoneRanges(zones: TimeInZone[]): ZoneRange[] {
  * that for power while still writing HR boundaries). */
 const COGGAN_FTP_FACTORS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
 
+/** Coggan's Z7 is open-ended, which painted a 500 W surge and a 1000 W
+ * max sprint the same purple — an extra FTP-relative band separates all-out
+ * sprints. 3×FTP ≈ where trained riders' short max efforts live. */
+const SPRINT_FTP_FACTOR = 3.0;
+const SPRINT_COLOR = "#7a4a2b"; // brown — earthy top, visible in both themes
+
+/** Power palette, one hue per Coggan zone (recovery → neuromuscular). The
+ * 5-color HR palette left Z1–Z3 sharing green and Z6/Z7 both dark red —
+ * everything above ~1.2×FTP read as one color. House/earthy hues (the
+ * trailhead look — no purple); the sprint band above Z7 tops out brown.
+ * Neighbors differ in LIGHTNESS, not just hue (the a11y lesson from the
+ * elevation bands — hue-only steps vanish under red-green colorblindness). */
+export const POWER_ZONE_COLORS = [
+  "#86b273", // Z1 recovery (light green, from the elevation valley band)
+  "#4a9e5c", // Z2 endurance (green, same as HR recovery)
+  "#0e7490", // Z3 tempo (teal)
+  "#c9941a", // Z4 threshold (gold)
+  "#e07c3a", // Z5 VO2max (orange)
+  "#c0392b", // Z6 anaerobic (red)
+  "#8e1a0e", // Z7 neuromuscular (dark red)
+];
+
 /** Power zone ranges — the device's FIT boundaries first; else Coggan
  * %-of-FTP zones when the file carried an FTP (threshold_power). Power zones
  * hang off personal FTP, so with neither the chart stays a plain line. */
@@ -83,9 +105,15 @@ export function powerZoneRanges(
   ftpW?: number | null,
 ): ZoneRange[] | null {
   const bounds = zoneBoundaries(zones, "power");
-  if (bounds.length >= 2) return rangesFromBoundaries(bounds);
+  if (bounds.length >= 2) return rangesFromBoundaries(bounds, POWER_ZONE_COLORS);
   if (ftpW != null && isFinite(ftpW) && ftpW > 0) {
-    return rangesFromBoundaries(COGGAN_FTP_FACTORS.map((f) => Math.round(f * ftpW)));
+    // The sprint band rides ON TOP of the 7 Coggan zones — appended
+    // explicitly (boundary + color) rather than folded into the palette,
+    // so the device-boundary path above keeps its exact 7-color mapping.
+    return rangesFromBoundaries(
+      [...COGGAN_FTP_FACTORS, SPRINT_FTP_FACTOR].map((f) => Math.round(f * ftpW)),
+      [...POWER_ZONE_COLORS, SPRINT_COLOR],
+    );
   }
   return null;
 }
