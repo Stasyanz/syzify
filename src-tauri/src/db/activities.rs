@@ -490,6 +490,9 @@ pub fn get_record_badges(conn: &Connection, id: &str) -> Result<Vec<crate::model
     Ok(badges)
 }
 
+/// Title length cap in CHARS — mirrors MAX_TITLE_LENGTH in src/lib/types.ts.
+const MAX_TITLE_CHARS: usize = 100;
+
 pub fn update_activity(conn: &Connection, id: &str, updates: &ActivityUpdate) -> Result<()> {
     let mut sets: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -497,7 +500,10 @@ pub fn update_activity(conn: &Connection, id: &str, updates: &ActivityUpdate) ->
 
     if let Some(ref title) = updates.title {
         sets.push(format!("title = ?{}", idx));
-        param_values.push(Box::new(title.clone()));
+        // Backstop for the UI cap — an overlong title (old data, other
+        // callers) is truncated here too. chars(), not bytes: a UTF-8
+        // boundary slice would panic.
+        param_values.push(Box::new(title.chars().take(MAX_TITLE_CHARS).collect::<String>()));
         idx += 1;
     }
     if let Some(ref notes) = updates.notes {
@@ -1074,6 +1080,24 @@ mod tests {
         insert_activity(&conn, &recent).unwrap();
 
         assert_eq!(get_activity_year_range(&conn).unwrap(), Some((2019, 2026)));
+    }
+
+    /// The DB-layer backstop for the UI title cap: an overlong title is
+    /// truncated to 100 CHARS (multi-byte safe), not stored verbatim.
+    #[test]
+    fn update_activity_truncates_overlong_title() {
+        let conn = db::test_db();
+        insert_activity(&conn, &sample_activity("test-cap")).unwrap();
+
+        // Cyrillic (2 bytes/char) proves the cut counts chars, not bytes.
+        let long: String = "ы".repeat(150);
+        let upd = ActivityUpdate { title: Some(long), ..Default::default() };
+        update_activity(&conn, "test-cap", &upd).unwrap();
+
+        let loaded = get_activity_by_id(&conn, "test-cap").unwrap().unwrap();
+        let stored = loaded.title.unwrap();
+        assert_eq!(stored.chars().count(), 100);
+        assert_eq!(stored, "ы".repeat(100));
     }
 
     #[test]

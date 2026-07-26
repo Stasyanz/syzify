@@ -19,6 +19,7 @@ import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
 import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
+import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
 import { isFocusableLeg, legTimeWindow, sliceTrackpoints } from "../components/activity/legFocus";
 import { LapsTable } from "../components/activity/LapsTable";
@@ -297,7 +298,8 @@ export function ActivityDetailPage() {
     <div className="flex flex-col h-full min-h-0">
       {/* Header — fixed top bar with a bottom divider (matches the design) */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+        {/* flex-1 so the in-place title input gets real width to fill. */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={() => navigate("/library")}
             className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors shrink-0"
@@ -315,13 +317,20 @@ export function ActivityDetailPage() {
               invalidateActivityData(queryClient);
             }}
           />
-          <div className="min-w-0">
-            <h1
-              className="text-[21px] font-extrabold tracking-tight text-ink truncate leading-tight"
-              style={{ fontFamily: "var(--font-head)" }}
-            >
-              {activity.title ?? sportLabel}
-            </h1>
+          <div className="min-w-0 flex-1">
+            <InlineTitle
+              title={activity.title ?? sportLabel}
+              onSave={async (t) => {
+                try {
+                  await api.updateActivity(activity.id, { title: t });
+                  queryClient.invalidateQueries({ queryKey: ["activity", id] });
+                  queryClient.invalidateQueries({ queryKey: ["activities"] });
+                  queryClient.invalidateQueries({ queryKey: ["calendar"] });
+                } catch (e) {
+                  addToast("error", String(e));
+                }
+              }}
+            />
             <div className="flex items-center gap-2 mt-0.5 min-w-0 overflow-hidden">
               <span className="text-sm text-muted truncate" title={metaTitle}>{metaLine}</span>
               {activity.parent_id && (

@@ -286,6 +286,10 @@ export interface Tag {
  * most that can be assigned to a single activity while editing. */
 export const MAX_TAGS_PER_ACTIVITY = 3;
 
+/** Title length cap (in-place rename + edit modal) — keeps the detail
+ * header and list rows readable; Strava caps similarly. */
+export const MAX_TITLE_LENGTH = 100;
+
 export interface DaySummary {
   date: string; // "YYYY-MM-DD"
   activity_count: number;

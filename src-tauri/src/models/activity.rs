@@ -428,7 +428,7 @@ mod tests {
 }
 
 /// Fields that can be updated by the user
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ActivityUpdate {
     pub title: Option<String>,
     pub notes: Option<String>,

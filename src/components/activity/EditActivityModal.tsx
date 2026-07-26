@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { X, MapPin, Trash2 } from "lucide-react";
 import { api } from "../../lib/tauri";
-import { SPORT_LABELS, SPORT_TYPES, MAX_TAGS_PER_ACTIVITY, type Activity } from "../../lib/types";
+import { SPORT_LABELS, SPORT_TYPES, MAX_TAGS_PER_ACTIVITY, MAX_TITLE_LENGTH, type Activity } from "../../lib/types";
 import { Select } from "../ui/Select";
 import { SportIcon } from "../brand/SportIcon";
 import { useToastStore } from "../../stores/toastStore";
@@ -145,7 +145,7 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => setTitle(e.target.value.slice(0, MAX_TITLE_LENGTH))}
             placeholder="Activity title"
             className="w-full text-sm border border-border rounded px-3 py-2"
           />
