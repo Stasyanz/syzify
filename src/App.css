@@ -171,6 +171,10 @@ body {
   font-family: var(--font-body);
   background: var(--card-2);
 }
+/* Keep the attribution clear of the map's bottom-right resize grip. */
+.leaflet-bottom.leaflet-right .leaflet-control-attribution {
+  margin-right: 20px;
+}
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
   background: var(--card);

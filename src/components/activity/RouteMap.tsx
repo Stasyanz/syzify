@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, PopupAt, useMap, useMapEvents } from "../map/leaflet";
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -158,12 +158,24 @@ function MapClickHandler({
   return null;
 }
 
-function InvalidateSize({ isFullscreen }: { isFullscreen: boolean }) {
+function InvalidateSize({ isFullscreen, height }: { isFullscreen: boolean; height: number }) {
   const map = useMap();
   useEffect(() => {
     requestAnimationFrame(() => map.invalidateSize());
-  }, [map, isFullscreen]);
+  }, [map, isFullscreen, height]);
   return null;
+}
+
+// The map can be stretched vertically by its bottom-right grip: from the
+// default 320px (the old fixed h-80) up to +50%.
+export const MAP_DEFAULT_HEIGHT_PX = 320;
+export const MAP_MAX_HEIGHT_PX = MAP_DEFAULT_HEIGHT_PX * 1.5;
+
+/** Clamp a dragged/persisted map height into [default, default × 1.5].
+ * Exported pure for tests. */
+export function clampMapHeight(px: number): number {
+  if (!Number.isFinite(px)) return MAP_DEFAULT_HEIGHT_PX;
+  return Math.min(MAP_MAX_HEIGHT_PX, Math.max(MAP_DEFAULT_HEIGHT_PX, Math.round(px)));
 }
 
 const MAP_LAYERS = [
@@ -269,9 +281,14 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
     queryKey: ["setting", "map_layer"],
     queryFn: () => api.getSetting("map_layer"),
   });
+  const { data: savedHeight } = useQuery({
+    queryKey: ["setting", "map_height"],
+    queryFn: () => api.getSetting("map_height"),
+  });
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [layer, setLayer] = useState<LayerId>("osm");
+  const [height, setHeight] = useState(MAP_DEFAULT_HEIGHT_PX);
   // Правый клик по маршруту: снапнутая точка трека, на которой открыто меню.
   const [menuPoint, setMenuPoint] = useState<[number, number] | null>(null);
 
@@ -292,6 +309,36 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
       setLayer(savedLayer as LayerId);
     }
   }, [savedLayer]);
+
+  useEffect(() => {
+    if (savedHeight != null) setHeight(clampMapHeight(Number(savedHeight)));
+  }, [savedHeight]);
+
+  // Drag state for the bottom-right resize grip; pointer capture keeps the
+  // drag alive even when the cursor leaves the 20×20 handle.
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { startY: e.clientY, startHeight: height };
+  }, [height]);
+
+  const handleResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    setHeight(clampMapHeight(drag.startHeight + (e.clientY - drag.startY)));
+  }, []);
+
+  const handleResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setHeight((h) => {
+      api.setSetting("map_height", String(h)).catch(() => {});
+      return h;
+    });
+  }, []);
 
   useEffect(() => {
     if (!isFullscreen) return;
@@ -315,7 +362,10 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
   const end = positions[positions.length - 1];
 
   return (
-    <div className={isFullscreen ? "fixed inset-0 z-50 bg-bg" : "relative h-80"}>
+    <div
+      className={isFullscreen ? "fixed inset-0 z-50 bg-bg" : "relative"}
+      style={isFullscreen ? undefined : { height }}
+    >
       <MapContainer
         center={start}
         zoom={13}
@@ -359,7 +409,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
           </PopupAt>
         )}
         <FitBounds positions={positions} />
-        <InvalidateSize isFullscreen={isFullscreen} />
+        <InvalidateSize isFullscreen={isFullscreen} height={height} />
       </MapContainer>
       <LayerSwitcher layer={layer} onSelect={handleLayerSelect} />
       <button
@@ -373,6 +423,32 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
           <Maximize size={18} className="text-muted" />
         )}
       </button>
+      {!isFullscreen && (
+        // No data-tip here: its `position: relative` rule (App.css) beats the
+        // layered `absolute` utility, and a bottom-edge tooltip would dangle
+        // outside the map anyway — the ns-resize cursor is the affordance.
+        <div
+          className="absolute bottom-0 right-0 z-[1000] h-5 w-5 cursor-ns-resize touch-none text-muted hover:text-ink"
+          onPointerDown={handleResizeStart}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            className="pointer-events-none absolute bottom-1 right-1"
+          >
+            <path
+              d="M9 1L1 9M9 5L5 9"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }

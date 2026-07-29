@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import L from "leaflet";
-import { hoverLines, findNearestPointIndex } from "./RouteMap";
+import {
+  hoverLines,
+  findNearestPointIndex,
+  clampMapHeight,
+  MAP_DEFAULT_HEIGHT_PX,
+  MAP_MAX_HEIGHT_PX,
+} from "./RouteMap";
 import type { TrackPointColumns } from "../../lib/types";
 
 /** Single-point track with the given metrics (null = channel absent). */
@@ -92,5 +98,24 @@ describe("findNearestPointIndex", () => {
     // ~111 m from the nearest point: outside 50 m, inside 200 m.
     expect(findNearestPointIndex(track, L.latLng(55.703, 37.6))).toBe(-1);
     expect(findNearestPointIndex(track, L.latLng(55.703, 37.6), 200)).toBe(2);
+  });
+});
+
+describe("clampMapHeight", () => {
+  it("passes in-range heights through, rounded to whole pixels", () => {
+    expect(clampMapHeight(400)).toBe(400);
+    expect(clampMapHeight(400.6)).toBe(401);
+  });
+
+  it("never shrinks below the default and never grows past +50%", () => {
+    expect(clampMapHeight(100)).toBe(MAP_DEFAULT_HEIGHT_PX);
+    expect(clampMapHeight(10_000)).toBe(MAP_MAX_HEIGHT_PX);
+    expect(MAP_MAX_HEIGHT_PX).toBe(MAP_DEFAULT_HEIGHT_PX * 1.5);
+  });
+
+  it("falls back to the default for garbage persisted values", () => {
+    // Number("banana") from a corrupted setting must not produce NaN height.
+    expect(clampMapHeight(NaN)).toBe(MAP_DEFAULT_HEIGHT_PX);
+    expect(clampMapHeight(Infinity)).toBe(MAP_DEFAULT_HEIGHT_PX);
   });
 });
