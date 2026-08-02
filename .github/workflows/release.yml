@@ -94,6 +94,9 @@ jobs:
           # Idempotent: re-running the tag updates assets instead of failing.
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber "${files[@]}"
+            # Deleting + re-pushing a tag flips its release into a draft —
+            # re-publish it, or the "successful" run leaves no visible release.
+            gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
           else
             gh release create "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
