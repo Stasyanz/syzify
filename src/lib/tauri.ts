@@ -146,6 +146,11 @@ export const api = {
   relocateVault: (destPath: string) =>
     invoke<string>("relocate_vault", { destPath }),
 
+  /** Point the app at another vault root without moving data (boot-error
+   * screen only); caller restarts the app afterwards. */
+  switchVault: (destPath: string, expectExisting: boolean) =>
+    invoke<string>("switch_vault", { destPath, expectExisting }),
+
   restartApp: () =>
     invoke<void>("restart_app"),
 

@@ -260,6 +260,35 @@ pub async fn relocate_vault(
     .map_err(|e| format!("Relocate task failed: {}", e))?
 }
 
+/// Point the app at a different vault root WITHOUT moving any data: write the
+/// location marker and let the caller restart. Only allowed while the current
+/// vault failed to open (the boot-error screen) — with a healthy vault this
+/// would silently abandon it, so relocate_vault is the way then. With
+/// `expect_existing` the picked folder must already hold a vault.db; otherwise
+/// an empty folder (or its `Syzify` subfolder) gets a fresh vault on reboot.
+#[tauri::command]
+pub fn switch_vault(
+    dest_path: String,
+    expect_existing: bool,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
+    if state.vault_error.lock().map_err(|e| e.to_string())?.is_none() {
+        return Err("Vault is open — use Move vault in Settings instead".into());
+    }
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("No config dir: {}", e))?;
+    let dest = Path::new(&dest_path);
+    let root = vault::resolve_switch_root(dest)?;
+    if expect_existing && !root.join("vault.db").is_file() {
+        return Err(format!("No vault found in \"{}\"", dest.display()));
+    }
+    vault::write_location(&config_dir, &root)?;
+    Ok(root.to_string_lossy().to_string())
+}
+
 /// Relaunch the app — used after a vault relocation so every service picks up
 /// the new location.
 #[tauri::command]

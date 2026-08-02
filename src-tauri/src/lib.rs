@@ -385,6 +385,7 @@ pub fn run() {
             commands::settings::get_vault_path,
             commands::settings::get_vault_error,
             commands::settings::relocate_vault,
+            commands::settings::switch_vault,
             commands::settings::restart_app,
             commands::settings::get_detected_devices,
             commands::settings::preview_watch_folders,

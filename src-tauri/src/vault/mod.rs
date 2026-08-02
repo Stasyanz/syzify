@@ -53,6 +53,17 @@ pub fn resolve_target_root(dest: &Path) -> Result<PathBuf, String> {
     ))
 }
 
+/// Resolve the vault root for SWITCHING (no data is moved, unlike relocate):
+/// a folder that already contains a vault.db is opened as-is; anything else
+/// follows the relocate rules (empty/missing dir, or its `Syzify` subfolder),
+/// and the boot path creates a fresh vault there.
+pub fn resolve_switch_root(dest: &Path) -> Result<PathBuf, String> {
+    if dest.join("vault.db").is_file() {
+        return Ok(dest.to_path_buf());
+    }
+    resolve_target_root(dest)
+}
+
 fn is_missing_or_empty(path: &Path) -> Result<bool, String> {
     if !path.exists() {
         return Ok(true);
@@ -279,6 +290,28 @@ mod tests {
         fs::create_dir(busy.join("Syzify")).unwrap();
         fs::write(busy.join("Syzify/y.txt"), b"y").unwrap();
         assert!(resolve_target_root(&busy).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn switch_root_prefers_existing_vault_over_relocate_rules() {
+        let tmp = test_dir("switch_root");
+        // A folder holding a vault.db is used as-is, even though it is
+        // non-empty (relocate rules would divert to a Syzify subfolder).
+        let existing = tmp.join("existing");
+        fs::create_dir(&existing).unwrap();
+        fs::write(existing.join("vault.db"), b"db").unwrap();
+        assert_eq!(resolve_switch_root(&existing).unwrap(), existing);
+
+        // No vault.db → relocate rules: empty dir itself, busy dir's subfolder.
+        let empty = tmp.join("empty");
+        fs::create_dir(&empty).unwrap();
+        assert_eq!(resolve_switch_root(&empty).unwrap(), empty);
+
+        let busy = tmp.join("busy");
+        fs::create_dir(&busy).unwrap();
+        fs::write(busy.join("x.txt"), b"x").unwrap();
+        assert_eq!(resolve_switch_root(&busy).unwrap(), busy.join("Syzify"));
         let _ = fs::remove_dir_all(&tmp);
     }
 

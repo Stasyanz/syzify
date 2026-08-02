@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library } from "./routes/Library";
@@ -33,8 +33,29 @@ const queryClient = new QueryClient({
  * Full Disk Access. Recoverable: grant access (or move the vault back) and
  * reopen. Replaces the previous hard crash at startup.
  */
-function VaultErrorScreen({ message }: { message: string }) {
+export function VaultErrorScreen({ message }: { message: string }) {
   const protectedFolder = /Documents|Desktop|Downloads/.test(message);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+
+  // Point the app at another vault (or an empty folder for a fresh one)
+  // without touching the unopenable vault's data, then restart.
+  const pickVault = async (expectExisting: boolean) => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      directory: true,
+      title: expectExisting
+        ? "Open an existing vault folder"
+        : "Choose an empty folder for the new vault",
+    });
+    if (typeof selected !== "string") return;
+    try {
+      await api.switchVault(selected, expectExisting);
+      await api.restartApp();
+    } catch (e) {
+      setSwitchError(String(e));
+    }
+  };
+
   return (
     <div className="h-screen flex items-center justify-center bg-bg p-8">
       <div className="max-w-md text-center space-y-4">
@@ -54,6 +75,18 @@ function VaultErrorScreen({ message }: { message: string }) {
         >
           Reopen
         </button>
+        <div className="flex items-center justify-center gap-2">
+          <button onClick={() => pickVault(true)} className="btn ghost">
+            Open another vault…
+          </button>
+          <button onClick={() => pickVault(false)} className="btn ghost">
+            Create new vault…
+          </button>
+        </div>
+        <p className="text-xs text-muted">
+          The current vault's files stay where they are.
+        </p>
+        {switchError && <p className="text-sm text-red-500">{switchError}</p>}
       </div>
     </div>
   );
