@@ -190,16 +190,17 @@ mod tests {
     }
 
     #[test]
-    fn committed_smart_route_package_verifies() {
-        // Cross-checks the pack-plugin tool against this verifier: the committed
-        // .syzify-ext must open and verify against the publicKey in its manifest.
+    fn packed_smart_route_package_verifies() {
+        // Cross-checks the pack-plugin tool against this verifier: the packaged
+        // .syzify-ext (built locally or by the CI fixtures step — it is
+        // gitignored) must open and verify against the publicKey in its manifest.
         let path = Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../examples/plugins/smart-route/com.syzify.example.smart-route.syzify-ext"
         ));
         assert!(
             path.exists(),
-            "missing committed {} — repackage with tools/pack-plugin",
+            "missing {} — package it with tools/pack-plugin (see examples/plugins/README.md)",
             path.display()
         );
         let pkg = open_package(path).unwrap();

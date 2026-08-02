@@ -111,7 +111,8 @@ mod tests {
         Ok(r#"{"distance_m":10000.0,"duration_s":3000.0}"#.to_string())
     });
 
-    // The reference wasm is committed; fail loudly (not silently skip) if it's
+    // The reference wasm is built locally / by the CI fixtures step (it is
+    // gitignored); fail loudly (not silently skip) if it's
     // missing, so a broken artifact can't pass as a green security test.
     fn reference_wasm() -> &'static str {
         let wasm = concat!(
@@ -180,7 +181,7 @@ mod tests {
         );
         assert!(
             std::path::Path::new(wasm).exists(),
-            "missing committed {wasm} — rebuild the smart-route example"
+            "missing {wasm} — rebuild the smart-route example (see examples/plugins/README.md)"
         );
 
         // Built with NO allowed_hosts. The plugin tries to reach open-meteo, so

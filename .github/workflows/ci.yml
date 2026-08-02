@@ -42,9 +42,29 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            examples/plugins/consistency-widget
+            examples/plugins/smart-route
+            tools/pack-plugin
+      # The plugin runtime/package tests load the example artifacts from disk;
+      # they are gitignored (licensing hygiene), so build them here the same
+      # way examples/plugins/README.md tells a developer to.
+      - name: Build plugin test fixtures
+        run: |
+          for p in consistency-widget smart-route; do
+            cargo build --release --target wasm32-unknown-unknown \
+              --manifest-path "examples/plugins/$p/Cargo.toml"
+          done
+          cp examples/plugins/consistency-widget/target/wasm32-unknown-unknown/release/consistency_widget.wasm \
+             examples/plugins/consistency-widget/plugin.wasm
+          cp examples/plugins/smart-route/target/wasm32-unknown-unknown/release/smart_route.wasm \
+             examples/plugins/smart-route/plugin.wasm
+          cargo run --manifest-path tools/pack-plugin/Cargo.toml -- examples/plugins/smart-route
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
