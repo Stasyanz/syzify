@@ -294,6 +294,39 @@ export function FilterDrawer() {
         </div>
 
         <div className="filters-body scroll-themed">
+          {/* Sort (list only) — first: at the drawer's bottom its dropdown
+              had no room to open. */}
+          {viewMode === "list" && (
+            <div className="fgroup">
+              <div className="fh">Sort by</div>
+              <div className="field">
+                <Select
+                  ariaLabel="Sort by"
+                  className="flex-1"
+                  value={filters.sort_by ?? "date"}
+                  onChange={(v) => setFilters({ sort_by: v })}
+                  options={[
+                    { value: "date", label: "Date" },
+                    { value: "distance", label: "Distance" },
+                    { value: "duration", label: "Duration" },
+                    { value: "elevation", label: "Elevation" },
+                  ]}
+                />
+                <button
+                  onClick={() => setFilters({ sort_dir: filters.sort_dir === "asc" ? "desc" : "asc" })}
+                  className="grid place-items-center w-8 h-8 border border-border-2 rounded-[7px] bg-card text-muted hover:text-ink"
+                  title={filters.sort_dir === "asc" ? "Ascending" : "Descending"}
+                >
+                  {filters.sort_dir === "asc" ? (
+                    <ArrowUpNarrowWide size={16} />
+                  ) : (
+                    <ArrowDownNarrowWide size={16} />
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Search — free-text over title / notes / location */}
           <div className="fgroup">
             <div className="fsearch">
@@ -456,38 +489,6 @@ export function FilterDrawer() {
               />
             </div>
           </div>
-
-          {/* Sort (list only) */}
-          {viewMode === "list" && (
-            <div className="fgroup">
-              <div className="fh">Sort by</div>
-              <div className="field">
-                <Select
-                  ariaLabel="Sort by"
-                  className="flex-1"
-                  value={filters.sort_by ?? "date"}
-                  onChange={(v) => setFilters({ sort_by: v })}
-                  options={[
-                    { value: "date", label: "Date" },
-                    { value: "distance", label: "Distance" },
-                    { value: "duration", label: "Duration" },
-                    { value: "elevation", label: "Elevation" },
-                  ]}
-                />
-                <button
-                  onClick={() => setFilters({ sort_dir: filters.sort_dir === "asc" ? "desc" : "asc" })}
-                  className="grid place-items-center w-8 h-8 border border-border-2 rounded-[7px] bg-card text-muted hover:text-ink"
-                  title={filters.sort_dir === "asc" ? "Ascending" : "Descending"}
-                >
-                  {filters.sort_dir === "asc" ? (
-                    <ArrowUpNarrowWide size={16} />
-                  ) : (
-                    <ArrowDownNarrowWide size={16} />
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="filters-foot">
