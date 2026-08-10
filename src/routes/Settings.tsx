@@ -23,10 +23,9 @@ import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
 import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
+import { CONTACT_EMAIL } from "../lib/contact";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
-
-const CONTACT_EMAIL = import.meta.env.VITE_CONTACT_EMAIL ?? "";
 // Public repo is not up yet — set VITE_GITHUB_URL (or fill here) when it is.
 const GITHUB_URL = import.meta.env.VITE_GITHUB_URL ?? "";
 

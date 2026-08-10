@@ -4,8 +4,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useFeedbackStore } from "../../stores/feedbackStore";
 import { useToastStore } from "../../stores/toastStore";
 import { Select } from "../ui/Select";
+import { CONTACT_EMAIL } from "../../lib/contact";
 
-const CONTACT_EMAIL = import.meta.env.VITE_CONTACT_EMAIL ?? "";
 const APP_VERSION = __APP_VERSION__;
 
 type Category = "bug" | "feature";
