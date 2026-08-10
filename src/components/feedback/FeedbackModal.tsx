@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X, Copy } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useFeedbackStore } from "../../stores/feedbackStore";
 import { useToastStore } from "../../stores/toastStore";
 import { Select } from "../ui/Select";
 import { CONTACT_EMAIL } from "../../lib/contact";
+import { copyText } from "../../lib/clipboard";
 
 const APP_VERSION = __APP_VERSION__;
 
@@ -14,16 +15,10 @@ export function buildMailtoUrl(
   to: string,
   category: Category,
   message: string,
-  replyEmail: string,
 ): string {
   const subjectPrefix = category === "bug" ? "Bug Report" : "Feature Request";
   const subject = `[${subjectPrefix}] Feedback from Syzify`;
-  const body = [
-    message,
-    "",
-    `Reply to: ${replyEmail}`,
-    `App version: ${APP_VERSION}`,
-  ].join("\n");
+  const body = [message, "", `App version: ${APP_VERSION}`].join("\n");
 
   const params = new URLSearchParams({ subject, body });
   return `mailto:${encodeURIComponent(to)}?${params.toString()}`;
@@ -36,7 +31,6 @@ export function FeedbackModal() {
 
   const [category, setCategory] = useState<Category>("bug");
   const [message, setMessage] = useState("");
-  const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (!isOpen) return null;
@@ -46,9 +40,6 @@ export function FeedbackModal() {
     if (message.trim().length < 10) {
       errs.message = "Message must be at least 10 characters";
     }
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      errs.email = "Please enter a valid email address";
-    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -56,17 +47,24 @@ export function FeedbackModal() {
   async function handleSend() {
     if (!validate()) return;
 
-    const url = buildMailtoUrl(CONTACT_EMAIL, category, message.trim(), email.trim());
+    const url = buildMailtoUrl(CONTACT_EMAIL, category, message.trim());
     try {
       await openUrl(url);
       addToast("info", "Email client opened — please send the email");
       close();
       setCategory("bug");
       setMessage("");
-      setEmail("");
       setErrors({});
     } catch (err) {
       addToast("error", `Failed to open email client: ${err}`);
+    }
+  }
+
+  async function handleCopyAddress() {
+    if (await copyText(CONTACT_EMAIL)) {
+      addToast("success", "Address copied");
+    } else {
+      addToast("error", "Copy failed — select the address manually");
     }
   }
 
@@ -119,25 +117,24 @@ export function FeedbackModal() {
           )}
         </div>
 
-        {/* Reply email */}
-        <div>
-          <label className="text-xs text-muted block mb-1">Your email (for reply)</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className={`w-full text-sm border rounded px-3 py-2 ${
-              errors.email ? "border-red-300" : "border-border"
-            }`}
-          />
-          {errors.email && (
-            <p className="text-xs text-red-500 mt-0.5">{errors.email}</p>
-          )}
-        </div>
-
         <p className="text-xs text-faint">
           You can attach screenshots directly in your email client
+        </p>
+
+        {/* Escape hatch for machines with no default mail client:
+            Send opens nothing there, so show the address itself. */}
+        <p className="text-xs text-faint">
+          No email client? Write to{" "}
+          <span className="text-muted select-text">{CONTACT_EMAIL}</span>{" "}
+          <button
+            type="button"
+            onClick={handleCopyAddress}
+            className="align-middle text-faint hover:text-muted"
+            data-tip="Copy address"
+            aria-label="Copy address"
+          >
+            <Copy size={12} />
+          </button>
         </p>
 
         {/* Actions */}
