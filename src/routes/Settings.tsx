@@ -23,11 +23,9 @@ import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
 import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
-import { CONTACT_EMAIL } from "../lib/contact";
+import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
-// Public repo is not up yet — set VITE_GITHUB_URL (or fill here) when it is.
-const GITHUB_URL = import.meta.env.VITE_GITHUB_URL ?? "";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -482,11 +480,18 @@ export function SettingsPage() {
             <div>
               <div className="sl">Feedback</div>
               <div className="sd">
-                Report a bug or suggest a feature
+                Report a bug or suggest a feature on{" "}
+                <a
+                  href={GITHUB_ISSUES_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-2 hover:underline"
+                >
+                  GitHub Issues
+                </a>
                 {CONTACT_EMAIL && (
                   <>
-                    {" "}
-                    Or email{" "}
+                    , or email{" "}
                     <a
                       href={`mailto:${CONTACT_EMAIL}`}
                       className="text-accent-2 hover:underline"
@@ -499,19 +504,19 @@ export function SettingsPage() {
             </div>
             <div className="flex gap-2">
               <a
-                href={GITHUB_URL || undefined}
+                href={GITHUB_ISSUES_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="iconbtn no-underline"
-                title="GitHub"
-                aria-label="GitHub"
+                data-tip="GitHub Issues"
+                aria-label="GitHub Issues"
               >
                 <Github size={15} />
               </a>
               <button
                 onClick={() => useFeedbackStore.getState().open()}
                 className="iconbtn"
-                title="Send feedback"
+                data-tip="Send feedback"
                 aria-label="Send feedback"
               >
                 <Mail size={15} />

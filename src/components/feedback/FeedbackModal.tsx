@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useFeedbackStore } from "../../stores/feedbackStore";
 import { useToastStore } from "../../stores/toastStore";
 import { Select } from "../ui/Select";
-import { CONTACT_EMAIL } from "../../lib/contact";
+import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../../lib/contact";
 import { copyText } from "../../lib/clipboard";
 
 const APP_VERSION = __APP_VERSION__;
@@ -135,6 +135,18 @@ export function FeedbackModal() {
           >
             <Copy size={12} />
           </button>
+        </p>
+
+        <p className="text-xs text-faint">
+          Prefer GitHub?{" "}
+          <a
+            href={GITHUB_ISSUES_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted hover:underline"
+          >
+            Open an issue
+          </a>
         </p>
 
         {/* Actions */}
