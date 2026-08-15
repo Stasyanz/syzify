@@ -8,19 +8,26 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     // fall through to execCommand
   }
+  const previousFocus = document.activeElement;
   const ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
+  ta.style.top = "0";
+  ta.style.left = "-9999px";
   ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
   let ok = false;
   try {
+    document.body.appendChild(ta);
+    ta.select();
     ok = document.execCommand("copy");
   } catch {
     ok = false;
+  } finally {
+    ta.remove();
+    if (previousFocus instanceof HTMLElement) {
+      previousFocus.focus();
+    }
   }
-  document.body.removeChild(ta);
   return ok;
 }

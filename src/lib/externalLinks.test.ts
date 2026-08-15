@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { isExternalHttpHref } from "./externalLinks";
+// @vitest-environment happy-dom
+import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { isExternalHttpHref, initExternalLinks } from "./externalLinks";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const APP = "tauri://localhost";
 
@@ -30,5 +37,52 @@ describe("isExternalHttpHref", () => {
 
   it("returns false for an unparseable href", () => {
     expect(isExternalHttpHref("http://[bad", APP)).toBe(false);
+  });
+});
+
+describe("initExternalLinks", () => {
+  // the listener is delegated on document and stays registered for the
+  // process lifetime, so install it once for this file rather than per test
+  beforeAll(() => {
+    initExternalLinks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = "";
+  });
+
+  function clickAnchor(href: string): MouseEvent {
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    document.body.appendChild(anchor);
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    });
+    anchor.dispatchEvent(event);
+    return event;
+  }
+
+  it("intercepts clicks on external http(s) links and opens them via the system browser", () => {
+    const event = clickAnchor("https://leafletjs.com/some/path");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(openUrl).toHaveBeenCalledWith("https://leafletjs.com/some/path");
+  });
+
+  it("does not intercept mailto: links", () => {
+    const event = clickAnchor("mailto:a@b.com");
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept relative/same-origin links", () => {
+    const event = clickAnchor("/activity/123");
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
   });
 });

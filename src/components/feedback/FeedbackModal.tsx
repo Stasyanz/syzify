@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, Copy } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useFeedbackStore } from "../../stores/feedbackStore";
@@ -8,6 +8,7 @@ import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../../lib/contact";
 import { copyText } from "../../lib/clipboard";
 
 const APP_VERSION = __APP_VERSION__;
+const MAX_MESSAGE_LENGTH = 1500;
 
 type Category = "bug" | "feature";
 
@@ -20,8 +21,13 @@ export function buildMailtoUrl(
   const subject = `[${subjectPrefix}] Feedback from Syzify`;
   const body = [message, "", `App version: ${APP_VERSION}`].join("\n");
 
-  const params = new URLSearchParams({ subject, body });
-  return `mailto:${encodeURIComponent(to)}?${params.toString()}`;
+  // mailto: query is a plain RFC 3986 URI, not application/x-www-form-urlencoded —
+  // "+" is a literal character there, so URLSearchParams (which encodes space
+  // as "+") corrupts subject/body in strict mail clients. encodeURIComponent
+  // gives %20 for spaces instead. The recipient is a known-shape constant
+  // ("@" is valid unencoded per RFC 6068), so it's left as-is: some handlers
+  // don't decode it and would silently fail to address the email.
+  return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 export function FeedbackModal() {
@@ -32,6 +38,11 @@ export function FeedbackModal() {
   const [category, setCategory] = useState<Category>("bug");
   const [message, setMessage] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Transient "can't type further" flash when the message hits the cap.
+  const [limitHit, setLimitHit] = useState(false);
+  const limitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(limitTimer.current), []);
 
   if (!isOpen) return null;
 
@@ -105,15 +116,36 @@ export function FeedbackModal() {
           <label className="text-xs text-muted block mb-1">Message</label>
           <textarea
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v.length > MAX_MESSAGE_LENGTH) {
+                setMessage(v.slice(0, MAX_MESSAGE_LENGTH));
+                setLimitHit(true);
+                clearTimeout(limitTimer.current);
+                limitTimer.current = setTimeout(() => setLimitHit(false), 1500);
+              } else {
+                setMessage(v);
+              }
+            }}
             rows={4}
+            maxLength={MAX_MESSAGE_LENGTH}
             placeholder="Describe the issue or suggestion..."
             className={`w-full text-sm border rounded px-3 py-2 resize-y ${
-              errors.message ? "border-red-300" : "border-border"
+              limitHit
+                ? "border-red-500"
+                : errors.message
+                  ? "border-red-300"
+                  : "border-border"
             }`}
           />
-          {errors.message && (
-            <p className="text-xs text-red-500 mt-0.5">{errors.message}</p>
+          {limitHit ? (
+            <p role="status" className="text-xs text-red-500 mt-0.5">
+              Max {MAX_MESSAGE_LENGTH} characters
+            </p>
+          ) : (
+            errors.message && (
+              <p className="text-xs text-red-500 mt-0.5">{errors.message}</p>
+            )
           )}
         </div>
 
@@ -122,20 +154,24 @@ export function FeedbackModal() {
         </p>
 
         {/* Escape hatch for machines with no default mail client:
-            Send opens nothing there, so show the address itself. */}
-        <p className="text-xs text-faint">
-          No email client? Write to{" "}
-          <span className="text-muted select-text">{CONTACT_EMAIL}</span>{" "}
-          <button
-            type="button"
-            onClick={handleCopyAddress}
-            className="align-middle text-faint hover:text-muted"
-            data-tip="Copy address"
-            aria-label="Copy address"
-          >
-            <Copy size={12} />
-          </button>
-        </p>
+            Send opens nothing there, so show the address itself. Hidden
+            entirely when CONTACT_EMAIL is unset — an empty address has
+            nothing to show or copy. */}
+        {CONTACT_EMAIL && (
+          <p className="text-xs text-faint">
+            No email client? Write to{" "}
+            <span className="text-muted">{CONTACT_EMAIL}</span>{" "}
+            <button
+              type="button"
+              onClick={handleCopyAddress}
+              className="align-middle text-faint hover:text-muted"
+              data-tip="Copy address"
+              aria-label="Copy address"
+            >
+              <Copy size={12} />
+            </button>
+          </p>
+        )}
 
         <p className="text-xs text-faint">
           Prefer GitHub?{" "}

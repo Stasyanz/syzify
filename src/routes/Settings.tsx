@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -495,6 +496,15 @@ export function SettingsPage() {
                     <a
                       href={`mailto:${CONTACT_EMAIL}`}
                       className="text-accent-2 hover:underline"
+                      onClick={(e) => {
+                        // WKWebView doesn't handle mailto: itself and the
+                        // external-link interceptor skips non-http(s)
+                        // schemes, so route it through the opener plugin.
+                        e.preventDefault();
+                        openUrl(`mailto:${CONTACT_EMAIL}`).catch((err) => {
+                          addToast("error", `Failed to open email client: ${err}`);
+                        });
+                      }}
                     >
                       {CONTACT_EMAIL}
                     </a>

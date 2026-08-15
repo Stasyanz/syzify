@@ -5,6 +5,8 @@ import { copyText } from "./clipboard";
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // assigning document.execCommand directly isn't undone by restoreAllMocks
+  delete (document as any).execCommand;
 });
 
 describe("copyText", () => {
@@ -19,13 +21,37 @@ describe("copyText", () => {
   it("falls back to execCommand when the Clipboard API rejects", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
     vi.stubGlobal("navigator", { clipboard: { writeText } });
-    // jsdom has no execCommand — define it for the fallback path
-    const execCommand = vi.fn().mockReturnValue(true);
+    // happy-dom has no execCommand — define it for the fallback path
+    let captured: string | undefined;
+    const execCommand = vi.fn().mockImplementation(() => {
+      captured = document.querySelector("textarea")?.value;
+      return true;
+    });
     document.execCommand = execCommand;
+
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+    expect(document.activeElement).toBe(button);
 
     expect(await copyText("fallback text")).toBe(true);
     expect(execCommand).toHaveBeenCalledWith("copy");
+    // the fallback must operate on the text passed in, not stale state
+    expect(captured).toBe("fallback text");
     // the temp textarea must not leak into the DOM
+    expect(document.querySelector("textarea")).toBeNull();
+    // focus must return to whatever had it before the copy attempt
+    expect(document.activeElement).toBe(button);
+
+    document.body.removeChild(button);
+  });
+
+  it("returns false when execCommand reports failure without throwing", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    document.execCommand = vi.fn().mockReturnValue(false);
+
+    expect(await copyText("nope")).toBe(false);
     expect(document.querySelector("textarea")).toBeNull();
   });
 

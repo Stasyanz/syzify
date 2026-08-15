@@ -1,7 +1,9 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { readFileSync } from "fs";
+import { configDefaults } from "vitest/config";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -35,5 +37,11 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  test: {
+    // Without this, vitest run from the main checkout also picks up
+    // worktree copies of the test suite under .claude/worktrees/**.
+    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
   },
 }));
