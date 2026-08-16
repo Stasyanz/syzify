@@ -52,14 +52,37 @@ const ATTRIBUTIONS: Record<LayerId, string> = {
   dark: '&copy; <a href="https://carto.com">CartoDB</a>',
 };
 
-function FitBounds({ positions }: { positions: L.LatLngExpression[] }) {
+/** Last view the user left the map in, tagged with the dataset signature it
+ * was seen on. Module scope on purpose: the map unmounts when navigating
+ * into a workout, and this survives the round trip (but resets with the
+ * app, unlike a persisted setting). */
+export const lastMapView: {
+  current: { center: L.LatLng; zoom: number; sig: string } | null;
+} = { current: null };
+
+export function FitBounds({
+  positions,
+  sig,
+}: {
+  positions: L.LatLngExpression[];
+  sig: string;
+}) {
   const map = useMap();
   useEffect(() => {
+    // Restore while the dataset is the one the view was left on; a changed
+    // sig (filters) refits instead. Signature matching, not a did-run ref:
+    // restoring is idempotent, so StrictMode's double-effect can't flip the
+    // second run into the fitBounds branch.
+    const saved = lastMapView.current;
+    if (saved && saved.sig === sig) {
+      map.setView(saved.center, saved.zoom, { animate: false });
+      return;
+    }
     if (positions.length > 0) {
       const bounds = L.latLngBounds(positions);
       map.fitBounds(bounds, { padding: [40, 40] });
     }
-  }, [map, positions]);
+  }, [map, positions, sig]);
   return null;
 }
 
@@ -72,9 +95,23 @@ function InvalidateSize({ isFullscreen }: { isFullscreen: boolean }) {
   return null;
 }
 
-/** Report the live zoom level so clustering can re-bucket on every zoom. */
-function ZoomTracker({ onZoom }: { onZoom: (zoom: number) => void }) {
-  const map = useMapEvents({ zoomend: () => onZoom(map.getZoom()) });
+/** Report the live zoom level so clustering can re-bucket on every zoom,
+ * and record the view for restoring after a detail-page round trip. */
+export function ViewTracker({
+  onZoom,
+  sig,
+}: {
+  onZoom: (zoom: number) => void;
+  sig: string;
+}) {
+  const map = useMapEvents({
+    zoomend: () => onZoom(map.getZoom()),
+    // moveend also fires after every zoom, so it alone keeps the record fresh.
+    moveend: () => {
+      lastMapView.current = { center: map.getCenter(), zoom: map.getZoom(), sig };
+      onZoom(map.getZoom());
+    },
+  });
   useEffect(() => onZoom(map.getZoom()), [map, onZoom]);
   return null;
 }
@@ -261,6 +298,15 @@ export function ActivitiesMap() {
     [locations],
   );
 
+  // Cheap content signature of the dataset (count + endpoints): ties the
+  // saved view to the data it was seen on, so a refetch of identical data
+  // restores while a filter change refits.
+  const viewSig = useMemo(
+    () =>
+      `${positions.length}:${positions[0] ?? ""}:${positions[positions.length - 1] ?? ""}`,
+    [positions],
+  );
+
   const { data: savedLayer } = useQuery({
     queryKey: ["setting", "map_layer"],
     queryFn: () => api.getSetting("map_layer"),
@@ -311,7 +357,7 @@ export function ActivitiesMap() {
           attribution={ATTRIBUTIONS[layer]}
           url={tileUrl}
         />
-        <ZoomTracker onZoom={setZoom} />
+        <ViewTracker onZoom={setZoom} sig={viewSig} />
         {clusters.map((cluster, i) =>
           cluster.members.length === 1 ? (
             (() => {
@@ -345,7 +391,7 @@ export function ActivitiesMap() {
             />
           ),
         )}
-        <FitBounds positions={positions} />
+        <FitBounds positions={positions} sig={viewSig} />
         <InvalidateSize isFullscreen={isFullscreen} />
       </MapContainer>
       <LayerSwitcher layer={layer} onSelect={handleLayerSelect} />
