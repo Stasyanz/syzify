@@ -121,6 +121,14 @@ jobs:
             cp "$f" "aliases/Syzify-${arch}${ext}"
           done
           mapfile -t -O "${#files[@]}" files < <(find aliases -type f)
+          # Builds are ad-hoc signed, not notarized: macOS quarantines the
+          # download and reports the app as "damaged". Tell users the fix
+          # up front, before the auto-generated notes.
+          notes="> [!IMPORTANT]
+          > **macOS:** builds are not yet notarized by Apple, so Gatekeeper may claim the app \"is damaged and can't be opened\". The app is fine — clear the download quarantine flag and open it again:
+          > \`\`\`
+          > xattr -dr com.apple.quarantine /Applications/Syzify.app
+          > \`\`\`"
           # Idempotent: re-running the tag updates assets instead of failing.
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber "${files[@]}"
@@ -131,6 +139,7 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "${GITHUB_REF_NAME}" \
+              --notes "${notes}" \
               --generate-notes \
               "${files[@]}"
           fi
