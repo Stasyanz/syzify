@@ -91,6 +91,36 @@ jobs:
             echo "no installers found to publish" >&2
             exit 1
           fi
+          # Stable-named aliases: Tauri bundles carry the version in the file
+          # name, which breaks /releases/latest/download/<file> permalinks.
+          # The website links those, so upload a version-less copy of each
+          # installer next to the original (artifact dir name = target triple).
+          declare -A arches=(
+            [aarch64-apple-darwin]=macos-arm64
+            [x86_64-apple-darwin]=macos-x64
+            [x86_64-unknown-linux-gnu]=linux-x64
+            [aarch64-unknown-linux-gnu]=linux-arm64
+            [x86_64-pc-windows-msvc]=windows-x64
+            [aarch64-pc-windows-msvc]=windows-arm64
+          )
+          mkdir -p aliases
+          for f in "${files[@]}"; do
+            target=${f#artifacts/syzify-}; target=${target%%/*}
+            arch=${arches[$target]:-}
+            if [ -z "$arch" ]; then
+              echo "no stable alias for artifact dir '$target' ($f)" >&2
+              continue
+            fi
+            case "$f" in
+              *-setup.exe) ext="-setup.exe" ;;
+              *.msi)       ext=".msi" ;;
+              *.dmg)       ext=".dmg" ;;
+              *.AppImage)  ext=".AppImage" ;;
+              *.deb)       ext=".deb" ;;
+            esac
+            cp "$f" "aliases/Syzify-${arch}${ext}"
+          done
+          mapfile -t -O "${#files[@]}" files < <(find aliases -type f)
           # Idempotent: re-running the tag updates assets instead of failing.
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber "${files[@]}"
