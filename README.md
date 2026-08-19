@@ -113,7 +113,8 @@ Two workflows in `.github/workflows/`:
   is created only when all 6 targets build (a failed target — rerun the job).
 
 Cutting a release: `scripts/release.sh <X.Y.Z>` → review the CHANGELOG → commit →
-`git tag vX.Y.Z` → `git push --tags` triggers `release.yml`.
+`git tag vX.Y.Z` → `git push origin main vX.Y.Z` triggers `release.yml`. Push the
+tag explicitly — `git push --tags` would also publish any stale local tags.
 
 ## Tests
 
