@@ -1,40 +1,41 @@
 # Contributing to Syzify
 
-Спасибо за интерес к проекту! Прежде чем что-то присылать, прочитайте этот
-документ — он короткий.
+Thanks for your interest in the project! Before sending anything, please read
+this document — it's short.
 
-## Модель проекта: open source, but not open contribution
+## Project model: open source, but not open contribution
 
-Syzify — открытый проект с закрытым процессом разработки (та же модель, что
-у SQLite). Код открыт под [GNU AGPL v3](LICENSE) с
-[Syzify Plugin Exception](LICENSE-PLUGIN-EXCEPTION.md): его можно читать,
-изучать, собирать и форкать. Но **pull requests в этот репозиторий не
-принимаются** — весь код ядра пишется автором проекта, и копирайт на ядро
-целиком принадлежит ему.
+Syzify is an open project with a closed development process (the same model
+SQLite uses). The code is open under the [GNU AGPL v3](LICENSE) with the
+[Syzify Plugin Exception](LICENSE-PLUGIN-EXCEPTION.md): you can read it,
+study it, build it and fork it. But **pull requests to this repository are
+not accepted** — all core code is written by the project's author, who holds
+the entire copyright to the core.
 
-Присланные PR будут закрыты без ревью. Это не грубость, а юридическая
-гигиена: единоличный копирайт — то, что позволяет проекту поддерживать
-plugin exception и гибко распоряжаться лицензией.
+Submitted PRs will be closed without review. That's not rudeness, it's legal
+hygiene: sole copyright ownership is what lets the project maintain the
+plugin exception and manage its license flexibly.
 
-## Что присылать можно и нужно: issues
+## What you can and should send: issues
 
-- **Баг-репорты** — с шагами воспроизведения, версией приложения и ОС.
-  FIT/GPX-файл, на котором воспроизводится проблема, сильно ускоряет дело
-  (убедитесь, что не против им поделиться — файлы содержат геоданные).
-- **Идеи и предложения** — фичи, улучшения UX, замеченные странности.
-- **Вопросы** — если что-то непонятно по работе приложения или Plugin API.
+- **Bug reports** — with reproduction steps, the app version and your OS.
+  A FIT/GPX file that reproduces the problem speeds things up a lot (make
+  sure you're comfortable sharing it — these files contain location data).
+- **Ideas and suggestions** — features, UX improvements, oddities you've
+  noticed.
+- **Questions** — anything unclear about the app or the Plugin API.
 
-Важно: отправляя в issue описание идеи, вы соглашаетесь, что автор проекта
-может свободно реализовать её в Syzify без каких-либо обязательств.
-Присылать в issues готовый код или патчи не нужно — по причинам выше они
-не будут использованы.
+Important: by describing an idea in an issue you agree that the project's
+author may freely implement it in Syzify without any obligations. Please
+don't post finished code or patches in issues — for the reasons above they
+won't be used.
 
-## Хотите написать код? Пишите плагин
+## Want to write code? Write a plugin
 
-Для этого не нужно ни разрешения, ни подписей: благодаря Plugin Exception
-плагины, работающие через официальный Plugin API, — самостоятельные
-произведения. Вы владеете своим плагином целиком и распространяете его под
-любой лицензией на свой выбор, включая коммерческую.
+No permission or signatures needed: thanks to the Plugin Exception, plugins
+that work through the official Plugin API are independent works. You own
+your plugin entirely and distribute it under any license you choose,
+including a commercial one.
 
-- Plugin API (манифест, host-функции, ViewSpec) и примеры плагинов:
+- The Plugin API (manifest, host functions, ViewSpec) and example plugins:
   [examples/plugins/](examples/plugins/)

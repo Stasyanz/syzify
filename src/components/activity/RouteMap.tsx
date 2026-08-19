@@ -289,7 +289,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [layer, setLayer] = useState<LayerId>("osm");
   const [height, setHeight] = useState(MAP_DEFAULT_HEIGHT_PX);
-  // Правый клик по маршруту: снапнутая точка трека, на которой открыто меню.
+  // Right-click on the route: the snapped track point the menu was opened on.
   const [menuPoint, setMenuPoint] = useState<[number, number] | null>(null);
 
   const queryClient = useQueryClient();
