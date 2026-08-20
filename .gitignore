@@ -33,6 +33,10 @@ signing-key.hex
 # Test data / temp files
 tmp/
 
+# Coverage reports
+coverage/
+lcov.info
+
 # Python venv
 .venv/
 

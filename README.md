@@ -1,5 +1,11 @@
 # Syzify
 
+[![CI](https://github.com/Stasyanz/syzify/actions/workflows/ci.yml/badge.svg)](https://github.com/Stasyanz/syzify/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Stasyanz/syzify)](https://github.com/Stasyanz/syzify/releases/latest)
+[![Coverage](https://codecov.io/gh/Stasyanz/syzify/graph/badge.svg)](https://codecov.io/gh/Stasyanz/syzify)
+[![License](https://img.shields.io/github/license/Stasyanz/syzify)](LICENSE)
+![Top Language](https://img.shields.io/github/languages/top/Stasyanz/syzify)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 ![Vibe Coded](https://img.shields.io/badge/vibe-coded-blueviolet)
 
 Syzify is a local-first workout viewer and journal — a private alternative to Strava/Garmin Connect. Tauri 2 + React + TypeScript.

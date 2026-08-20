@@ -43,5 +43,13 @@ export default defineConfig(async () => ({
     // Without this, vitest run from the main checkout also picks up
     // worktree copies of the test suite under .claude/worktrees/**.
     exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
+    coverage: {
+      provider: "v8" as const,
+      // Count every source file, not only the ones imported by tests —
+      // otherwise untested modules are invisible in the percentage.
+      all: true,
+      include: ["src/**"],
+      reporter: ["text-summary", "lcov"],
+    },
   },
 }));

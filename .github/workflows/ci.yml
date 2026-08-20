@@ -27,13 +27,30 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
       - name: Unit tests
-        run: npm test
+        run: npm test -- --coverage
+      # Tokenless uploads are rate-limited and the token secret only exists
+      # on the public repo, so skip the upload when CI runs on the test repo.
+      - name: Upload coverage to Codecov
+        if: github.repository == 'Stasyanz/syzify'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          flags: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   rust:
     name: Rust (cargo test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # cargo-llvm-cov builds an instrumented copy of the whole Tauri stack
+      # in its own target dir; the ~14 GB of free runner disk is not enough
+      # (the runner dies mid-build without even flushing logs).
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          df -h /
       # Tauri links against the system webkit/gtk stack even for `cargo test`.
       - name: Install Tauri Linux dependencies
         run: |
@@ -44,6 +61,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: llvm-tools-preview
+      # Prebuilt cargo-llvm-cov binary; `cargo install` would cost minutes.
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -65,8 +85,17 @@ jobs:
           cp examples/plugins/smart-route/target/wasm32-unknown-unknown/release/smart_route.wasm \
              examples/plugins/smart-route/plugin.wasm
           cargo run --manifest-path tools/pack-plugin/Cargo.toml -- examples/plugins/smart-route
-      - name: cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: cargo test (with coverage)
+        run: |
+          cargo llvm-cov --manifest-path src-tauri/Cargo.toml \
+            --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        if: github.repository == 'Stasyanz/syzify'
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          flags: rust
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # Compiled plugin.wasm artifacts are not committed (licensing hygiene) —
   # this keeps the MIT-0 examples building for anyone who copies them.
