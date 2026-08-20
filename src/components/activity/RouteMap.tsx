@@ -8,6 +8,7 @@ import { useActivityStore } from "../../stores/activityStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { api, isTauri } from "../../lib/tauri";
+import { protocolBase } from "../../lib/protocolUrl";
 
 interface Props {
   trackpoints: TrackPointColumns;
@@ -355,7 +356,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
   }, []);
 
   const tileUrl = isTauri()
-    ? `tile://localhost/${layer}/{z}/{x}/{y}.png`
+    ? `${protocolBase("tile")}${layer}/{z}/{x}/{y}.png`
     : BROWSER_TILE_URLS[layer];
 
   const start = positions[0];

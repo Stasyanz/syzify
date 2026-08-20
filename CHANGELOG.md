@@ -6,6 +6,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- Windows: map tiles and photos now load. Custom-protocol URLs (`tile://`,
+  `photo://`) were built in the macOS-only form; WebView2 serves such
+  protocols as `http://<proto>.localhost/…`, and the CSP additionally
+  blocked those origins for images. macOS and Linux were unaffected.
+
 ## [0.1.0] - 2026-08-19
 
 Initial public release.

@@ -13,6 +13,7 @@ import {
 import L from "leaflet";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, ChevronRight, Maximize, Minimize } from "lucide-react";
 import { api, isTauri } from "../../lib/tauri";
+import { protocolBase } from "../../lib/protocolUrl";
 import { useActivityStore } from "../../stores/activityStore";
 import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
@@ -326,7 +327,7 @@ export function ActivitiesMap() {
   }, []);
 
   const tileUrl = isTauri()
-    ? `tile://localhost/${layer}/{z}/{x}/{y}.png`
+    ? `${protocolBase("tile")}${layer}/{z}/{x}/{y}.png`
     : BROWSER_TILE_URLS[layer];
 
   if (isLoading) {

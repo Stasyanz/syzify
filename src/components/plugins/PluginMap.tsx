@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { MapContainer, TileLayer, Polyline, useMap } from "../map/leaflet";
 import L from "leaflet";
+import { protocolBase } from "../../lib/protocolUrl";
 
 // A plugin-provided polyline overlay. Points are [lat, lon] pairs; the host
 // owns the map and tile source, so a plugin only supplies geometry.
@@ -41,7 +42,7 @@ export function PluginMap({ points }: { points: [number, number][] }) {
         style={{ height: "100%", width: "100%" }}
         scrollWheelZoom={false}
       >
-        <TileLayer url="tile://localhost/osm/{z}/{x}/{y}.png" />
+        <TileLayer url={`${protocolBase("tile")}osm/{z}/{x}/{y}.png`} />
         <Polyline positions={safe} color="#2563eb" weight={4} />
         <FitBounds positions={safe} />
       </MapContainer>
