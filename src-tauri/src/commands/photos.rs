@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use image::ImageReader;
+use image::{ImageDecoder, ImageReader};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::State;
@@ -100,6 +100,69 @@ fn encrypt_to_rel(key: &[u8; 32], vault_path: &Path, abs: &Path) -> Result<Strin
         .to_string())
 }
 
+/// Open a decoder with the decode-bomb limits applied (see MAX_DECODE_*).
+fn limited_decoder<'a, R: std::io::BufRead + std::io::Seek + 'a>(
+    reader: ImageReader<R>,
+) -> Result<impl ImageDecoder + 'a, String> {
+    let mut reader = reader
+        .with_guessed_format()
+        .map_err(|e| format!("guess format: {}", e))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_DIM);
+    limits.max_image_height = Some(MAX_DECODE_DIM);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    reader.limits(limits);
+    reader
+        .into_decoder()
+        .map_err(|e| format!("decode image: {}", e))
+}
+
+/// One-time backfill: photos attached before EXIF-orientation support have
+/// sideways thumbnails and pre-rotation dimensions. Regenerate both for every
+/// photo whose EXIF orientation is a real transform. Any failure returns Err
+/// so the caller leaves the run-once flag unset and retries next launch
+/// (e.g. encrypted photos while the key is not loaded).
+pub fn orient_existing_photos(
+    conn: &rusqlite::Connection,
+    vault_path: &Path,
+    key: Option<&[u8; 32]>,
+) -> Result<(), String> {
+    for photo in db::photos::get_all_photos(conn).map_err(|e| e.to_string())? {
+        let bytes = read_photo_file(vault_path, key, &photo.path_in_vault)
+            .map_err(|e| format!("photo {}: {}", photo.id, e))?;
+        let mut decoder = limited_decoder(ImageReader::new(std::io::Cursor::new(&bytes)))
+            .map_err(|e| format!("photo {}: {}", photo.id, e))?;
+        let orientation = decoder
+            .orientation()
+            .unwrap_or(image::metadata::Orientation::NoTransforms);
+        // The common case: no rotation tag — thumbnail and dims are fine, and
+        // the pixel decode can be skipped entirely.
+        if matches!(orientation, image::metadata::Orientation::NoTransforms) {
+            continue;
+        }
+        let mut img = image::DynamicImage::from_decoder(decoder)
+            .map_err(|e| format!("photo {}: decode: {}", photo.id, e))?;
+        img.apply_orientation(orientation);
+
+        if let Some(thumb_rel) = &photo.thumbnail_path {
+            let plain_abs = vault_path.join(thumb_rel.trim_end_matches(".enc"));
+            img.thumbnail(THUMB_MAX_DIM, THUMB_MAX_DIM)
+                .to_rgb8()
+                .save_with_format(&plain_abs, image::ImageFormat::Jpeg)
+                .map_err(|e| format!("photo {}: save thumbnail: {}", photo.id, e))?;
+            if thumb_rel.ends_with(".enc") {
+                let key = key.ok_or_else(|| format!("photo {}: vault is locked", photo.id))?;
+                crate::crypto::encrypt_file(key, &plain_abs)
+                    .map_err(|e| format!("photo {}: {}", photo.id, e))?;
+            }
+        }
+
+        db::photos::update_dimensions(conn, &photo.id, img.width() as i64, img.height() as i64)
+            .map_err(|e| format!("photo {}: {}", photo.id, e))?;
+    }
+    Ok(())
+}
+
 fn attach_one(
     conn: &rusqlite::Connection,
     vault_path: &Path,
@@ -141,18 +204,18 @@ fn attach_one(
         _ => return Err(format!("Unsupported image format: {}", ext)),
     };
 
-    let mut reader = ImageReader::open(src)
-        .map_err(|e| format!("open image: {}", e))?
-        .with_guessed_format()
-        .map_err(|e| format!("guess format: {}", e))?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_DECODE_DIM);
-    limits.max_image_height = Some(MAX_DECODE_DIM);
-    limits.max_alloc = Some(MAX_DECODE_ALLOC);
-    reader.limits(limits);
-    let img = reader
-        .decode()
+    let mut decoder = limited_decoder(
+        ImageReader::open(src).map_err(|e| format!("open image: {}", e))?,
+    )?;
+    // Phone JPEGs store sensor-orientation pixels plus an EXIF rotation tag.
+    // Bake the rotation into the decoded image so the thumbnail and the stored
+    // dimensions match what the browser shows for the untouched original.
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder)
         .map_err(|e| format!("decode image: {}", e))?;
+    img.apply_orientation(orientation);
 
     let width = img.width();
     let height = img.height();
@@ -484,6 +547,191 @@ mod tests {
             .write_to(&mut buf, image::ImageFormat::Png)
             .unwrap();
         buf.into_inner()
+    }
+
+    /// The same JPEG with a minimal EXIF APP1 segment (TIFF header + one IFD
+    /// entry) declaring the given Orientation value, spliced in after SOI.
+    fn jpeg_bytes_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+        let jpeg = jpeg_bytes(w, h);
+        let mut tiff: Vec<u8> = Vec::new();
+        tiff.extend(b"II\x2a\x00"); // little-endian TIFF magic
+        tiff.extend(8u32.to_le_bytes()); // IFD0 offset
+        tiff.extend(1u16.to_le_bytes()); // one entry
+        tiff.extend(0x0112u16.to_le_bytes()); // Orientation tag
+        tiff.extend(3u16.to_le_bytes()); // SHORT
+        tiff.extend(1u32.to_le_bytes()); // count
+        tiff.extend(orientation.to_le_bytes());
+        tiff.extend([0u8, 0]); // value padding
+        tiff.extend(0u32.to_le_bytes()); // no next IFD
+
+        let mut app1: Vec<u8> = vec![0xFF, 0xE1];
+        app1.extend(((2 + 6 + tiff.len()) as u16).to_be_bytes());
+        app1.extend(b"Exif\x00\x00");
+        app1.extend(&tiff);
+
+        let mut out = jpeg[..2].to_vec(); // SOI
+        out.extend(&app1);
+        out.extend(&jpeg[2..]);
+        out
+    }
+
+    fn decoded_dims(bytes: &[u8]) -> (u32, u32) {
+        let img = image::load_from_memory(bytes).unwrap();
+        (img.width(), img.height())
+    }
+
+    /// EXIF orientation 6 (90° CW to display): stored dims and the thumbnail
+    /// must be the rotated portrait ones, matching what the browser renders.
+    #[test]
+    fn attach_one_applies_exif_orientation() {
+        let conn = db::test_db();
+        make_activity(&conn, "act-o");
+        let vault = unique_dir("orient");
+        fs::create_dir_all(vault.join("photos").join("act-o")).unwrap();
+
+        let src = unique_dir("src").join("rotated.jpg");
+        fs::write(&src, jpeg_bytes_with_orientation(40, 30, 6)).unwrap();
+
+        let photo = attach_one(&conn, &vault, "act-o", src.to_str().unwrap(), None)
+            .unwrap()
+            .expect("attach should store the photo");
+
+        assert_eq!(photo.width, Some(30), "width must be post-rotation");
+        assert_eq!(photo.height, Some(40), "height must be post-rotation");
+        let thumb = fs::read(vault.join(photo.thumbnail_path.unwrap())).unwrap();
+        assert_eq!(decoded_dims(&thumb), (384, 512), "thumbnail must be rotated");
+
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    /// The startup backfill rotates thumbnails/dims of photos attached before
+    /// orientation support, and leaves tag-free photos byte-identical.
+    #[test]
+    fn orient_existing_photos_fixes_old_thumbnails() {
+        let conn = db::test_db();
+        make_activity(&conn, "act-b");
+        let vault = unique_dir("backfill");
+        let dir = vault.join("photos").join("act-b");
+        fs::create_dir_all(&dir).unwrap();
+
+        // Old-style import of a rotated photo: original bytes kept, thumbnail
+        // generated without applying the EXIF tag, sensor dims in the DB.
+        fs::write(dir.join("old.jpg"), jpeg_bytes_with_orientation(40, 30, 6)).unwrap();
+        fs::write(dir.join("old.thumb.jpg"), jpeg_bytes(40, 30)).unwrap();
+        // A tag-free photo that must not be touched.
+        fs::write(dir.join("plain.jpg"), jpeg_bytes(20, 10)).unwrap();
+        fs::write(dir.join("plain.thumb.jpg"), jpeg_bytes(20, 10)).unwrap();
+
+        let base = Photo {
+            id: String::new(),
+            activity_id: "act-b".into(),
+            path_in_vault: String::new(),
+            thumbnail_path: None,
+            original_path: None,
+            mime_type: "image/jpeg".into(),
+            width: None,
+            height: None,
+            size_bytes: 1,
+            hash_sha256: "h1".into(),
+            taken_at: None,
+            caption: None,
+            sort_order: 0,
+            created_at: String::new(),
+        };
+        db::photos::insert_photo(
+            &conn,
+            &Photo {
+                id: "ph-old".into(),
+                path_in_vault: "photos/act-b/old.jpg".into(),
+                thumbnail_path: Some("photos/act-b/old.thumb.jpg".into()),
+                width: Some(40),
+                height: Some(30),
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        db::photos::insert_photo(
+            &conn,
+            &Photo {
+                id: "ph-plain".into(),
+                path_in_vault: "photos/act-b/plain.jpg".into(),
+                thumbnail_path: Some("photos/act-b/plain.thumb.jpg".into()),
+                width: Some(20),
+                height: Some(10),
+                hash_sha256: "h2".into(),
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        let plain_thumb_before = fs::read(dir.join("plain.thumb.jpg")).unwrap();
+
+        orient_existing_photos(&conn, &vault, None).unwrap();
+
+        let old = db::photos::get_photo_by_id(&conn, "ph-old").unwrap().unwrap();
+        assert_eq!((old.width, old.height), (Some(30), Some(40)));
+        let thumb = fs::read(dir.join("old.thumb.jpg")).unwrap();
+        assert_eq!(decoded_dims(&thumb), (384, 512), "thumbnail must be regenerated rotated");
+
+        let plain = db::photos::get_photo_by_id(&conn, "ph-plain").unwrap().unwrap();
+        assert_eq!((plain.width, plain.height), (Some(20), Some(10)));
+        assert_eq!(
+            fs::read(dir.join("plain.thumb.jpg")).unwrap(),
+            plain_thumb_before,
+            "tag-free photo must not be rewritten"
+        );
+
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    /// Encrypted vault: the backfill decrypts the original, re-encrypts the
+    /// regenerated thumbnail, and fails (for retry) when the key is missing.
+    #[test]
+    fn orient_existing_photos_handles_encrypted_and_locked() {
+        let conn = db::test_db();
+        make_activity(&conn, "act-e2");
+        let vault = unique_dir("backfill_enc");
+        let dir = vault.join("photos").join("act-e2");
+        fs::create_dir_all(&dir).unwrap();
+        let key = [7u8; 32];
+
+        fs::write(dir.join("p.jpg"), jpeg_bytes_with_orientation(40, 30, 6)).unwrap();
+        fs::write(dir.join("p.thumb.jpg"), jpeg_bytes(40, 30)).unwrap();
+        crate::crypto::encrypt_file(&key, &dir.join("p.jpg")).unwrap();
+        crate::crypto::encrypt_file(&key, &dir.join("p.thumb.jpg")).unwrap();
+
+        db::photos::insert_photo(
+            &conn,
+            &Photo {
+                id: "ph-enc".into(),
+                activity_id: "act-e2".into(),
+                path_in_vault: "photos/act-e2/p.jpg.enc".into(),
+                thumbnail_path: Some("photos/act-e2/p.thumb.jpg.enc".into()),
+                original_path: None,
+                mime_type: "image/jpeg".into(),
+                width: Some(40),
+                height: Some(30),
+                size_bytes: 1,
+                hash_sha256: "h".into(),
+                taken_at: None,
+                caption: None,
+                sort_order: 0,
+                created_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        // Locked: must fail so the flag stays unset and it retries later.
+        assert!(orient_existing_photos(&conn, &vault, None).is_err());
+
+        orient_existing_photos(&conn, &vault, Some(&key)).unwrap();
+        let p = db::photos::get_photo_by_id(&conn, "ph-enc").unwrap().unwrap();
+        assert_eq!((p.width, p.height), (Some(30), Some(40)));
+        let thumb =
+            crate::crypto::decrypt_file_to_memory(&key, &dir.join("p.thumb.jpg.enc")).unwrap();
+        assert_eq!(decoded_dims(&thumb), (384, 512));
+        assert!(!dir.join("p.thumb.jpg").exists(), "no plaintext thumbnail left");
+
+        let _ = fs::remove_dir_all(&vault);
     }
 
     #[test]

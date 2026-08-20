@@ -179,6 +179,31 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         if let Err(e) = run_startup_backfills(&conn) {
             eprintln!("Startup backfill failed (will retry next launch): {}", e);
         }
+
+        // Photos attached before EXIF-orientation support have sideways
+        // thumbnails and pre-rotation dimensions; regenerate them once. Needs
+        // the vault path and photo key, so it can't live inside
+        // run_startup_backfills(&conn).
+        const PHOTO_ORIENT_FLAG: &str = "photo_thumbs_oriented_v1";
+        match db::settings::get_setting(&conn, PHOTO_ORIENT_FLAG) {
+            Ok(None) => {
+                let key = state.encryption_key.lock().ok().and_then(|g| *g);
+                match commands::photos::orient_existing_photos(&conn, &state.vault_path, key.as_ref())
+                {
+                    Ok(()) => {
+                        if let Err(e) = db::settings::set_setting(&conn, PHOTO_ORIENT_FLAG, "1") {
+                            eprintln!("Failed to mark photo orientation backfill done: {}", e);
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "Photo orientation backfill failed (will retry next launch): {}",
+                        e
+                    ),
+                }
+            }
+            Ok(Some(_)) => {}
+            Err(e) => eprintln!("Failed to read settings for photo backfill: {}", e),
+        }
     });
 }
 

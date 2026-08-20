@@ -51,6 +51,29 @@ pub fn get_photo_by_id(conn: &Connection, id: &str) -> Result<Option<Photo>> {
     .optional()
 }
 
+/// Every photo in the vault — used by the one-time EXIF-orientation backfill.
+pub fn get_all_photos(conn: &Connection) -> Result<Vec<Photo>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, activity_id, path_in_vault, thumbnail_path, original_path,
+         mime_type, width, height, size_bytes, hash_sha256, taken_at, caption, sort_order, created_at
+         FROM photo ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map([], row_to_photo)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn update_dimensions(conn: &Connection, id: &str, width: i64, height: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE photo SET width = ?2, height = ?3 WHERE id = ?1",
+        params![id, width, height],
+    )?;
+    Ok(())
+}
+
 pub fn delete_photo(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM photo WHERE id = ?1", params![id])?;
     Ok(())
