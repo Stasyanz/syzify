@@ -145,7 +145,7 @@ describe("useDropImport on an activity page", () => {
     fire({ type: "drop", paths: ["/a/notes.txt"], position: pos });
     expect(addToast).toHaveBeenCalledWith(
       "warning",
-      expect.stringContaining("JPG, PNG or WebP")
+      expect.stringContaining("JPG, PNG, WebP or HEIC")
     );
   });
 });

@@ -83,7 +83,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
   const handleAdd = useCallback(async () => {
     const selected = await open({
       multiple: true,
-      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp"] }],
+      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "heic", "heif"] }],
     });
     if (selected && selected.length > 0) {
       attachMutation.mutate(selected);

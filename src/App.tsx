@@ -104,7 +104,7 @@ function DropImportOverlay() {
           {kind === "photo" ? "Drop photos to add to this activity" : "Drop workout files to import"}
         </p>
         <p className="text-sm text-muted mt-1">
-          {kind === "photo" ? "JPG, PNG, WebP" : "GPX, FIT, TCX"}
+          {kind === "photo" ? "JPG, PNG, WebP, HEIC" : "GPX, FIT, TCX"}
         </p>
       </div>
     </div>

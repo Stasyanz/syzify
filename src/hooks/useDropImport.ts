@@ -106,7 +106,7 @@ export function useDropImport() {
               } else if (p.paths.length > 0) {
                 refs.current.addToast(
                   "warning",
-                  "Only JPG, PNG or WebP images can be added to an activity"
+                  "Only JPG, PNG, WebP or HEIC images can be added to an activity"
                 );
               }
               return;

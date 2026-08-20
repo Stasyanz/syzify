@@ -100,6 +100,37 @@ fn encrypt_to_rel(key: &[u8; 32], vault_path: &Path, abs: &Path) -> Result<Strin
         .to_string())
 }
 
+/// Convert a HEIC/HEIF file to JPEG bytes with the system `sips` tool —
+/// present on every macOS install, so no HEVC-decoder dependency is needed.
+#[cfg(target_os = "macos")]
+fn convert_heic_to_jpeg(src: &Path) -> Result<Vec<u8>, String> {
+    let tmp = std::env::temp_dir().join(format!("syzify_heic_{}.jpg", Uuid::new_v4()));
+    let out = std::process::Command::new("/usr/bin/sips")
+        .arg("-s")
+        .arg("format")
+        .arg("jpeg")
+        .arg(src)
+        .arg("--out")
+        .arg(&tmp)
+        .output()
+        .map_err(|e| format!("run sips: {}", e))?;
+    if !out.status.success() {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "HEIC conversion failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let bytes = fs::read(&tmp).map_err(|e| format!("read converted HEIC: {}", e));
+    let _ = fs::remove_file(&tmp);
+    bytes
+}
+
+#[cfg(not(target_os = "macos"))]
+fn convert_heic_to_jpeg(_src: &Path) -> Result<Vec<u8>, String> {
+    Err("HEIC photos are supported on macOS only".to_string())
+}
+
 /// Open a decoder with the decode-bomb limits applied (see MAX_DECODE_*).
 fn limited_decoder<'a, R: std::io::BufRead + std::io::Seek + 'a>(
     reader: ImageReader<R>,
@@ -197,16 +228,23 @@ fn attach_one(
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    let mime_type = match ext.as_str() {
-        "jpg" | "jpeg" => "image/jpeg".to_string(),
-        "png" => "image/png".to_string(),
-        "webp" => "image/webp".to_string(),
+    // taken_at comes from the ORIGINAL bytes — kamadak-exif reads HEIF
+    // containers too, and conversion below could drop metadata.
+    let taken_at = extract_taken_at(&bytes);
+
+    // What actually lands in the vault. HEIC (iPhone) is converted to JPEG so
+    // the vault stays viewable on every platform; everything else is stored
+    // byte-for-byte. The dedup hash above is of the original file either way.
+    let (stored_bytes, stored_ext, mime_type) = match ext.as_str() {
+        "jpg" | "jpeg" => (bytes, "jpg", "image/jpeg"),
+        "png" => (bytes, "png", "image/png"),
+        "webp" => (bytes, "webp", "image/webp"),
+        "heic" | "heif" => (convert_heic_to_jpeg(src)?, "jpg", "image/jpeg"),
         _ => return Err(format!("Unsupported image format: {}", ext)),
     };
+    let mime_type = mime_type.to_string();
 
-    let mut decoder = limited_decoder(
-        ImageReader::open(src).map_err(|e| format!("open image: {}", e))?,
-    )?;
+    let mut decoder = limited_decoder(ImageReader::new(std::io::Cursor::new(&stored_bytes)))?;
     // Phone JPEGs store sensor-orientation pixels plus an EXIF rotation tag.
     // Bake the rotation into the decoded image so the thumbnail and the stored
     // dimensions match what the browser shows for the untouched original.
@@ -220,15 +258,12 @@ fn attach_one(
     let width = img.width();
     let height = img.height();
 
-    let taken_at = extract_taken_at(&bytes);
-
     let photo_id = Uuid::new_v4().to_string();
     let photos_dir = vault_path.join("photos").join(activity_id);
 
-    let stored_ext = if ext == "jpeg" { "jpg".to_string() } else { ext.clone() };
     let stored_filename = format!("{}.{}", photo_id, stored_ext);
     let stored_path = photos_dir.join(&stored_filename);
-    fs::write(&stored_path, &bytes)
+    fs::write(&stored_path, &stored_bytes)
         .map_err(|e| format!("write copy: {}", e))?;
 
     let thumb_filename = format!("{}.thumb.jpg", photo_id);
@@ -262,7 +297,7 @@ fn attach_one(
         mime_type,
         width: Some(width as i64),
         height: Some(height as i64),
-        size_bytes: bytes.len() as i64,
+        size_bytes: stored_bytes.len() as i64,
         hash_sha256: hash,
         taken_at,
         caption: None,
@@ -730,6 +765,67 @@ mod tests {
             crate::crypto::decrypt_file_to_memory(&key, &dir.join("p.thumb.jpg.enc")).unwrap();
         assert_eq!(decoded_dims(&thumb), (384, 512));
         assert!(!dir.join("p.thumb.jpg").exists(), "no plaintext thumbnail left");
+
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    /// HEIC attach (macOS only — uses the system sips both to build the
+    /// fixture and inside attach_one): stored copy becomes a JPEG, dims come
+    /// from the converted image, and dedup keys on the ORIGINAL heic bytes.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn attach_one_converts_heic_to_jpeg() {
+        let conn = db::test_db();
+        make_activity(&conn, "act-h");
+        let vault = unique_dir("heic");
+        fs::create_dir_all(vault.join("photos").join("act-h")).unwrap();
+
+        // Build a real HEIC fixture from a JPEG via sips.
+        let dir = unique_dir("src");
+        let jpg = dir.join("src.jpg");
+        fs::write(&jpg, jpeg_bytes(40, 30)).unwrap();
+        let heic = dir.join("photo.heic");
+        let st = std::process::Command::new("/usr/bin/sips")
+            .args(["-s", "format", "heic"])
+            .arg(&jpg)
+            .arg("--out")
+            .arg(&heic)
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "sips jpeg->heic failed: {}",
+            String::from_utf8_lossy(&st.stderr));
+
+        let photo = attach_one(&conn, &vault, "act-h", heic.to_str().unwrap(), None)
+            .unwrap()
+            .expect("heic attach should store the photo");
+
+        assert_eq!(photo.mime_type, "image/jpeg");
+        assert!(photo.path_in_vault.ends_with(".jpg"), "got: {}", photo.path_in_vault);
+        assert_eq!((photo.width, photo.height), (Some(40), Some(30)));
+        let stored = fs::read(vault.join(&photo.path_in_vault)).unwrap();
+        assert_eq!(decoded_dims(&stored), (40, 30), "stored copy must decode as JPEG");
+
+        // Re-attaching the same heic dedups via the original-bytes hash.
+        let dup = attach_one(&conn, &vault, "act-h", heic.to_str().unwrap(), None).unwrap();
+        assert!(dup.is_none(), "identical heic must be deduplicated");
+
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    /// Off-macOS there is no HEVC decoder — the per-file error must say so
+    /// (this is what lands in AttachPhotosResult.failed on Windows/Linux).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn attach_one_rejects_heic_off_macos() {
+        let conn = db::test_db();
+        make_activity(&conn, "act-h");
+        let vault = unique_dir("heic_reject");
+        fs::create_dir_all(vault.join("photos").join("act-h")).unwrap();
+        let src = unique_dir("src").join("photo.heic");
+        fs::write(&src, b"heic bytes irrelevant, rejected before decode").unwrap();
+
+        let err = attach_one(&conn, &vault, "act-h", src.to_str().unwrap(), None).unwrap_err();
+        assert!(err.contains("macOS"), "got: {}", err);
 
         let _ = fs::remove_dir_all(&vault);
     }
