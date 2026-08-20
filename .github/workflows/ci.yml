@@ -18,8 +18,8 @@ jobs:
     name: Frontend (tsc + vitest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -42,7 +42,7 @@ jobs:
     name: Rust (cargo test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # cargo-llvm-cov builds an instrumented copy of the whole Tauri stack
       # in its own target dir; the ~14 GB of free runner disk is not enough
       # (the runner dies mid-build without even flushing logs).
@@ -103,7 +103,7 @@ jobs:
     name: Example plugins (wasm)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
