@@ -31,12 +31,6 @@ vi.mock("../../lib/tauri", () => ({
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
-vi.mock("@tauri-apps/api/webview", () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
-  }),
-}));
-
 import { confirmDialog } from "../../stores/confirmStore";
 import { api } from "../../lib/tauri";
 import { PhotoGallery } from "./PhotoGallery";
@@ -56,11 +50,6 @@ function renderGallery() {
 }
 
 describe("PhotoGallery", () => {
-  it("exposes a [data-photo-dropzone] so the import hook can skip its drops", () => {
-    const { container } = renderGallery();
-    expect(container.querySelector("[data-photo-dropzone]")).not.toBeNull();
-  });
-
   it("renders attached photo thumbnails", async () => {
     const { container } = renderGallery();
     await waitFor(() => {

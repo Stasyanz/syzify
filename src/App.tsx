@@ -92,9 +92,27 @@ export function VaultErrorScreen({ message }: { message: string }) {
   );
 }
 
+// Needs the router context (the drop target depends on the current route),
+// so it lives inside <BrowserRouter> rather than in AppContent itself.
+function DropImportOverlay() {
+  const { dragging, kind } = useDropImport();
+  if (!dragging) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-accent/15 backdrop-blur-sm pointer-events-none">
+      <div className="bg-card rounded-card shadow-2xl px-10 py-8 text-center border-2 border-dashed border-accent">
+        <p className="text-lg font-semibold text-accent-2">
+          {kind === "photo" ? "Drop photos to add to this activity" : "Drop workout files to import"}
+        </p>
+        <p className="text-sm text-muted mt-1">
+          {kind === "photo" ? "JPG, PNG, WebP" : "GPX, FIT, TCX"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const qc = useQueryClient();
-  const { dragging } = useDropImport();
   const { pendingFiles, importing: watchImporting, handleImport: watchImport, handleDismiss: watchDismiss } = useWatchFolderListener();
   const { data: encStatus, isLoading } = useQuery({
     queryKey: ["encryptionStatus"],
@@ -193,14 +211,7 @@ function AppContent() {
         <ConfirmDialogHost />
         <ImportProgressOverlay />
         <FeedbackModal />
-        {dragging && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-accent/15 backdrop-blur-sm pointer-events-none">
-            <div className="bg-card rounded-card shadow-2xl px-10 py-8 text-center border-2 border-dashed border-accent">
-              <p className="text-lg font-semibold text-accent-2">Drop workout files to import</p>
-              <p className="text-sm text-muted mt-1">GPX, FIT, TCX</p>
-            </div>
-          </div>
-        )}
+        <DropImportOverlay />
       </AppShell>
     </BrowserRouter>
   );

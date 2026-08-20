@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { confirmDialog } from "../../stores/confirmStore";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { isImagePath } from "../../lib/fileTypes";
 import { moveItem } from "../../lib/reorder";
 import { ImagePlus, Trash2, Share2, X, Pencil } from "lucide-react";
 import { api } from "../../lib/tauri";
@@ -22,9 +20,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
   const [lightbox, setLightbox] = useState<Photo | null>(null);
   const [editingCaption, setEditingCaption] = useState<string | null>(null);
   const [captionDraft, setCaptionDraft] = useState("");
-  const [dragOver, setDragOver] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const { data: photos = [] } = useQuery({
     queryKey: ["photos", activityId],
@@ -94,49 +90,8 @@ export function PhotoGallery({ activityId, onShare }: Props) {
     }
   }, [attachMutation]);
 
-  // Native OS file drops are delivered by Tauri (HTML5 file drops are
-  // suppressed when dragDropEnabled is on). We only react to drops that land
-  // over this gallery's drop zone.
-  useEffect(() => {
-    const isOverZone = (pos: { x: number; y: number }) => {
-      const el = dropZoneRef.current;
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const x = pos.x / dpr;
-      const y = pos.y / dpr;
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    };
-    let unlisten: (() => void) | undefined;
-    let active = true;
-    getCurrentWebview()
-      .onDragDropEvent((event) => {
-        const p = event.payload;
-        if (p.type === "over") {
-          setDragOver(isOverZone(p.position));
-        } else if (p.type === "leave") {
-          setDragOver(false);
-        } else if (p.type === "drop") {
-          setDragOver(false);
-          if (!isOverZone(p.position)) return;
-          const images = p.paths.filter(isImagePath);
-          if (images.length > 0) {
-            attachMutation.mutate(images);
-          } else if (p.paths.length > 0) {
-            addToast("info", "Only JPG, PNG or WebP images can be attached");
-          }
-        }
-      })
-      .then((u) => {
-        if (active) unlisten = u;
-        else u();
-      });
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [attachMutation, addToast]);
-
+  // Native OS drops anywhere on the activity page attach photos — that is
+  // handled window-wide by useDropImport, not here.
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -153,16 +108,10 @@ export function PhotoGallery({ activityId, onShare }: Props) {
         </button>
       </div>
 
-      <div
-        ref={dropZoneRef}
-        data-photo-dropzone
-        className={`border rounded-lg p-3 transition-colors ${
-          dragOver ? "border-accent bg-accent-soft" : "border-border"
-        }`}
-      >
+      <div className="border rounded-lg p-3 border-border">
         {photos.length === 0 ? (
           <div className="text-center text-sm text-faint py-8">
-            No photos yet. Click "Add Photos" to attach images to this activity.
+            No photos yet. Click "Add Photos" or drop images anywhere on this page.
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
