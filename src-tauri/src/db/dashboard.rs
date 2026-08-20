@@ -907,7 +907,6 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    #[test]
     /// The hybrid multisport model: a merged triathlon's legs count in
     /// their own sport's records, and the container's total time competes in
     /// the triathlon distance-class PBs.

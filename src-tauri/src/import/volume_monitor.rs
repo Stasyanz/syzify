@@ -1,3 +1,8 @@
+// The volume monitor is only wired up on macOS (lib.rs gates the call on
+// `target_os = "macos"`; it polls /Volumes), but we still compile it on the
+// other platforms so Linux CI type-checks it — without dead-code noise.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
