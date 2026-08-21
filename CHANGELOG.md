@@ -6,7 +6,25 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-21
+
+### Added
+- iPhone photos: HEIC/HEIF files can be attached to activities. On macOS they
+  are converted to JPEG with the system tools (no extra dependencies), so the
+  vault stays viewable on every platform; on Windows/Linux HEIC files are
+  reported per-file as unsupported.
+
+### Changed
+- Adding photos by drag-and-drop now works anywhere on an activity page — no
+  need to aim for the gallery box. Outside an activity page the window keeps
+  importing workout files, and the drop overlay now says which of the two it
+  will do.
+
 ### Fixed
+- Photo previews ignored the EXIF orientation tag: vertical phone photos
+  showed sideways thumbnails and distorted share crops. New photos are stored
+  with the rotation applied, and existing thumbnails are regenerated once on
+  first launch.
 - Windows: map tiles and photos now load. Custom-protocol URLs (`tile://`,
   `photo://`) were built in the macOS-only form; WebView2 serves such
   protocols as `http://<proto>.localhost/…`, and the CSP additionally
