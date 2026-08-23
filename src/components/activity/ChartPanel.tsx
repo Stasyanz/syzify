@@ -296,6 +296,15 @@ function SingleChart({
           : { x: false, y: false },
         sync: { key: SYNC_KEY, setSeries: false },
       },
+      // Non-selecting charts must not mirror the synced drag: the cursor
+      // sync REPLAYS elevation's drag here, and on release uPlot applies
+      // the receiver's own drag.setScale default (true) with the source's
+      // drag flags — zooming this chart's x scale to the selection (bars
+      // ballooned to fill the card). select.show:false makes every synced
+      // select/zoom path a no-op.
+      ...(selectionStats
+        ? {}
+        : { select: { show: false, left: 0, top: 0, width: 0, height: 0 } }),
       hooks: {
         ...(selectionStats
           ? {
