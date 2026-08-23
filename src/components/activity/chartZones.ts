@@ -314,6 +314,19 @@ export function gradeSeries(
   return out;
 }
 
+/** Index of the ascending array's value nearest to x (binary search) —
+ * maps a drag-selection edge back to a chart point. */
+export function nearestIdx(xs: number[], x: number): number {
+  let lo = 0;
+  let hi = xs.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 && x - xs[lo - 1] < xs[lo] - x ? lo - 1 : lo;
+}
+
 /** What a drag-selected slice of the elevation chart works out to. */
 export interface SelectionGrade {
   /** Horizontal span between the endpoints, meters. */

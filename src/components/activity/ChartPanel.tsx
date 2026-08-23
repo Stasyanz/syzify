@@ -11,6 +11,7 @@ import {
   ELEVATION_BANDS_M,
   gradeGradientStops,
   gradeSeries,
+  nearestIdx,
   selectionGrade,
   hrVisRange,
   hrZoneRanges,
@@ -24,6 +25,7 @@ import {
   type ZoneRange,
 } from "./chartZones";
 import { api } from "../../lib/tauri";
+import { formatGrade, formatSelectionStats } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
 import { chartTextColor, chartGridColor } from "../../lib/chartTheme";
 import { useResolvedDark } from "../../lib/theme";
@@ -206,18 +208,6 @@ function yAxisSize(u: uPlot, values: string[] | null): number {
   return Math.max(28, Math.ceil(widest) + 15);
 }
 
-/** Index of the ascending array's value nearest to x (binary search). */
-function nearestIdx(xs: number[], x: number): number {
-  let lo = 0;
-  let hi = xs.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (xs[mid] < x) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo > 0 && x - xs[lo - 1] < xs[lo] - x ? lo - 1 : lo;
-}
-
 function SingleChart({
   config,
   xValues,
@@ -361,10 +351,8 @@ function SingleChart({
                 cont.getBoundingClientRect().left +
                 (u.cursor.left ?? 0);
               const g = gradeValues?.[chartIdx];
-              // Signed grade so descents read as such; one decimal — the
-              // smoothing window doesn't support more precision anyway.
-              const gradeTxt =
-                g != null && isFinite(g) ? ` · ${g > 0 ? "+" : ""}${g.toFixed(1)}%` : "";
+              // Signed grade so descents read as such.
+              const gradeTxt = g != null && isFinite(g) ? ` · ${formatGrade(g)}` : "";
               setTip({ left, text: fmtVal(values[chartIdx]) + gradeTxt });
             }
             const tpIdx = indexMap[chartIdx] ?? null;
@@ -860,13 +848,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
   // average grade — "2.41 km · +183 m · +7.6%", all in display units.
   const elevationSelectionStats = (tpA: number, tpB: number): string | null => {
     const s = selectionGrade(trackpoints.distance_m, trackpoints.altitude_m, tpA, tpB);
-    if (!s) return null;
-    const dist = isImperial()
-      ? `${(s.distanceM / M_PER_MILE).toFixed(2)} ${distanceUnit()}`
-      : `${(s.distanceM / 1000).toFixed(2)} ${distanceUnit()}`;
-    const dAlt = Math.round(isImperial() ? s.deltaM * FT_PER_M : s.deltaM);
-    const sign = (v: number) => (v > 0 ? "+" : "");
-    return `${dist} · ${sign(dAlt)}${dAlt} ${elevationUnit()} · ${sign(s.gradePct)}${s.gradePct.toFixed(1)}%`;
+    return s && formatSelectionStats(s);
   };
   const xLabel = xAxis === "time" ? "Time (min)" : `Distance (${distanceUnit()})`;
   const xUnit = xAxis === "time" ? "min" : distanceUnit();

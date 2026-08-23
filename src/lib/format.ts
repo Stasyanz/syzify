@@ -78,6 +78,23 @@ export function formatHR(hr: number | null): string {
   return `${Math.round(hr)} bpm`;
 }
 
+/** Signed grade percent, one decimal — "+8.3%", "-2.0%", "0.0%". One
+ * decimal is all the smoothing window supports. */
+export function formatGrade(pct: number): string {
+  return `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}
+
+/** The elevation chart's selection badge: span distance, signed net climb,
+ * signed average grade — "2.41 km · +183 m · +7.6%" (display units). */
+export function formatSelectionStats(s: {
+  distanceM: number;
+  deltaM: number;
+  gradePct: number;
+}): string {
+  const delta = `${s.deltaM > 0 ? "+" : ""}${formatElevation(s.deltaM)}`;
+  return `${formatDistance(s.distanceM)} · ${delta} · ${formatGrade(s.gradePct)}`;
+}
+
 export function formatDurationHM(seconds: number | null): string {
   if (seconds == null) return "--";
   const s = Math.round(seconds);

@@ -8,7 +8,9 @@ import {
   paceOrSpeedLabel,
   formatSpeed,
   formatElevation,
+  formatGrade,
   formatHR,
+  formatSelectionStats,
 } from "./format";
 import { useUnitsStore } from "./units";
 
@@ -124,6 +126,28 @@ describe("formatElevation", () => {
   });
 });
 
+describe("formatGrade", () => {
+  it("signs positive grades, keeps the minus, one decimal", () => {
+    expect(formatGrade(8.34)).toBe("+8.3%");
+    expect(formatGrade(-2.04)).toBe("-2.0%");
+    expect(formatGrade(0)).toBe("0.0%");
+  });
+});
+
+describe("formatSelectionStats", () => {
+  it("joins distance, signed net climb and grade", () => {
+    expect(
+      formatSelectionStats({ distanceM: 2410, deltaM: 183.4, gradePct: 7.61 }),
+    ).toBe("2.41 km · +183 m · +7.6%");
+  });
+
+  it("reads descents with negative climb and grade", () => {
+    expect(
+      formatSelectionStats({ distanceM: 500, deltaM: -50, gradePct: -10 }),
+    ).toBe("500 m · -50 m · -10.0%");
+  });
+});
+
 describe("imperial units", () => {
   beforeEach(() => {
     useUnitsStore.setState({ mode: "imperial" });
@@ -156,6 +180,12 @@ describe("imperial units", () => {
   it("formats elevation in feet", () => {
     expect(formatElevation(1000)).toBe("3281 ft");
     expect(formatElevation(0)).toBe("0 ft");
+  });
+
+  it("formats selection stats in mi/ft", () => {
+    expect(
+      formatSelectionStats({ distanceM: 2410, deltaM: 183.4, gradePct: 7.61 }),
+    ).toBe("1.50 mi · +602 ft · +7.6%");
   });
 });
 

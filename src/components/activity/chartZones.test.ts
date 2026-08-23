@@ -12,6 +12,7 @@ import {
   gradeGradientStops,
   gradeSeries,
   HR_FALLBACK_COLOR,
+  nearestIdx,
   selectionGrade,
   HR_ZONE_COLORS,
   POWER_ZONE_COLORS,
@@ -397,6 +398,34 @@ describe("gradeGradientStops", () => {
 
   it("returns no stops for an empty series", () => {
     expect(gradeGradientStops([], [], xPosOf, 0, 100)).toEqual([]);
+  });
+
+  it("collapses a NaN position to the previous stop instead of poisoning", () => {
+    // addColorStop throws on NaN offsets and kills the chart — the guard
+    // must swallow a NaN projection (e.g. an unmeasured plot).
+    const stops = gradeGradientStops([0, 50, 100], [0, 10, 10], () => NaN, 0, 100);
+    expect(stops).toEqual([
+      { offset: 0, color: GRADE_COLORS[0] },
+      { offset: 0, color: GRADE_COLORS[0] },
+      { offset: 0, color: GRADE_COLORS[2] },
+      { offset: 1, color: GRADE_COLORS[2] },
+    ]);
+  });
+});
+
+describe("nearestIdx", () => {
+  const xs = [0, 10, 20, 30];
+
+  it("snaps to the closest value, either side", () => {
+    expect(nearestIdx(xs, 0)).toBe(0);
+    expect(nearestIdx(xs, 14)).toBe(1);
+    expect(nearestIdx(xs, 16)).toBe(2);
+    expect(nearestIdx(xs, 30)).toBe(3);
+  });
+
+  it("clamps values outside the array's range", () => {
+    expect(nearestIdx(xs, -5)).toBe(0);
+    expect(nearestIdx(xs, 99)).toBe(3);
   });
 });
 
