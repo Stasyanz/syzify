@@ -12,6 +12,7 @@ import {
   gradeGradientStops,
   gradeSeries,
   HR_FALLBACK_COLOR,
+  selectionGrade,
   HR_ZONE_COLORS,
   POWER_ZONE_COLORS,
   SPEED_ZONE_COLORS,
@@ -318,6 +319,39 @@ describe("gradeSeries", () => {
     const g = gradeSeries(d, a);
     expect(g[2]).toBeNull();
     expect(g[3]).toBeCloseTo(10);
+  });
+});
+
+describe("selectionGrade", () => {
+  const dist = [0, 100, 200, 300, 400];
+  const alt = [100, 108, 120, 126, 128];
+
+  it("averages net climb over the selected span, either endpoint order", () => {
+    const s = selectionGrade(dist, alt, 1, 3)!;
+    expect(s.distanceM).toBe(200);
+    expect(s.deltaM).toBe(18);
+    expect(s.gradePct).toBeCloseTo(9);
+    expect(selectionGrade(dist, alt, 3, 1)).toEqual(s);
+  });
+
+  it("slides endpoints inward past missing samples and clamps out-of-range", () => {
+    const holes: (number | null)[] = [null, 108, 120, 126, null];
+    const s = selectionGrade(dist, holes, 0, 4)!;
+    expect(s.distanceM).toBe(200); // 100..300
+    expect(s.gradePct).toBeCloseTo(9);
+    expect(selectionGrade(dist, holes, -5, 99)!.distanceM).toBe(200);
+  });
+
+  it("returns null on degenerate spans", () => {
+    expect(selectionGrade(dist, alt, 2, 2)).toBeNull();
+    expect(selectionGrade([0, 2], [100, 101], 0, 1)).toBeNull(); // < 5 m
+    expect(selectionGrade(dist, [null, null, null, null, null], 0, 4)).toBeNull();
+  });
+
+  it("reports descents with negative delta and grade", () => {
+    const s = selectionGrade([0, 500], [200, 150], 0, 1)!;
+    expect(s.deltaM).toBe(-50);
+    expect(s.gradePct).toBeCloseTo(-10);
   });
 });
 

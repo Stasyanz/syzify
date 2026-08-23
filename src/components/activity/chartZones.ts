@@ -314,6 +314,40 @@ export function gradeSeries(
   return out;
 }
 
+/** What a drag-selected slice of the elevation chart works out to. */
+export interface SelectionGrade {
+  /** Horizontal span between the endpoints, meters. */
+  distanceM: number;
+  /** Net altitude change end minus start, meters (signed). */
+  deltaM: number;
+  /** Average grade over the span, percent (signed). */
+  gradePct: number;
+}
+
+/**
+ * Average grade of a trackpoint range [a, b] (either order): net altitude
+ * delta over the distance span between the endpoints. Endpoints slide
+ * inward to the nearest points carrying both inputs; a span under
+ * MIN_GRADE_SPAN_M (or no two usable points) returns null — same guard as
+ * the per-point series.
+ */
+export function selectionGrade(
+  distM: (number | null)[],
+  altM: (number | null)[],
+  a: number,
+  b: number,
+): SelectionGrade | null {
+  let lo = Math.max(0, Math.min(a, b));
+  let hi = Math.min(distM.length - 1, Math.max(a, b));
+  while (lo <= hi && (distM[lo] == null || altM[lo] == null)) lo++;
+  while (hi >= lo && (distM[hi] == null || altM[hi] == null)) hi--;
+  if (lo >= hi) return null;
+  const span = distM[hi]! - distM[lo]!;
+  if (span < MIN_GRADE_SPAN_M) return null;
+  const delta = altM[hi]! - altM[lo]!;
+  return { distanceM: span, deltaM: delta, gradePct: (delta / span) * 100 };
+}
+
 /**
  * Horizontal gradient stops (offset 0 = plot left, 1 = right) painting the
  * elevation LINE by grade category with sharp transitions — the vertical

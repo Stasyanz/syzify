@@ -11,6 +11,7 @@ import {
   ELEVATION_BANDS_M,
   gradeGradientStops,
   gradeSeries,
+  selectionGrade,
   hrVisRange,
   hrZoneRanges,
   powerVisRange,
@@ -205,6 +206,18 @@ function yAxisSize(u: uPlot, values: string[] | null): number {
   return Math.max(28, Math.ceil(widest) + 15);
 }
 
+/** Index of the ascending array's value nearest to x (binary search). */
+function nearestIdx(xs: number[], x: number): number {
+  let lo = 0;
+  let hi = xs.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 && x - xs[lo - 1] < xs[lo] - x ? lo - 1 : lo;
+}
+
 function SingleChart({
   config,
   xValues,
@@ -218,6 +231,7 @@ function SingleChart({
   barRange,
   barStep,
   gradeValues,
+  selectionStats,
 }: {
   config: ChartConfig;
   xValues: number[];
@@ -237,6 +251,9 @@ function SingleChart({
   /** Smoothed grade (%) per chart point (elevation only) — colors the line
    * by climb steepness and adds the percentage to the hover popup. */
   gradeValues?: (number | null)[];
+  /** Stats line for a drag-selected trackpoint range (elevation only) —
+   * enables x-drag selection and the selection badge. */
+  selectionStats?: (tpA: number, tpB: number) => string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -244,6 +261,10 @@ function SingleChart({
   const hoveredPointIndex = useActivityStore((s) => s.hoveredPointIndex);
   const isLocalCursor = useRef(false);
   const [tip, setTip] = useState<{ left: number; text: string } | null>(null);
+  // Drag-selection badge: the selected span's stats, centered over the box.
+  const [sel, setSel] = useState<{ left: number; width: number; text: string } | null>(
+    null,
+  );
   // Recreate the plot on theme change — uPlot bakes axis/grid colors in.
   const dark = useResolvedDark();
 
@@ -267,10 +288,42 @@ function SingleChart({
       width: containerRef.current.clientWidth,
       height,
       cursor: {
-        drag: { x: false, y: false },
+        // setScale:false keeps drag as pure selection — the default would
+        // ZOOM the x scale on release.
+        drag: selectionStats
+          ? { x: true, y: false, setScale: false }
+          : { x: false, y: false },
         sync: { key: SYNC_KEY, setSeries: false },
       },
       hooks: {
+        ...(selectionStats
+          ? {
+              setSelect: [
+                (u: uPlot) => {
+                  const cont = containerRef.current;
+                  if (u.select.width <= 0 || !cont) {
+                    setSel(null);
+                    return;
+                  }
+                  const iA = nearestIdx(xValues, u.posToVal(u.select.left, "x"));
+                  const iB = nearestIdx(
+                    xValues,
+                    u.posToVal(u.select.left + u.select.width, "x"),
+                  );
+                  const text = selectionStats(indexMap[iA], indexMap[iB]);
+                  if (!text) {
+                    setSel(null);
+                    return;
+                  }
+                  // select.left is relative to the plot area (u.over).
+                  const overLeft =
+                    u.over.getBoundingClientRect().left -
+                    cont.getBoundingClientRect().left;
+                  setSel({ left: overLeft + u.select.left, width: u.select.width, text });
+                },
+              ],
+            }
+          : {}),
         setCursor: [
           (u) => {
             const chartIdx = u.cursor.idx;
@@ -454,6 +507,7 @@ function SingleChart({
       ro.disconnect();
       plotRef.current?.destroy();
       setTip(null);
+      setSel(null);
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,7 +535,20 @@ function SingleChart({
   return (
     <div className="relative w-full">
       <div ref={containerRef} className="w-full" />
-      {tip && (
+      {sel && (
+        <div
+          className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+          style={{
+            top: 2,
+            left: sel.left + sel.width / 2,
+            background: "var(--ink)",
+            color: "var(--surface)",
+          }}
+        >
+          {sel.text}
+        </div>
+      )}
+      {tip && !sel && (
         <div
           className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
           style={{ top: 2, left: tip.left, background: "var(--ink)", color: "var(--surface)" }}
@@ -766,6 +833,19 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
   // Grade only makes sense when it actually varies — an indoor session with
   // constant (or absent) altitude keeps the plain teal line.
   const hasGrades = gradeValues.some((g) => g != null && g !== 0);
+
+  // Drag-selection stats for the elevation chart: span distance, net climb,
+  // average grade — "2.41 km · +183 m · +7.6%", all in display units.
+  const elevationSelectionStats = (tpA: number, tpB: number): string | null => {
+    const s = selectionGrade(trackpoints.distance_m, trackpoints.altitude_m, tpA, tpB);
+    if (!s) return null;
+    const dist = isImperial()
+      ? `${(s.distanceM / M_PER_MILE).toFixed(2)} ${distanceUnit()}`
+      : `${(s.distanceM / 1000).toFixed(2)} ${distanceUnit()}`;
+    const dAlt = Math.round(isImperial() ? s.deltaM * FT_PER_M : s.deltaM);
+    const sign = (v: number) => (v > 0 ? "+" : "");
+    return `${dist} · ${sign(dAlt)}${dAlt} ${elevationUnit()} · ${sign(s.gradePct)}${s.gradePct.toFixed(1)}%`;
+  };
   const xLabel = xAxis === "time" ? "Time (min)" : `Distance (${distanceUnit()})`;
   const xUnit = xAxis === "time" ? "min" : distanceUnit();
 
@@ -826,6 +906,9 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
               barRange={barCharts.get(config.key)?.range}
               barStep={barCharts.get(config.key)?.step}
               gradeValues={config.key === "elevation" && hasGrades ? gradeValues : undefined}
+              selectionStats={
+                config.key === "elevation" && hasGrades ? elevationSelectionStats : undefined
+              }
             />
           </div>
         ))}
