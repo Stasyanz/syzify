@@ -498,6 +498,16 @@ function SingleChart({
 
     plotRef.current = new uPlot(opts, data, containerRef.current);
 
+    // uPlot's double-click reset hides its select box WITHOUT firing the
+    // setSelect hook (internal hideSelect passes fire=false) — clear the
+    // badge and the published map range ourselves or they outlive the box.
+    if (selectionStats) {
+      plotRef.current.over.addEventListener("dblclick", () => {
+        setSel(null);
+        setSelectedRange(null);
+      });
+    }
+
     const onResize = () => {
       if (plotRef.current && containerRef.current) {
         plotRef.current.setSize({ width: containerRef.current.clientWidth, height });
