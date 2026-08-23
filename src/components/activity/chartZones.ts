@@ -191,6 +191,11 @@ export function powerVisRange(dMin: number, dMax: number): [number, number] {
   return [lo, hi];
 }
 
+/** Speed palette — the HR palette reversed: unlike HR (where red = strain),
+ * HIGH speed is GOOD, so the top range reads green and the crawl reads
+ * dark red. Same hues keep the chart family consistent. */
+export const SPEED_ZONE_COLORS = [...HR_ZONE_COLORS].reverse();
+
 /** Fixed ride-speed thresholds, in km/h — a product decision, not a
  * standard: no authority defines universal speed zones (terrain and wind
  * dominate), but consistent colors across rides beat no colors. */
@@ -210,11 +215,12 @@ export function speedZoneRanges(
 ): ZoneRange[] | null {
   const bounds = zoneBoundaries(zones, "speed");
   if (bounds.length >= 2) {
-    return rangesFromBoundaries(bounds.map((b) => b * mpsToUnit));
+    return rangesFromBoundaries(bounds.map((b) => b * mpsToUnit), SPEED_ZONE_COLORS);
   }
   if (sport !== "ride") return null;
   return rangesFromBoundaries(
     RIDE_SPEED_BOUNDS_KMH.map((kmh) => (kmh / 3.6) * mpsToUnit),
+    SPEED_ZONE_COLORS,
   );
 }
 

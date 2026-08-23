@@ -9,6 +9,7 @@ import {
   HR_FALLBACK_COLOR,
   HR_ZONE_COLORS,
   POWER_ZONE_COLORS,
+  SPEED_ZONE_COLORS,
   hrVisRange,
   hrZoneRanges,
   powerVisRange,
@@ -211,7 +212,9 @@ describe("speedZoneRanges", () => {
     );
     expect(ranges).not.toBeNull();
     expect(ranges!.map((r) => r.to)).toEqual([18, 36, Infinity]);
-    expect(ranges![2].color).toBe(HR_ZONE_COLORS[4]);
+    // Inverted palette: the fastest range reads green.
+    expect(ranges![2].color).toBe(SPEED_ZONE_COLORS[4]);
+    expect(SPEED_ZONE_COLORS[4]).toBe(HR_ZONE_COLORS[0]);
   });
 
   it("falls back to fixed ride thresholds in the display unit", () => {
@@ -225,9 +228,10 @@ describe("speedZoneRanges", () => {
     expect(mph!.map((r) => Math.round(r.to * 10) / 10)).toEqual([
       9.3, 15.5, 18.6, 21.7, Infinity,
     ]);
-    // Five ranges map the warm palette exactly: green bottom, dark-red top.
-    expect(kmh![0].color).toBe(HR_ZONE_COLORS[0]);
-    expect(kmh![4].color).toBe(HR_ZONE_COLORS[4]);
+    // Five ranges map the inverted palette exactly: dark-red bottom
+    // (crawling), green top (fastest).
+    expect(kmh![0].color).toBe(HR_ZONE_COLORS[4]);
+    expect(kmh![4].color).toBe(HR_ZONE_COLORS[0]);
   });
 
   it("returns null off the bike without FIT zones", () => {
