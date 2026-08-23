@@ -232,6 +232,123 @@ export function speedVisRange(dMin: number, dMax: number): [number, number] {
   return [lo, hi];
 }
 
+/** Grade category ceilings in percent — a product decision like the ride
+ * speed bounds (Strava/Komoot pick their own): below 4% reads as rolling,
+ * 16%+ is wall territory. Descents and flats share the base color — the
+ * chart colors EFFORT, and effort lives uphill. */
+export const GRADE_BOUNDS_PCT = [4, 8, 12, 16];
+
+/** Grade palette, flat → wall. Index 0 is the elevation line's own teal so
+ * flat terrain looks unchanged; the climb steps reuse the HR warm ramp.
+ * Neighbors differ in lightness, not just hue (the standing a11y rule). */
+export const GRADE_COLORS = [
+  "#0e7490", // < 4%: flat / descent (the elevation line color)
+  "#c9941a", // 4–8%: noticeable
+  "#e07c3a", // 8–12%: hard
+  "#c0392b", // 12–16%: steep
+  "#8e1a0e", // 16%+: wall
+];
+
+/** Palette index for one grade value (null/NaN → flat). */
+export function gradeCategory(pct: number | null): number {
+  if (pct == null || !isFinite(pct)) return 0;
+  const i = GRADE_BOUNDS_PCT.findIndex((b) => pct < b);
+  return i === -1 ? GRADE_BOUNDS_PCT.length : i;
+}
+
+/** Distance window for grade smoothing, meters. Raw per-point grade from
+ * GPS elevation is noise (±1 m altitude error over ~8 m point spacing is
+ * ±12% "grade"); a window this size reads through it while still resolving
+ * real pitches. Distance-based, NOT point-count-based — points bunch up
+ * exactly where climbs slow the rider down. */
+export const GRADE_WINDOW_M = 30;
+
+/** A window that collapsed below this span (standing still, track ends)
+ * yields no trustworthy grade — better a gap than a spike. */
+const MIN_GRADE_SPAN_M = 5;
+
+/**
+ * Smoothed grade (%) per trackpoint from cumulative distance + altitude,
+ * both in meters: for each point, the altitude delta across a centered
+ * ±window/2 distance span divided by that span. Points missing either
+ * input get null, as do windows spanning less than MIN_GRADE_SPAN_M.
+ * Assumes distance ascending (cumulative); two pointers keep it O(N).
+ */
+export function gradeSeries(
+  distM: (number | null)[],
+  altM: (number | null)[],
+  windowM: number = GRADE_WINDOW_M,
+): (number | null)[] {
+  const n = distM.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  // Compact to the points carrying both inputs; indices map back via idx.
+  const idx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (distM[i] != null && altM[i] != null) idx.push(i);
+  }
+  const m = idx.length;
+  if (m < 2) return out;
+
+  const half = windowM / 2;
+  let lo = 0;
+  let hi = 0;
+  for (let j = 0; j < m; j++) {
+    const d = distM[idx[j]]!;
+    while (distM[idx[lo]]! < d - half) lo++;
+    while (hi + 1 < m && distM[idx[hi + 1]]! <= d + half) hi++;
+    // Sparse recording (Garmin Smart Recording spaces points wider than
+    // the window at speed) collapses the window to the point itself —
+    // widen to the immediate neighbors: less smoothing, but the sparsity
+    // already smoothed the data.
+    let wLo = lo;
+    let wHi = hi;
+    if (wLo === wHi) {
+      wLo = Math.max(0, j - 1);
+      wHi = Math.min(m - 1, j + 1);
+    }
+    const span = distM[idx[wHi]]! - distM[idx[wLo]]!;
+    if (span >= MIN_GRADE_SPAN_M) {
+      out[idx[j]] = ((altM[idx[wHi]]! - altM[idx[wLo]]!) / span) * 100;
+    }
+  }
+  return out;
+}
+
+/**
+ * Horizontal gradient stops (offset 0 = plot left, 1 = right) painting the
+ * elevation LINE by grade category with sharp transitions — the vertical
+ * sibling of bandGradientStops (which paints the FILL by altitude). Category
+ * boundaries sit at the midpoint between neighboring samples; offsets are
+ * clamped and kept monotonic with the same NaN guard (a poisoned offset
+ * would make addColorStop throw and kill the chart).
+ */
+export function gradeGradientStops(
+  xs: number[],
+  grades: (number | null)[],
+  xPosOf: (x: number) => number,
+  left: number,
+  width: number,
+): { offset: number; color: string }[] {
+  const stops: { offset: number; color: string }[] = [];
+  if (xs.length === 0) return stops;
+  let cat = gradeCategory(grades[0] ?? null);
+  let prev = 0;
+  for (let i = 1; i < xs.length; i++) {
+    const c = gradeCategory(grades[i] ?? null);
+    if (c === cat) continue;
+    const midX = (xs[i - 1] + xs[i]) / 2;
+    const raw = (xPosOf(midX) - left) / width;
+    const t = Number.isNaN(raw) ? prev : Math.min(1, Math.max(prev, raw));
+    stops.push({ offset: prev, color: GRADE_COLORS[cat] });
+    stops.push({ offset: t, color: GRADE_COLORS[cat] });
+    prev = t;
+    cat = c;
+  }
+  stops.push({ offset: prev, color: GRADE_COLORS[cat] });
+  stops.push({ offset: 1, color: GRADE_COLORS[cat] });
+  return stops;
+}
+
 export interface ElevationBand {
   /** Band ceiling in display units (last band: Infinity). */
   to: number;

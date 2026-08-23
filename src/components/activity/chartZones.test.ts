@@ -6,6 +6,11 @@ import {
   CADENCE_ZONE_COLORS,
   cadenceZoneRanges,
   DEFAULT_HR_RANGES,
+  GRADE_BOUNDS_PCT,
+  GRADE_COLORS,
+  gradeCategory,
+  gradeGradientStops,
+  gradeSeries,
   HR_FALLBACK_COLOR,
   HR_ZONE_COLORS,
   POWER_ZONE_COLORS,
@@ -247,6 +252,117 @@ describe("speedVisRange", () => {
   it("pads by 2 and rounds to fives with a 0 floor", () => {
     expect(speedVisRange(12.4, 38.2)).toEqual([10, 45]);
     expect(speedVisRange(1, 20)).toEqual([0, 25]);
+  });
+});
+
+describe("gradeCategory", () => {
+  it("maps grade to the palette index, flats and descents to 0", () => {
+    expect(gradeCategory(null)).toBe(0);
+    expect(gradeCategory(NaN)).toBe(0);
+    expect(gradeCategory(-12)).toBe(0); // descents share the flat color
+    expect(gradeCategory(0)).toBe(0);
+    expect(gradeCategory(3.9)).toBe(0);
+    expect(gradeCategory(4)).toBe(1);
+    expect(gradeCategory(8)).toBe(2);
+    expect(gradeCategory(12)).toBe(3);
+    expect(gradeCategory(16)).toBe(4);
+    expect(gradeCategory(45)).toBe(4);
+  });
+
+  it("has one color per category", () => {
+    expect(GRADE_COLORS.length).toBe(GRADE_BOUNDS_PCT.length + 1);
+  });
+});
+
+describe("gradeSeries", () => {
+  // 10 m point spacing, 0..100 m.
+  const dist = Array.from({ length: 11 }, (_, i) => i * 10);
+
+  it("reports a constant climb's true grade at every point", () => {
+    const alt = dist.map((d) => d * 0.1); // steady 10%
+    for (const g of gradeSeries(dist, alt)) expect(g).toBeCloseTo(10);
+  });
+
+  it("smooths a single-point altitude spike below its raw grade", () => {
+    const alt = dist.map(() => 100);
+    alt[5] = 103; // +3 m over 10 m = 30% raw
+    const g = gradeSeries(dist, alt);
+    // The ±15 m window spans 50→53→50: net 0 at the spike itself.
+    expect(Math.abs(g[5]!)).toBeLessThan(1);
+    expect(g[0]).toBeCloseTo(0);
+  });
+
+  it("skips points missing altitude and windows without span", () => {
+    const alt: (number | null)[] = dist.map((d) => d * 0.05);
+    alt[3] = null;
+    const g = gradeSeries(dist, alt);
+    expect(g[3]).toBeNull();
+    expect(g[4]).toBeCloseTo(5);
+    // Standing still: all samples at one distance — no span, no grade.
+    expect(gradeSeries([50, 50, 50], [100, 101, 100])).toEqual([null, null, null]);
+    // Fewer than two usable points can't form a slope.
+    expect(gradeSeries([0, 10], [100, null])).toEqual([null, null]);
+  });
+
+  it("widens to neighbors when points are sparser than the window", () => {
+    // 50 m spacing > the 30 m window: a strict centered window would
+    // collapse to the point itself and yield null everywhere.
+    const d = [0, 50, 100, 150, 200];
+    const a = d.map((x) => x * 0.08); // steady 8%
+    for (const g of gradeSeries(d, a)) expect(g).toBeCloseTo(8);
+  });
+
+  it("is unaffected by null distance rows (pause gaps)", () => {
+    const d = [0, 10, null, 20, 30];
+    const a = [0, 1, 999, 2, 3];
+    const g = gradeSeries(d, a);
+    expect(g[2]).toBeNull();
+    expect(g[3]).toBeCloseTo(10);
+  });
+});
+
+describe("gradeGradientStops", () => {
+  // Identity-ish mapping: x 0..100 → px 0..100 over a 100px plot.
+  const xPosOf = (x: number) => x;
+
+  it("paints one flat color when the category never changes", () => {
+    const stops = gradeGradientStops([0, 50, 100], [1, 2, 1], xPosOf, 0, 100);
+    expect(stops).toEqual([
+      { offset: 0, color: GRADE_COLORS[0] },
+      { offset: 1, color: GRADE_COLORS[0] },
+    ]);
+  });
+
+  it("puts a sharp double-stop at the midpoint of a category change", () => {
+    const stops = gradeGradientStops([0, 40, 60, 100], [0, 0, 10, 10], xPosOf, 0, 100);
+    // Flat until mid(40,60)=50 → 0.5, then the 8–12% color to the end.
+    expect(stops).toEqual([
+      { offset: 0, color: GRADE_COLORS[0] },
+      { offset: 0.5, color: GRADE_COLORS[0] },
+      { offset: 0.5, color: GRADE_COLORS[2] },
+      { offset: 1, color: GRADE_COLORS[2] },
+    ]);
+  });
+
+  it("treats null grades as flat and keeps offsets monotonic in [0,1]", () => {
+    const stops = gradeGradientStops(
+      [0, 25, 50, 75, 100],
+      [null, 20, null, 5, null],
+      xPosOf,
+      0,
+      100,
+    );
+    for (let i = 0; i < stops.length; i++) {
+      expect(stops[i].offset).toBeGreaterThanOrEqual(0);
+      expect(stops[i].offset).toBeLessThanOrEqual(1);
+      if (i > 0) expect(stops[i].offset).toBeGreaterThanOrEqual(stops[i - 1].offset);
+    }
+    expect(stops[0].color).toBe(GRADE_COLORS[0]);
+    expect(stops[stops.length - 1].color).toBe(GRADE_COLORS[0]);
+  });
+
+  it("returns no stops for an empty series", () => {
+    expect(gradeGradientStops([], [], xPosOf, 0, 100)).toEqual([]);
   });
 });
 

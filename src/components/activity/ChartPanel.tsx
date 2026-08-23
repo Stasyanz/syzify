@@ -9,6 +9,8 @@ import {
   bucketMaxBars,
   cadenceZoneRanges,
   ELEVATION_BANDS_M,
+  gradeGradientStops,
+  gradeSeries,
   hrVisRange,
   hrZoneRanges,
   powerVisRange,
@@ -215,6 +217,7 @@ function SingleChart({
   barZones,
   barRange,
   barStep,
+  gradeValues,
 }: {
   config: ChartConfig;
   xValues: number[];
@@ -231,6 +234,9 @@ function SingleChart({
   /** Bar window width in x units (bar mode only) — pads the x scale by half
   1 * a window per side so the edge bars aren't clipped to half-width. */
   barStep?: number;
+  /** Smoothed grade (%) per chart point (elevation only) — colors the line
+   * by climb steepness and adds the percentage to the hover popup. */
+  gradeValues?: (number | null)[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -282,7 +288,12 @@ function SingleChart({
                 u.over.getBoundingClientRect().left -
                 cont.getBoundingClientRect().left +
                 (u.cursor.left ?? 0);
-              setTip({ left, text: fmtVal(values[chartIdx]) });
+              const g = gradeValues?.[chartIdx];
+              // Signed grade so descents read as such; one decimal — the
+              // smoothing window doesn't support more precision anyway.
+              const gradeTxt =
+                g != null && isFinite(g) ? ` · ${g > 0 ? "+" : ""}${g.toFixed(1)}%` : "";
+              setTip({ left, text: fmtVal(values[chartIdx]) + gradeTxt });
             }
             const tpIdx = indexMap[chartIdx] ?? null;
             isLocalCursor.current = true;
@@ -369,6 +380,28 @@ function SingleChart({
                 },
               }
             : {}),
+          // Grade coloring: a sharp-stop HORIZONTAL gradient paints the
+          // line by climb steepness (flat teal → warm ramp), the sibling of
+          // the vertical fill gradient above. A hair wider than the default
+          // 1.5 — the color IS the information here.
+          ...(gradeValues
+            ? {
+                width: 2,
+                stroke: (u: uPlot) => {
+                  const { left, width } = u.bbox;
+                  const grad = u.ctx.createLinearGradient(left, 0, left + width, 0);
+                  const stops = gradeGradientStops(
+                    xValues,
+                    gradeValues,
+                    (x) => u.valToPos(x, "x", true),
+                    left,
+                    width,
+                  );
+                  for (const s of stops) grad.addColorStop(s.offset, s.color);
+                  return grad;
+                },
+              }
+            : {}),
           // Design HRChart: rounded bars, each colored by the zone its
           // value falls into, at the design's 0.88 opacity ("e0" alpha).
           ...(barZones
@@ -424,7 +457,7 @@ function SingleChart({
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep]);
+  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues]);
 
   // Sync cursor FROM external source (map hover) → chart
   useEffect(() => {
@@ -596,6 +629,13 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
   );
   const [xAxis, setXAxis] = useState<XAxis>(() => (hasDistanceData ? "distance" : "time"));
 
+  // Smoothed grade (%) per trackpoint — meters in, unitless out, so the
+  // display-unit setting never touches it.
+  const grades = useMemo(
+    () => gradeSeries(trackpoints.distance_m, trackpoints.altitude_m),
+    [trackpoints],
+  );
+
   const chartData = useMemo(() => {
     if (available.length === 0) return null;
 
@@ -603,6 +643,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
     const indexMap: number[] = [];
     const reverseMap = new Map<number, number>();
     const chartValues = new Map<ChartType, number[]>();
+    const gradeValues: (number | null)[] = [];
     for (const config of available) chartValues.set(config.key, []);
 
     // Reuse the series already materialized for the `available` filter — no
@@ -633,11 +674,12 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
       for (const [config, data] of series) {
         chartValues.get(config.key)!.push(data[i] ?? 0);
       }
+      gradeValues.push(grades[i] ?? null);
     }
 
     if (xValues.length === 0) return null;
-    return { xValues, indexMap, reverseMap, chartValues };
-  }, [trackpoints, xAxis, available, seriesByKey]);
+    return { xValues, indexMap, reverseMap, chartValues, gradeValues };
+  }, [trackpoints, xAxis, available, seriesByKey, grades]);
 
   // Bar counts follow the panel's real width (~14px per bar, see
   // zoneBarCount), per SLOT: the full-width first card fits ~2× the bars of
@@ -720,7 +762,10 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
 
   if (!chartData) return null;
 
-  const { xValues, indexMap, reverseMap, chartValues } = chartData;
+  const { xValues, indexMap, reverseMap, chartValues, gradeValues } = chartData;
+  // Grade only makes sense when it actually varies — an indoor session with
+  // constant (or absent) altitude keeps the plain teal line.
+  const hasGrades = gradeValues.some((g) => g != null && g !== 0);
   const xLabel = xAxis === "time" ? "Time (min)" : `Distance (${distanceUnit()})`;
   const xUnit = xAxis === "time" ? "min" : distanceUnit();
 
@@ -780,6 +825,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
               barZones={barCharts.get(config.key)?.zones}
               barRange={barCharts.get(config.key)?.range}
               barStep={barCharts.get(config.key)?.step}
+              gradeValues={config.key === "elevation" && hasGrades ? gradeValues : undefined}
             />
           </div>
         ))}
