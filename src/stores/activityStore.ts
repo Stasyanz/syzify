@@ -5,11 +5,15 @@ interface ActivityStoreState {
   filters: ActivityFilters;
   viewMode: "list" | "calendar" | "map";
   hoveredPointIndex: number | null;
+  /** Trackpoint range [min, max] drag-selected on the elevation chart —
+   * the map highlights this segment of the route. */
+  selectedRange: [number, number] | null;
   filtersOpen: boolean;
   setFilters: (filters: Partial<ActivityFilters>) => void;
   resetFilters: () => void;
   setViewMode: (mode: "list" | "calendar" | "map") => void;
   setHoveredPointIndex: (index: number | null) => void;
+  setSelectedRange: (range: [number, number] | null) => void;
   setFiltersOpen: (open: boolean) => void;
   toggleFilters: () => void;
 }
@@ -25,6 +29,7 @@ export const useActivityStore = create<ActivityStoreState>((set) => ({
   filters: defaultFilters,
   viewMode: "list",
   hoveredPointIndex: null,
+  selectedRange: null,
   filtersOpen: false,
 
   setFilters: (partial) =>
@@ -37,6 +42,8 @@ export const useActivityStore = create<ActivityStoreState>((set) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
 
   setHoveredPointIndex: (index) => set({ hoveredPointIndex: index }),
+
+  setSelectedRange: (range) => set({ selectedRange: range }),
 
   setFiltersOpen: (open) => set({ filtersOpen: open }),
 

@@ -259,6 +259,7 @@ function SingleChart({
   const plotRef = useRef<uPlot | null>(null);
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
   const hoveredPointIndex = useActivityStore((s) => s.hoveredPointIndex);
+  const setSelectedRange = useActivityStore((s) => s.setSelectedRange);
   const isLocalCursor = useRef(false);
   const [tip, setTip] = useState<{ left: number; text: string } | null>(null);
   // Drag-selection badge: the selected span's stats, centered over the box.
@@ -303,6 +304,7 @@ function SingleChart({
                   const cont = containerRef.current;
                   if (u.select.width <= 0 || !cont) {
                     setSel(null);
+                    setSelectedRange(null);
                     return;
                   }
                   const iA = nearestIdx(xValues, u.posToVal(u.select.left, "x"));
@@ -313,8 +315,16 @@ function SingleChart({
                   const text = selectionStats(indexMap[iA], indexMap[iB]);
                   if (!text) {
                     setSel(null);
+                    setSelectedRange(null);
                     return;
                   }
+                  // Publish the trackpoint range — the route map thickens
+                  // this segment. Ordered: a time-axis drag maps 1:1, and
+                  // indexMap is ascending either way.
+                  setSelectedRange([
+                    Math.min(indexMap[iA], indexMap[iB]),
+                    Math.max(indexMap[iA], indexMap[iB]),
+                  ]);
                   // select.left is relative to the plot area (u.over).
                   const overLeft =
                     u.over.getBoundingClientRect().left -
@@ -508,6 +518,9 @@ function SingleChart({
       plotRef.current?.destroy();
       setTip(null);
       setSel(null);
+      // The plot recreate drops uPlot's select box — retract the map
+      // highlight with it (no-op for chart types that never set it).
+      if (selectionStats) setSelectedRange(null);
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps

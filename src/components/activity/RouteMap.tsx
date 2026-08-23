@@ -107,6 +107,43 @@ function HoverMarker({ trackpoints, sport }: { trackpoints: TrackPointColumns; s
   );
 }
 
+/** Valid GPS positions of the trackpoint range [a, b] (inclusive, clamped) —
+ * the piece of route a chart drag-selection maps to. Exported pure for
+ * tests. Fewer than 2 usable points can't form a segment → null. */
+export function segmentPositions(
+  trackpoints: TrackPointColumns,
+  range: [number, number],
+): L.LatLngExpression[] | null {
+  const from = Math.max(0, Math.min(range[0], range[1]));
+  const to = Math.min(trackpoints.lat.length - 1, Math.max(range[0], range[1]));
+  const pts: L.LatLngExpression[] = [];
+  for (let i = from; i <= to; i++) {
+    const lat = trackpoints.lat[i];
+    const lon = trackpoints.lon[i];
+    if (lat != null && lon != null) pts.push([lat, lon]);
+  }
+  return pts.length >= 2 ? pts : null;
+}
+
+/** The elevation chart's drag-selected span, drawn over the base route as
+ * a slightly thicker line with a white casing — the outline separates the
+ * highlight from the 3px base route on any tile style. Order matters: the
+ * white line mounts first, so the colored core renders on top of it. */
+function SelectedSegment({ trackpoints }: { trackpoints: TrackPointColumns }) {
+  const range = useActivityStore((s) => s.selectedRange);
+  const segment = useMemo(
+    () => (range ? segmentPositions(trackpoints, range) : null),
+    [range, trackpoints],
+  );
+  if (!segment) return null;
+  return (
+    <>
+      <Polyline positions={segment} color="#ffffff" weight={7} />
+      <Polyline positions={segment} color="#d8521d" weight={4} />
+    </>
+  );
+}
+
 /** Index of the route point nearest to `latlng`, or -1 when the closest one
  * is farther than `maxDistanceM` (clicks off the route shouldn't snap).
  * Exported pure for tests. */
@@ -378,6 +415,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
           url={tileUrl}
         />
         <Polyline positions={positions} color="#d8521d" weight={3} />
+        <SelectedSegment trackpoints={trackpoints} />
         <Marker position={start} icon={startIcon} />
         <Marker position={end} icon={finishIcon} />
         <HoverMarker trackpoints={trackpoints} sport={sport} />

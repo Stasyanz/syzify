@@ -5,6 +5,7 @@ import {
   hoverLines,
   findNearestPointIndex,
   clampMapHeight,
+  segmentPositions,
   MAP_DEFAULT_HEIGHT_PX,
   MAP_MAX_HEIGHT_PX,
 } from "./RouteMap";
@@ -33,6 +34,35 @@ const tp = (over: Partial<TrackPointColumns> = {}): TrackPointColumns => ({
   left_pedal_smoothness: [null],
   right_pedal_smoothness: [null],
   ...over,
+});
+
+describe("segmentPositions", () => {
+  const track = tp({
+    t: [0, 1, 2, 3, 4],
+    lat: [55.0, 55.1, null, 55.3, 55.4],
+    lon: [37.0, 37.1, null, 37.3, 37.4],
+    altitude_m: [0, 0, 0, 0, 0],
+    distance_m: [0, 0, 0, 0, 0],
+    speed_mps: [0, 0, 0, 0, 0],
+    hr: [null, null, null, null, null],
+  });
+
+  it("collects valid positions of the inclusive range, skipping GPS holes", () => {
+    expect(segmentPositions(track, [1, 3])).toEqual([
+      [55.1, 37.1],
+      [55.3, 37.3],
+    ]);
+  });
+
+  it("accepts either endpoint order and clamps out-of-bounds indices", () => {
+    expect(segmentPositions(track, [3, 1])).toEqual(segmentPositions(track, [1, 3]));
+    expect(segmentPositions(track, [-10, 99])!.length).toBe(4);
+  });
+
+  it("returns null when fewer than two points survive", () => {
+    expect(segmentPositions(track, [2, 2])).toBeNull();
+    expect(segmentPositions(track, [1, 2])).toBeNull(); // one valid + one hole
+  });
 });
 
 describe("hoverLines", () => {
