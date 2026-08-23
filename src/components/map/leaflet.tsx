@@ -127,21 +127,29 @@ export function Polyline({
   positions,
   color,
   weight,
+  opacity,
+  className,
 }: {
   positions: L.LatLngExpression[];
   color?: string;
   weight?: number;
+  opacity?: number;
+  /** CSS class on the SVG path (creation-time only — Leaflet can't restyle
+   * it later, so pass a constant). */
+  className?: string;
 }) {
   const map = useMap();
   const lineRef = useRef<L.Polyline | null>(null);
 
   useEffect(() => {
-    const line = L.polyline([], {}).addTo(map);
+    const line = L.polyline([], className ? { className } : {}).addTo(map);
     lineRef.current = line;
     return () => {
       lineRef.current = null;
       line.remove();
     };
+    // className is creation-time only by contract — not a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
   useEffect(() => {
@@ -149,8 +157,8 @@ export function Polyline({
   }, [positions]);
 
   useEffect(() => {
-    lineRef.current?.setStyle({ color, weight });
-  }, [color, weight]);
+    lineRef.current?.setStyle({ color, weight, opacity });
+  }, [color, weight, opacity]);
 
   return null;
 }

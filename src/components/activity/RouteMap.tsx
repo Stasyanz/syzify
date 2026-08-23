@@ -138,6 +138,25 @@ function SelectedSegment({ trackpoints }: { trackpoints: TrackPointColumns }) {
   if (!segment) return null;
   return (
     <>
+      {/* "Floating" shadow, WebKit-proof: CSS drop-shadow silently no-ops
+          on SVG child elements in WKWebView, so the shadow is DRAWN — two
+          stacked translucent strokes fake the blur falloff, and the class
+          shifts them down a couple px (a zoom-independent offset that no
+          geo-coordinate trick can give). Order: shadows → casing → core. */}
+      <Polyline
+        positions={segment}
+        color="#1c140d"
+        weight={13}
+        opacity={0.1}
+        className="route-selection-shadow"
+      />
+      <Polyline
+        positions={segment}
+        color="#1c140d"
+        weight={9}
+        opacity={0.18}
+        className="route-selection-shadow"
+      />
       <Polyline positions={segment} color="#ffffff" weight={7} />
       <Polyline positions={segment} color="#d8521d" weight={4} />
     </>

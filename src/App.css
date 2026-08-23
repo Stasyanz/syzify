@@ -616,6 +616,12 @@ body {
    Ink at low opacity reads on both. */
 .u-select { background: var(--ink); opacity: 0.08; }
 
+/* The map's selected-segment shadow strokes: shifted down-right so the
+   highlight reads as floating above the route. The shadow is DRAWN as
+   translucent strokes (RouteMap SelectedSegment) because CSS drop-shadow
+   silently no-ops on SVG child elements in WKWebView. */
+.route-selection-shadow { transform: translate(1px, 3px); }
+
 /* ── Dashboard ── */
 .threecol { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: stretch; }
 .threecol .dash-card { display: flex; flex-direction: column; min-width: 0; }
