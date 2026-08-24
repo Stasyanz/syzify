@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { listen } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import type { UpdateCheck as UpdateCheckResult } from "../../lib/types";
@@ -86,6 +87,31 @@ describe("UpdateCheck", () => {
     // In-place morph while the download runs — no appended lines.
     expect(await screen.findByText(/installing…/)).toBeTruthy();
     expect(screen.queryByText("Install and restart")).toBeNull();
+  });
+
+  it("renders download progress from update:progress events", async () => {
+    mocked.checkForUpdates.mockResolvedValue(
+      result({ update_available: true, latest_version: "0.2.0" }),
+    );
+    type ProgressEvent = { payload: { downloaded: number; total: number | null } };
+    let handler: ((e: ProgressEvent) => void) | undefined;
+    vi.mocked(listen).mockImplementationOnce(async (_event, cb) => {
+      handler = cb as unknown as (e: ProgressEvent) => void;
+      return () => {};
+    });
+    mocked.installUpdate.mockReturnValue(new Promise(() => {}));
+    renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    await screen.findByText(/installing…/);
+    // Total still unknown → no percentage yet.
+    act(() => handler!({ payload: { downloaded: 10, total: null } }));
+    expect(screen.queryByText(/%/)).toBeNull();
+    act(() => handler!({ payload: { downloaded: 50, total: 200 } }));
+    expect(await screen.findByText(/installing… 25%/)).toBeTruthy();
+    // Never claims 100% — the backend restarts before "done" could render.
+    act(() => handler!({ payload: { downloaded: 200, total: 200 } }));
+    expect(await screen.findByText(/installing… 99%/)).toBeTruthy();
   });
 
   it("surfaces a failed install and keeps the button for a retry", async () => {
