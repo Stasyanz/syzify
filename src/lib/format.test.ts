@@ -146,6 +146,21 @@ describe("formatSelectionStats", () => {
       formatSelectionStats({ distanceM: 500, deltaM: -50, gradePct: -10 }),
     ).toBe("500 m · -50 m · -10.0%");
   });
+
+  it("slots elapsed time after the distance when present", () => {
+    expect(
+      formatSelectionStats({
+        distanceM: 3070,
+        deltaM: 146,
+        gradePct: 4.8,
+        durationS: 754,
+      }),
+    ).toBe("3.07 km · 12:34 · +146 m · +4.8%");
+    // Timeless tracks (GPX without timestamps) keep the short form.
+    expect(
+      formatSelectionStats({ distanceM: 3070, deltaM: 146, gradePct: 4.8, durationS: null }),
+    ).toBe("3.07 km · +146 m · +4.8%");
+  });
 });
 
 describe("imperial units", () => {

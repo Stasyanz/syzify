@@ -354,6 +354,22 @@ describe("selectionGrade", () => {
     expect(s.deltaM).toBe(-50);
     expect(s.gradePct).toBeCloseTo(-10);
   });
+
+  it("measures elapsed time at the same slid-inward endpoints", () => {
+    const t = [1000, 1060, 1130, 1190, 1250];
+    expect(selectionGrade(dist, alt, 1, 3, t)!.durationS).toBe(130);
+    // Endpoints slide past missing altitude — time follows them.
+    const holes: (number | null)[] = [null, 108, 120, 126, null];
+    expect(selectionGrade(dist, holes, 0, 4, t)!.durationS).toBe(130);
+  });
+
+  it("reads absent or non-increasing timestamps as no duration", () => {
+    expect(selectionGrade(dist, alt, 1, 3)!.durationS).toBeNull();
+    const gaps: (number | null)[] = [1000, null, 1130, 1190, 1250];
+    expect(selectionGrade(dist, alt, 1, 3, gaps)!.durationS).toBeNull();
+    const backwards = [1000, 900, 800, 700, 600];
+    expect(selectionGrade(dist, alt, 1, 3, backwards)!.durationS).toBeNull();
+  });
 });
 
 describe("gradeGradientStops", () => {

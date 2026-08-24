@@ -335,6 +335,9 @@ export interface SelectionGrade {
   deltaM: number;
   /** Average grade over the span, percent (signed). */
   gradePct: number;
+  /** Wall-clock elapsed seconds between the endpoints (pauses included),
+   * or null when either endpoint carries no timestamp. */
+  durationS?: number | null;
 }
 
 /**
@@ -349,6 +352,7 @@ export function selectionGrade(
   altM: (number | null)[],
   a: number,
   b: number,
+  tSec?: (number | null)[],
 ): SelectionGrade | null {
   let lo = Math.max(0, Math.min(a, b));
   let hi = Math.min(distM.length - 1, Math.max(a, b));
@@ -358,7 +362,12 @@ export function selectionGrade(
   const span = distM[hi]! - distM[lo]!;
   if (span < MIN_GRADE_SPAN_M) return null;
   const delta = altM[hi]! - altM[lo]!;
-  return { distanceM: span, deltaM: delta, gradePct: (delta / span) * 100 };
+  // Elapsed at the SAME slid-inward endpoints the distance/climb use — a
+  // negative delta (clock weirdness across a device restart) reads as null.
+  const t0 = tSec?.[lo];
+  const t1 = tSec?.[hi];
+  const durationS = t0 != null && t1 != null && t1 > t0 ? t1 - t0 : null;
+  return { distanceM: span, deltaM: delta, gradePct: (delta / span) * 100, durationS };
 }
 
 /**

@@ -857,7 +857,13 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
   // Drag-selection stats for the elevation chart: span distance, net climb,
   // average grade — "2.41 km · +183 m · +7.6%", all in display units.
   const elevationSelectionStats = (tpA: number, tpB: number): string | null => {
-    const s = selectionGrade(trackpoints.distance_m, trackpoints.altitude_m, tpA, tpB);
+    const s = selectionGrade(
+      trackpoints.distance_m,
+      trackpoints.altitude_m,
+      tpA,
+      tpB,
+      trackpoints.t,
+    );
     return s && formatSelectionStats(s);
   };
   const xLabel = xAxis === "time" ? "Time (min)" : `Distance (${distanceUnit()})`;
