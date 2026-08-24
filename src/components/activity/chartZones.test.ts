@@ -22,7 +22,9 @@ import {
   powerVisRange,
   powerZoneRanges,
   speedVisRange,
+  externalSelectionCols,
   nearestChartIdx,
+  rangesEqual,
   speedZoneRanges,
   zoneBarCount,
   zoneColorFor,
@@ -615,5 +617,35 @@ describe("nearestChartIdx", () => {
     expect(nearestChartIdx(rm, 1, 6)).toBe(0); // hole → nearest neighbor
     expect(nearestChartIdx(rm, 5, 6)).toBe(3); // 4 and 6 tie-break upward is fine either way
     expect(nearestChartIdx(new Map(), 3, 6)).toBeNull();
+  });
+});
+
+describe("rangesEqual", () => {
+  it("compares spans by value, null-safe", () => {
+    expect(rangesEqual(null, null)).toBe(true);
+    expect(rangesEqual([1, 5], [1, 5])).toBe(true);
+    expect(rangesEqual([1, 5], [1, 6])).toBe(false);
+    expect(rangesEqual([1, 5], null)).toBe(false);
+    expect(rangesEqual(null, [1, 5])).toBe(false);
+  });
+});
+
+describe("externalSelectionCols", () => {
+  const rm = new Map([
+    [0, 0],
+    [2, 1],
+    [3, 2],
+    [6, 3],
+  ]);
+
+  it("maps a trackpoint range to an ordered chart-column span", () => {
+    expect(externalSelectionCols([0, 6], rm, 6)).toEqual([0, 3]);
+    // Holes resolve to neighbors; reversed input still comes out ordered.
+    expect(externalSelectionCols([5, 1], rm, 6)).toEqual([0, 3]);
+  });
+
+  it("rejects ranges that collapse to a single column or find nothing", () => {
+    expect(externalSelectionCols([3, 3], rm, 6)).toBeNull();
+    expect(externalSelectionCols([1, 3], new Map(), 6)).toBeNull();
   });
 });

@@ -344,6 +344,31 @@ export function nearestChartIdx(
   return null;
 }
 
+/** True when both trackpoint ranges select the same span (or both are off).
+ * The chart's echo guard: an external range equal to what the chart itself
+ * published needs no redraw. */
+export function rangesEqual(
+  a: [number, number] | null,
+  b: [number, number] | null,
+): boolean {
+  if (a === b) return true;
+  return a != null && b != null && a[0] === b[0] && a[1] === b[1];
+}
+
+/** Chart column span for an externally published trackpoint range — null
+ * when it can't be resolved to two DISTINCT chart points (no data, or the
+ * whole range collapses into one column). */
+export function externalSelectionCols(
+  range: [number, number],
+  reverseMap: Map<number, number>,
+  maxTpIdx: number,
+): [number, number] | null {
+  const a = nearestChartIdx(reverseMap, range[0], maxTpIdx);
+  const b = nearestChartIdx(reverseMap, range[1], maxTpIdx);
+  if (a == null || b == null || a === b) return null;
+  return [Math.min(a, b), Math.max(a, b)];
+}
+
 /** What a drag-selected slice of the elevation chart works out to. */
 export interface SelectionGrade {
   /** Horizontal span between the endpoints, meters. */

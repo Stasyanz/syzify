@@ -96,9 +96,19 @@ describe("SegmentEffortsPanel", () => {
     const row = screen.getByText("Siedra from Damlataş").closest("tr")!;
     fireEvent.click(row);
     expect(useActivityStore.getState().selectedRange).toEqual([746, 1269]);
+    expect(row.getAttribute("aria-selected")).toBe("true");
     // Second click deselects.
     fireEvent.click(row);
     expect(useActivityStore.getState().selectedRange).toBeNull();
+    expect(row.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("a foreign chart selection does not activate any row", async () => {
+    await renderPanel([effort()]);
+    // A hand-dragged chart range that only overlaps the effort.
+    useActivityStore.setState({ selectedRange: [800, 1200] });
+    const row = screen.getByText("Siedra from Damlataş").closest("tr")!;
+    expect(row.getAttribute("aria-selected")).toBe("false");
   });
 
   it("shows untimed efforts without rank or pace", async () => {

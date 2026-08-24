@@ -9,10 +9,11 @@ import {
   bucketMaxBars,
   cadenceZoneRanges,
   ELEVATION_BANDS_M,
+  externalSelectionCols,
   gradeGradientStops,
   gradeSeries,
-  nearestChartIdx,
   nearestIdx,
+  rangesEqual,
   selectionGrade,
   hrVisRange,
   hrZoneRanges,
@@ -580,14 +581,7 @@ function SingleChart({
   // re-snapped to chart points, deselecting the panel row).
   useEffect(() => {
     if (!selectionStats) return;
-    const own = publishedRange.current;
-    const same =
-      selectedRange === own ||
-      (selectedRange != null &&
-        own != null &&
-        selectedRange[0] === own[0] &&
-        selectedRange[1] === own[1]);
-    if (same) return;
+    if (rangesEqual(selectedRange, publishedRange.current)) return;
     // valToPos is NaN in the tick the plot is constructed — defer a beat.
     const t = setTimeout(() => {
       const u = plotRef.current;
@@ -600,11 +594,10 @@ function SingleChart({
         return;
       }
       const maxTp = indexMap.length > 0 ? indexMap[indexMap.length - 1] : 0;
-      const cA = nearestChartIdx(reverseMap, selectedRange[0], maxTp);
-      const cB = nearestChartIdx(reverseMap, selectedRange[1], maxTp);
-      if (cA == null || cB == null || cA === cB) return;
-      const left = u.valToPos(xValues[Math.min(cA, cB)], "x");
-      const right = u.valToPos(xValues[Math.max(cA, cB)], "x");
+      const cols = externalSelectionCols(selectedRange, reverseMap, maxTp);
+      if (cols == null) return;
+      const left = u.valToPos(xValues[cols[0]], "x");
+      const right = u.valToPos(xValues[cols[1]], "x");
       if (!Number.isFinite(left) || !Number.isFinite(right)) return;
       publishedRange.current = selectedRange;
       u.setSelect(
