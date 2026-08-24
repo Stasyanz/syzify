@@ -82,15 +82,17 @@ export function Segments() {
             </div>
           ) : (
             <div className="dash-card">
-              <table className="w-full text-sm">
+              {/* table-fixed: expanding a leaderboard must not re-measure
+                  column widths — auto layout makes every column jump. */}
+              <table className="w-full text-sm table-fixed">
                 <thead>
                   <tr className="text-faint text-xs uppercase tracking-wide">
                     <th className="w-6 pb-2" aria-label="Expand" />
                     <th className="font-semibold pb-2 text-left">Segment</th>
-                    <th className="font-semibold pb-2 text-right">Distance</th>
-                    <th className="font-semibold pb-2 text-right">Grade</th>
-                    <th className="font-semibold pb-2 text-right">Efforts</th>
-                    <th className="font-semibold pb-2 text-right">Best</th>
+                    <th className="font-semibold pb-2 text-right w-24">Distance</th>
+                    <th className="font-semibold pb-2 text-right w-20">Grade</th>
+                    <th className="font-semibold pb-2 text-right w-20">Efforts</th>
+                    <th className="font-semibold pb-2 text-right w-20">Best</th>
                     <th className="w-16 pb-2" aria-label="Actions" />
                   </tr>
                 </thead>
@@ -159,7 +161,7 @@ function SegmentRows({
         <td className="py-2 text-faint">
           <Chevron size={14} aria-hidden />
         </td>
-        <td className="py-2 pr-2 font-medium">
+        <td className="py-2 pr-2 font-medium truncate">
           {editing != null ? (
             <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
               <span className="field flex">
@@ -263,7 +265,7 @@ function LeaderboardRows({ segment }: { segment: SegmentSummaryRow }) {
           title="Open activity"
         >
           <td />
-          <td className="py-1.5 pl-6">
+          <td className="py-1.5 pl-6 truncate">
             <span className="inline-flex items-center gap-1.5">
               {e.rank === 1 && efforts.length > 1 && (
                 <Trophy size={11} className="text-accent-2" aria-label="Best effort" />
