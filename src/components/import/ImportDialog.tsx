@@ -36,6 +36,8 @@ export function ImportDialog({ variant = "button" }: { variant?: "icon" | "butto
   if (variant === "icon") {
     return (
       <button
+        // The onboarding overlay anchors its spotlight + arrow to this id.
+        id="import-workouts-btn"
         className="themebtn"
         onClick={handleImport}
         disabled={importMutation.isPending}

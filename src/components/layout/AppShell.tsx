@@ -13,6 +13,7 @@ import {
 import { Logo } from "../brand/Logo";
 import { FilterDrawer, countActiveFilters } from "../library/FilterDrawer";
 import { ImportDialog } from "../import/ImportDialog";
+import { OnboardingOverlay } from "./OnboardingOverlay";
 import { useActivityStore } from "../../stores/activityStore";
 import { useThemeStore, resolveDark, systemPrefersDark } from "../../lib/theme";
 
@@ -136,6 +137,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {children}
         {filtersOpen && onLibrary && <FilterDrawer />}
       </main>
+      <OnboardingOverlay />
     </div>
   );
 }
