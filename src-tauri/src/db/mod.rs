@@ -10,6 +10,7 @@ pub mod multisport_legs;
 pub mod photos;
 pub mod plugins;
 pub mod raw_files;
+pub mod segments;
 pub mod settings;
 pub mod swim_lengths;
 pub mod tags;

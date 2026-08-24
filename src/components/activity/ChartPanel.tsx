@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useMemo } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GripVertical } from "lucide-react";
 import uPlot from "uplot";
@@ -28,6 +28,7 @@ import { api } from "../../lib/tauri";
 import { formatGrade, formatSelectionStats } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
 import { chartTextColor, chartGridColor } from "../../lib/chartTheme";
+import { SaveSegmentPopover } from "./SaveSegmentPopover";
 import { useResolvedDark } from "../../lib/theme";
 import {
   useUnits,
@@ -50,6 +51,11 @@ interface Props {
   /** FTP (threshold_power from the FIT session) — fallback source for Coggan
    * power zones when the device wrote no power boundaries. */
   ftpW?: number | null;
+  /** Enables "Save segment" on the selection's right-click menu. Only passed
+   * when the charted columns are the activity's full track — a focused leg's
+   * slice drops points and rebases indices, so its selection indices don't
+   * address the stored trackpoints. */
+  segmentSource?: { activityId: string };
 }
 
 type ChartType = "elevation" | "hr" | "pace" | "speed" | "cadence" | "power";
@@ -222,6 +228,7 @@ function SingleChart({
   barStep,
   gradeValues,
   selectionStats,
+  onSelectionMenu,
 }: {
   config: ChartConfig;
   xValues: number[];
@@ -244,9 +251,17 @@ function SingleChart({
   /** Stats line for a drag-selected trackpoint range (elevation only) —
    * enables x-drag selection and the selection badge. */
   selectionStats?: (tpA: number, tpB: number) => string | null;
+  /** Right-click handler for the active selection box (client coords) —
+   * opens the "Save segment" form. */
+  onSelectionMenu?: (x: number, y: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  // The contextmenu listener lives as long as the plot, which outlives any
+  // single render — read the callback through a ref so it can never go
+  // stale, independent of the plot effect's dependency list.
+  const onSelectionMenuRef = useRef(onSelectionMenu);
+  onSelectionMenuRef.current = onSelectionMenu;
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
   const hoveredPointIndex = useActivityStore((s) => s.hoveredPointIndex);
   const setSelectedRange = useActivityStore((s) => s.setSelectedRange);
@@ -508,6 +523,20 @@ function SingleChart({
       });
     }
 
+    // Right-click inside the active selection box → the save-segment menu.
+    // Outside the box (or with no selection) the browser menu stays.
+    if (selectionStats) {
+      plotRef.current.over.addEventListener("contextmenu", (e) => {
+        const cb = onSelectionMenuRef.current;
+        const u = plotRef.current;
+        if (!cb || !u || u.select.width <= 0) return;
+        const px = e.clientX - u.over.getBoundingClientRect().left;
+        if (px < u.select.left || px > u.select.left + u.select.width) return;
+        e.preventDefault();
+        cb(e.clientX, e.clientY);
+      });
+    }
+
     const onResize = () => {
       if (plotRef.current && containerRef.current) {
         plotRef.current.setSize({ width: containerRef.current.clientWidth, height });
@@ -589,8 +618,28 @@ function normalizeOrder(order: ChartType[]): ChartType[] {
   return [...order.filter((k) => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter((k) => !seen.has(k))];
 }
 
-export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
+export function ChartPanel({ trackpoints, sport, timeInZones, ftpW, segmentSource }: Props) {
   const showPace = isPaceSport(sport);
+  // Right-click on the elevation selection → "Save segment" form at the
+  // click point. The range snapshot is taken at open so a later selection
+  // change can't retarget an already-open form.
+  const [segMenu, setSegMenu] = useState<{ x: number; y: number; range: [number, number] } | null>(
+    null,
+  );
+  const openSegmentMenu = useCallback(
+    (x: number, y: number) => {
+      const range = useActivityStore.getState().selectedRange;
+      if (!range) return;
+      // Mirror the backend's minimum (build_segment needs ≥2 GPS points) —
+      // otherwise the form opens on a selection that can only error.
+      let gpsPoints = 0;
+      for (let i = range[0]; i <= range[1] && gpsPoints < 2; i++) {
+        if (trackpoints.lat[i] != null && trackpoints.lon[i] != null) gpsPoints++;
+      }
+      if (gpsPoints >= 2) setSegMenu({ x, y, range });
+    },
+    [trackpoints],
+  );
   const showSwimPace = isSwimSport(sport);
   const hrRanges = useMemo(() => hrZoneRanges(timeInZones ?? []), [timeInZones]);
   const powerRanges = useMemo(
@@ -929,10 +978,25 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW }: Props) {
               selectionStats={
                 config.key === "elevation" && hasGrades ? elevationSelectionStats : undefined
               }
+              onSelectionMenu={
+                config.key === "elevation" && hasGrades && segmentSource
+                  ? openSegmentMenu
+                  : undefined
+              }
             />
           </div>
         ))}
       </div>
+
+      {segMenu && segmentSource && (
+        <SaveSegmentPopover
+          x={segMenu.x}
+          y={segMenu.y}
+          activityId={segmentSource.activityId}
+          range={segMenu.range}
+          onClose={() => setSegMenu(null)}
+        />
+      )}
 
       {/* Drag ghost following the cursor */}
       {ghost && (

@@ -184,6 +184,30 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
     Ok(cols)
 }
 
+/// Just the geometry columns, in the SAME `ORDER BY id ASC` as
+/// [`get_trackpoints_columnar`] — the segment feature addresses trackpoints
+/// by index across both reads, so their row order must never diverge.
+pub fn get_track_geometry(
+    conn: &Connection,
+    activity_id: &str,
+) -> Result<crate::models::trackpoint::TrackGeometry> {
+    let mut stmt = conn.prepare(
+        "SELECT lat, lon, altitude_m FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC",
+    )?;
+    let mut geo = crate::models::trackpoint::TrackGeometry {
+        lat: Vec::new(),
+        lon: Vec::new(),
+        altitude_m: Vec::new(),
+    };
+    let mut rows = stmt.query(params![activity_id])?;
+    while let Some(row) = rows.next()? {
+        geo.lat.push(row.get(0)?);
+        geo.lon.push(row.get(1)?);
+        geo.altitude_m.push(row.get(2)?);
+    }
+    Ok(geo)
+}
+
 /// Trackpoint time → seconds. Accepts an ISO-8601 timestamp (what parsers
 /// store, e.g. "2025-02-07T18:55:09+03:00") returned as epoch seconds, or a
 /// bare numeric offset. Returns `None` for anything unparseable.
@@ -197,7 +221,7 @@ fn parse_time_seconds(s: &str) -> Option<f64> {
 }
 
 /// Haversine distance in meters between two lat/lon points.
-fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+pub(crate) fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let r = 6_371_000.0; // Earth radius in meters
     let d_lat = (lat2 - lat1).to_radians();
     let d_lon = (lon2 - lon1).to_radians();
@@ -417,5 +441,33 @@ mod tests {
         assert_eq!(cols.hr, vec![Some(150), Some(155)]);
         // Distance should still be 0 for indoor points
         assert_eq!(cols.distance_m, vec![Some(0.0), Some(0.0)]);
+    }
+
+    #[test]
+    fn geometry_read_matches_columnar_row_order() {
+        // The segment feature addresses trackpoints by index across BOTH
+        // reads — if their ORDER BY ever diverges, every saved segment
+        // silently shifts. Lock the contract down element-by-element.
+        let conn = db::test_db();
+        insert_test_activity(&conn, "tp-geo");
+
+        let mk = |lat: f64, alt: Option<f64>| TrackPoint {
+            activity_id: "tp-geo".to_string(),
+            t: None,
+            lat: Some(lat), lon: Some(37.62),
+            altitude_m: alt, speed_mps: None,
+            hr: None, cadence: None, power_w: None, temperature_c: None,
+            vertical_oscillation_mm: None, stance_time_ms: None, stance_time_percent: None, step_length_mm: None, grade_percent: None,
+            left_right_balance: None, left_torque_effectiveness: None, right_torque_effectiveness: None,
+            left_pedal_smoothness: None, right_pedal_smoothness: None,
+        };
+        insert_trackpoints(&conn, &[mk(55.75, Some(100.0)), mk(55.76, None), mk(55.77, Some(120.0))])
+            .unwrap();
+
+        let cols = get_trackpoints_columnar(&conn, "tp-geo").unwrap();
+        let geo = get_track_geometry(&conn, "tp-geo").unwrap();
+        assert_eq!(geo.lat, cols.lat);
+        assert_eq!(geo.lon, cols.lon);
+        assert_eq!(geo.altitude_m, cols.altitude_m);
     }
 }

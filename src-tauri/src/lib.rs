@@ -398,6 +398,8 @@ pub fn run() {
             commands::export::export_activity_gpx,
             commands::export::backup_vault,
             commands::export::restore_vault,
+            commands::segments::check_similar_segments,
+            commands::segments::save_segment,
             commands::tags::get_tags,
             commands::tags::create_tag,
             commands::tags::set_activity_tags,

@@ -653,3 +653,32 @@ export interface ViewSpec {
   title: string | null;
   elements: ViewElement[];
 }
+
+// A user-saved route segment: an independent copy of a selected track slice.
+export interface Segment {
+  id: string;
+  name: string;
+  sport: string;
+  source_activity_id: string | null;
+  source_start_idx: number | null;
+  source_end_idx: number | null;
+  distance_m: number;
+  elev_delta_m: number | null;
+  avg_grade_pct: number | null;
+  start_lat: number;
+  start_lon: number;
+  end_lat: number;
+  end_lon: number;
+  min_lat: number;
+  max_lat: number;
+  min_lon: number;
+  max_lon: number;
+  created_at: string;
+}
+
+// A close-match hit for the pre-save duplicate warning.
+export interface SimilarSegment {
+  id: string;
+  name: string;
+  distance_m: number;
+}

@@ -21,7 +21,12 @@ import { ChartPanel } from "../components/activity/ChartPanel";
 import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
 import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
-import { isFocusableLeg, legTimeWindow, sliceTrackpoints } from "../components/activity/legFocus";
+import {
+  isFocusableLeg,
+  legTimeWindow,
+  segmentSourceFor,
+  sliceTrackpoints,
+} from "../components/activity/legFocus";
 import { LapsTable } from "../components/activity/LapsTable";
 import { EditActivityModal } from "../components/activity/EditActivityModal";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
@@ -501,6 +506,7 @@ export function ActivityDetailPage() {
                 sport={focusedLeg?.sport_type ?? activity.sport_type}
                 timeInZones={data.time_in_zones}
                 ftpW={activity.threshold_power_w}
+                segmentSource={segmentSourceFor(focusedLeg, activity.id)}
               />
 
               <CyclingDynamicsPanel activity={activity} />

@@ -23,6 +23,17 @@ export function legTimeWindow(leg: MultisportLeg): [number, number] | null {
   return [from, from + len];
 }
 
+/** ChartPanel's segment-save source. Only the unfocused (whole-activity)
+ * view may save segments: a focused leg charts a slice from
+ * `sliceTrackpoints`, which drops timestamp-less points and rebases indices,
+ * so its selection indices don't address the stored trackpoints. */
+export function segmentSourceFor(
+  focusedLeg: MultisportLeg | undefined,
+  activityId: string,
+): { activityId: string } | undefined {
+  return focusedLeg ? undefined : { activityId };
+}
+
 /** Slice the columnar track to the points whose timestamp falls inside
  * [from, to]. Cumulative distance is rebased to start at 0 so the distance
  * axis, auto-laps and pace derivation read leg-relative; timestamps stay

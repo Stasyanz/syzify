@@ -7,6 +7,7 @@ pub mod multisport_leg;
 pub mod photo;
 pub mod plugin;
 pub mod raw_file;
+pub mod segment;
 pub mod swim_length;
 pub mod tag;
 pub mod time_in_zone;

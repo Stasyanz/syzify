@@ -25,6 +25,15 @@ pub struct TrackPoint {
     pub right_pedal_smoothness: Option<f64>,
 }
 
+/// Geometry-only columnar read: same row order (and therefore the same
+/// index space) as [`TrackPointColumns`], without the other 17 columns.
+#[derive(Debug, Clone)]
+pub struct TrackGeometry {
+    pub lat: Vec<Option<f64>>,
+    pub lon: Vec<Option<f64>>,
+    pub altitude_m: Vec<Option<f64>>,
+}
+
 /// Columnar format for efficient transfer to frontend.
 /// Each Vec has the same length — one entry per trackpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]

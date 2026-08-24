@@ -23,6 +23,8 @@ import type {
   LocationUpdateResult,
   Photo,
   AttachPhotosResult,
+  Segment,
+  SimilarSegment,
   PluginInfo,
   PluginEndpoint,
   PluginContribution,
@@ -216,6 +218,13 @@ export const api = {
 
   getPhotoDataUrl: (photoId: string, size: "thumb" | "full" = "full") =>
     invoke<string>("get_photo_data_url", { photoId, size }),
+
+  // Segments
+  checkSimilarSegments: (activityId: string, startIdx: number, endIdx: number) =>
+    invoke<SimilarSegment[]>("check_similar_segments", { activityId, startIdx, endIdx }),
+
+  saveSegment: (activityId: string, startIdx: number, endIdx: number, name: string) =>
+    invoke<Segment>("save_segment", { activityId, startIdx, endIdx, name }),
 
   // Plugins
   getPlugins: () => invoke<PluginInfo[]>("get_plugins"),

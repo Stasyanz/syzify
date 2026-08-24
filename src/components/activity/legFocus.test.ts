@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isFocusableLeg, legTimeWindow, sliceTrackpoints } from "./legFocus";
+import {
+  isFocusableLeg,
+  legTimeWindow,
+  segmentSourceFor,
+  sliceTrackpoints,
+} from "./legFocus";
 import type { MultisportLeg, TrackPointColumns } from "../../lib/types";
 
 const leg = (overrides: Partial<MultisportLeg> = {}): MultisportLeg => ({
@@ -106,5 +111,15 @@ describe("sliceTrackpoints", () => {
   it("an inverted window (to < from) yields an empty slice, not a crash", () => {
     const sliced = sliceTrackpoints(tp([100, 110, 120], [0, 50, 100]), 120, 100);
     expect(sliced.t).toEqual([]);
+  });
+});
+
+describe("segmentSourceFor", () => {
+  it("offers segment saving only in the whole-activity view", () => {
+    // A focused leg charts rebased indices that don't address the stored
+    // trackpoints — the source must be withheld, or a saved segment would
+    // silently copy the wrong slice.
+    expect(segmentSourceFor(leg(), "act-1")).toBeUndefined();
+    expect(segmentSourceFor(undefined, "act-1")).toEqual({ activityId: "act-1" });
   });
 });
