@@ -6,6 +6,35 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-24
+
+### Added
+- Segments: drag-select a section of the elevation chart, right-click it and
+  save it as a named segment. Every past and future workout over the same
+  route is timed against it automatically. The activity page gets a Segments
+  panel — click an effort to highlight it on the map and the chart — and the
+  new Segments page in the sidebar lists all of them with rename, delete and
+  a per-segment leaderboard.
+- Elevation chart: drag-select a range to see its distance, elapsed time and
+  average grade, with the matching part of the route highlighted on the map.
+  The elevation line itself is now colored by grade, and the tooltip shows
+  the grade under the cursor.
+- Updates: Settings → General can check for a newer release and install it in
+  one click — the update is downloaded from GitHub, cryptographically
+  verified and applied with an automatic restart. Checking stays strictly
+  manual: the app never phones home on its own.
+- First run: an empty library now shows a short overlay pointing at workout
+  import.
+
+### Fixed
+- The speed chart palette was upside down — top speed now reads green, not
+  red.
+- Drag-selecting on the elevation chart no longer zooms the synced charts
+  below it.
+- Double-clicking a chart clears the selection badge and the map highlight
+  together.
+- The segments table no longer shifts its columns when a leaderboard expands.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
