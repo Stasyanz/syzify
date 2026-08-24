@@ -5,6 +5,7 @@ import {
   Calendar,
   List,
   Map as MapIcon,
+  Route as RouteIcon,
   SlidersHorizontal,
   Settings,
   Sun,
@@ -34,6 +35,7 @@ const RAIL: RailItem[] = [
   { key: "calendar", label: "Calendar", icon: Calendar, view: "calendar" },
   { key: "library", label: "Library", icon: List, view: "list" },
   { key: "map", label: "Map", icon: MapIcon, view: "map" },
+  { key: "segments", label: "Segments", icon: RouteIcon, path: "/segments" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

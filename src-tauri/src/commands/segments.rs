@@ -2,7 +2,10 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::db;
-use crate::models::segment::{NewSegmentMeta, Segment, SegmentEffortRow, SimilarSegment};
+use crate::models::segment::{
+    NewSegmentMeta, Segment, SegmentEffortRow, SegmentLeaderboardRow, SegmentSummaryRow,
+    SimilarSegment,
+};
 use crate::models::trackpoint::TrackGeometry;
 use crate::state::AppState;
 
@@ -124,6 +127,40 @@ fn backfill_segment_off_thread(db_handle: crate::state::Db, segment_id: String) 
             }
         }
     });
+}
+
+/// Every saved segment with its effort aggregates — the /segments page.
+#[tauri::command]
+pub fn list_segments(state: State<AppState>) -> Result<Vec<SegmentSummaryRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::segments::list_segments(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_segment(id: String, name: String, state: State<AppState>) -> Result<(), String> {
+    let name = db::segments::validated_name(&name)?;
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::segments::rename_segment(&conn, &id, name).map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => "segment not found".to_string(),
+        e => e.to_string(),
+    })
+}
+
+/// Delete a segment — polyline and efforts cascade with it.
+#[tauri::command]
+pub fn delete_segment(id: String, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::segments::delete_segment(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// A segment's leaderboard, best effort first.
+#[tauri::command]
+pub fn get_segment_efforts(
+    id: String,
+    state: State<AppState>,
+) -> Result<Vec<SegmentLeaderboardRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::segment_efforts::efforts_for_segment(&conn, &id).map_err(|e| e.to_string())
 }
 
 /// The activity's detected segment passes, with per-segment standings.

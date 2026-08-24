@@ -63,6 +63,35 @@ pub struct SimilarSegment {
     pub distance_m: f64,
 }
 
+/// One row of the /segments page: the segment plus its effort aggregates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentSummaryRow {
+    pub id: String,
+    pub name: String,
+    pub sport: String,
+    pub distance_m: f64,
+    pub avg_grade_pct: Option<f64>,
+    pub elev_delta_m: Option<f64>,
+    pub created_at: String,
+    /// Timed efforts only — what the leaderboard ranks.
+    pub effort_count: i64,
+    pub best_elapsed_s: Option<f64>,
+}
+
+/// One leaderboard row of a segment: an effort with its activity context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentLeaderboardRow {
+    pub id: i64,
+    pub activity_id: String,
+    pub activity_title: Option<String>,
+    /// The activity's start time (local-offset TEXT, like everywhere else).
+    pub start_time: String,
+    pub distance_m: f64,
+    pub elapsed_s: Option<f64>,
+    /// 1-based competition rank among timed efforts; NULL if untimed.
+    pub rank: Option<i64>,
+}
+
 /// One segment pass inside an activity, as the activity page shows it.
 /// Indices address the activity's full trackpoint arrays; speed/pace and
 /// other per-effort stats are derived frontend-side from the track the page

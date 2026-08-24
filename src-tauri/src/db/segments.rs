@@ -269,6 +269,52 @@ pub fn find_similar(
     Ok(hits)
 }
 
+/// Every saved segment with its effort aggregates, newest first.
+pub fn list_segments(conn: &Connection) -> Result<Vec<crate::models::segment::SegmentSummaryRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.name, s.sport, s.distance_m, s.avg_grade_pct, s.elev_delta_m,
+                s.created_at,
+                (SELECT COUNT(*) FROM segment_effort e
+                 WHERE e.segment_id = s.id AND e.elapsed_s IS NOT NULL),
+                (SELECT MIN(e.elapsed_s) FROM segment_effort e WHERE e.segment_id = s.id)
+         FROM segment s
+         ORDER BY s.created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::models::segment::SegmentSummaryRow {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            sport: r.get(2)?,
+            distance_m: r.get(3)?,
+            avg_grade_pct: r.get(4)?,
+            elev_delta_m: r.get(5)?,
+            created_at: r.get(6)?,
+            effort_count: r.get(7)?,
+            best_elapsed_s: r.get(8)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Rename a segment (name already validated by the caller). Errors when the
+/// segment no longer exists — a stale UI must hear about it.
+pub fn rename_segment(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE segment SET name = ?2 WHERE id = ?1",
+        params![id, name],
+    )?;
+    if n == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Delete a segment; its polyline and efforts cascade with it.
+pub fn delete_segment(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM segment WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 /// The source activity's sport — segments inherit it. `None` when the
 /// activity doesn't exist (a friendlier surface than QueryReturnedNoRows).
 pub fn activity_sport(conn: &Connection, activity_id: &str) -> Result<Option<String>> {

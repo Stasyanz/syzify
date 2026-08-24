@@ -290,6 +290,10 @@ export const MAX_TAGS_PER_ACTIVITY = 3;
  * header and list rows readable; Strava caps similarly. */
 export const MAX_TITLE_LENGTH = 100;
 
+/** Segment name cap — mirrors MAX_NAME_LEN in db/segments.rs (the backend
+ * backstop; this one just keeps the input honest). */
+export const MAX_SEGMENT_NAME_LENGTH = 200;
+
 export interface DaySummary {
   date: string; // "YYYY-MM-DD"
   activity_count: number;
@@ -681,6 +685,30 @@ export interface SimilarSegment {
   id: string;
   name: string;
   distance_m: number;
+}
+
+// One row of the /segments page: the segment plus its effort aggregates.
+export interface SegmentSummaryRow {
+  id: string;
+  name: string;
+  sport: string;
+  distance_m: number;
+  avg_grade_pct: number | null;
+  elev_delta_m: number | null;
+  created_at: string;
+  effort_count: number;
+  best_elapsed_s: number | null;
+}
+
+// One leaderboard row of a segment: an effort with its activity context.
+export interface SegmentLeaderboardRow {
+  id: number;
+  activity_id: string;
+  activity_title: string | null;
+  start_time: string;
+  distance_m: number;
+  elapsed_s: number | null;
+  rank: number | null;
 }
 
 // One segment pass inside an activity. Indices address the activity's full

@@ -6,6 +6,7 @@ import { DashboardPage } from "./routes/Dashboard";
 import { ActivityDetailPage } from "./routes/ActivityDetail";
 import { SettingsPage } from "./routes/Settings";
 import { PluginsPage } from "./routes/Plugins";
+import { Segments } from "./routes/Segments";
 import { PluginPage } from "./routes/PluginPage";
 import { UnlockModal } from "./components/UnlockModal";
 import { api } from "./lib/tauri";
@@ -202,6 +203,7 @@ function AppContent() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/library" element={<Library />} />
             <Route path="/activity/:id" element={<ActivityDetailPage />} />
+            <Route path="/segments" element={<Segments />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/plugins" element={<PluginsPage />} />
             <Route path="/plugin/:pluginId" element={<PluginPage />} />

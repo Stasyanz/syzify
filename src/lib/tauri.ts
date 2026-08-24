@@ -25,6 +25,8 @@ import type {
   AttachPhotosResult,
   Segment,
   SegmentEffortRow,
+  SegmentLeaderboardRow,
+  SegmentSummaryRow,
   SimilarSegment,
   PluginInfo,
   PluginEndpoint,
@@ -229,6 +231,16 @@ export const api = {
 
   getActivitySegmentEfforts: (activityId: string) =>
     invoke<SegmentEffortRow[]>("get_activity_segment_efforts", { activityId }),
+
+  listSegments: () => invoke<SegmentSummaryRow[]>("list_segments"),
+
+  renameSegment: (id: string, name: string) =>
+    invoke<void>("rename_segment", { id, name }),
+
+  deleteSegment: (id: string) => invoke<void>("delete_segment", { id }),
+
+  getSegmentEfforts: (id: string) =>
+    invoke<SegmentLeaderboardRow[]>("get_segment_efforts", { id }),
 
   // Plugins
   getPlugins: () => invoke<PluginInfo[]>("get_plugins"),

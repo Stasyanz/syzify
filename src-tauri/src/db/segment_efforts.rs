@@ -242,6 +242,38 @@ pub fn rematch_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
     match_activity(conn, activity_id)
 }
 
+/// A segment's leaderboard: every effort with its activity context, best
+/// first, untimed efforts trailing.
+pub fn efforts_for_segment(
+    conn: &Connection,
+    segment_id: &str,
+) -> Result<Vec<crate::models::segment::SegmentLeaderboardRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.activity_id, a.title, a.start_time, e.distance_m, e.elapsed_s,
+                CASE WHEN e.elapsed_s IS NULL THEN NULL ELSE
+                    (SELECT COUNT(*) + 1 FROM segment_effort b
+                     WHERE b.segment_id = e.segment_id
+                       AND b.elapsed_s IS NOT NULL AND b.elapsed_s < e.elapsed_s)
+                END
+         FROM segment_effort e
+         JOIN activity a ON a.id = e.activity_id
+         WHERE e.segment_id = ?1
+         ORDER BY e.elapsed_s IS NULL, e.elapsed_s ASC",
+    )?;
+    let rows = stmt.query_map(params![segment_id], |r| {
+        Ok(crate::models::segment::SegmentLeaderboardRow {
+            id: r.get(0)?,
+            activity_id: r.get(1)?,
+            activity_title: r.get(2)?,
+            start_time: r.get(3)?,
+            distance_m: r.get(4)?,
+            elapsed_s: r.get(5)?,
+            rank: r.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
 /// The activity page's efforts, in track order, each with its standing among
 /// the segment's TIMED efforts (rank/count NULL-safe: timeless efforts get
 /// no rank and don't dilute the count).
@@ -289,7 +321,7 @@ mod tests {
     const STEP_DEG: f64 = 0.0001; // ≈11.1 m of latitude per point
     const T0: i64 = 1_750_000_000;
 
-    fn insert_activity(conn: &Connection, id: &str, sport: &str) {
+    pub(super) fn insert_activity(conn: &Connection, id: &str, sport: &str) {
         let a = Activity {
             id: id.to_string(),
             start_time: "2026-08-01T08:00:00+00:00".to_string(),
@@ -300,7 +332,7 @@ mod tests {
     }
 
     /// Straight north track: `n` points, `secs_per_point` apart (0 = timeless).
-    fn insert_track(conn: &Connection, id: &str, n: usize, secs_per_point: i64) {
+    pub(super) fn insert_track(conn: &Connection, id: &str, n: usize, secs_per_point: i64) {
         let tps: Vec<TrackPoint> = (0..n)
             .map(|i| TrackPoint {
                 activity_id: id.to_string(),
@@ -324,7 +356,7 @@ mod tests {
     }
 
     /// Save a segment cut from the canonical straight line, indices a..=b.
-    fn insert_line_segment(conn: &mut Connection, seg_id: &str, source: &str, a: usize, b: usize) {
+    pub(super) fn insert_line_segment(conn: &mut Connection, seg_id: &str, source: &str, a: usize, b: usize) {
         let geo = db::trackpoints::get_track_geometry(conn, source).unwrap();
         let (seg, points) = db::segments::build_segment(
             NewSegmentMeta {
@@ -542,3 +574,83 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod page_tests {
+    use super::tests::{insert_activity, insert_line_segment, insert_track};
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn list_segments_aggregates_efforts() {
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_track(&conn, "a1", 100, 10);
+        insert_activity(&conn, "a2", "ride");
+        insert_track(&conn, "a2", 100, 5);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+        backfill_segment(&conn, "seg1").unwrap();
+        // A second segment with no efforts at all.
+        insert_line_segment(&mut conn, "seg2", "a1", 60, 90);
+
+        let rows = db::segments::list_segments(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        let s1 = rows.iter().find(|r| r.id == "seg1").unwrap();
+        assert_eq!(s1.effort_count, 2);
+        // Best of 10 s/point vs 5 s/point pacing: 30 hops × 5 s.
+        assert_eq!(s1.best_elapsed_s, Some(150.0));
+        let s2 = rows.iter().find(|r| r.id == "seg2").unwrap();
+        assert_eq!(s2.effort_count, 0);
+        assert_eq!(s2.best_elapsed_s, None);
+    }
+
+    #[test]
+    fn leaderboard_orders_best_first_untimed_last() {
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_track(&conn, "a1", 100, 10);
+        insert_activity(&conn, "a2", "ride");
+        insert_track(&conn, "a2", 100, 5);
+        insert_activity(&conn, "a3", "ride");
+        insert_track(&conn, "a3", 100, 0); // timeless
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+        backfill_segment(&conn, "seg1").unwrap();
+
+        let rows = efforts_for_segment(&conn, "seg1").unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].activity_id, "a2");
+        assert_eq!(rows[0].rank, Some(1));
+        assert_eq!(rows[1].activity_id, "a1");
+        assert_eq!(rows[1].rank, Some(2));
+        // Untimed pass trails without a rank.
+        assert_eq!(rows[2].activity_id, "a3");
+        assert_eq!(rows[2].rank, None);
+        assert_eq!(rows[2].elapsed_s, None);
+    }
+
+    #[test]
+    fn rename_validates_existence_delete_cascades() {
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_track(&conn, "a1", 100, 10);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+        backfill_segment(&conn, "seg1").unwrap();
+
+        db::segments::rename_segment(&conn, "seg1", "Renamed").unwrap();
+        let rows = db::segments::list_segments(&conn).unwrap();
+        assert_eq!(rows[0].name, "Renamed");
+        assert!(db::segments::rename_segment(&conn, "ghost", "x").is_err());
+
+        db::segments::delete_segment(&conn, "seg1").unwrap();
+        let (segs, pts, effs): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM segment),
+                        (SELECT COUNT(*) FROM segment_point),
+                        (SELECT COUNT(*) FROM segment_effort)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((segs, pts, effs), (0, 0, 0));
+    }
+}
