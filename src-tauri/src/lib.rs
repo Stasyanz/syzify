@@ -79,6 +79,20 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
         db::settings::set_setting(conn, SPORT_BACKFILL_FLAG, "1")
             .map_err(|e| format!("Failed to mark sport backfill done: {}", e))?;
     }
+
+    // Efforts for segments saved before the matching engine existed. New
+    // segments backfill on save and new imports match on arrival, so this
+    // only needs to run once.
+    const SEGMENT_EFFORTS_FLAG: &str = "segment_efforts_backfilled_v1";
+    if db::settings::get_setting(conn, SEGMENT_EFFORTS_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        db::segment_efforts::backfill_all_segments(conn)
+            .map_err(|e| format!("Failed to backfill segment efforts: {}", e))?;
+        db::settings::set_setting(conn, SEGMENT_EFFORTS_FLAG, "1")
+            .map_err(|e| format!("Failed to mark segment-efforts backfill done: {}", e))?;
+    }
     Ok(())
 }
 
@@ -400,6 +414,7 @@ pub fn run() {
             commands::export::restore_vault,
             commands::segments::check_similar_segments,
             commands::segments::save_segment,
+            commands::segments::get_activity_segment_efforts,
             commands::tags::get_tags,
             commands::tags::create_tag,
             commands::tags::set_activity_tags,

@@ -306,6 +306,7 @@ mod tests {
             a,
             b,
             &TrackGeometry {
+                t: Vec::new(),
                 lat: lat.to_vec(),
                 lon: lon.to_vec(),
                 altitude_m: alt.to_vec(),

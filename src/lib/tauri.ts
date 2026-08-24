@@ -24,6 +24,7 @@ import type {
   Photo,
   AttachPhotosResult,
   Segment,
+  SegmentEffortRow,
   SimilarSegment,
   PluginInfo,
   PluginEndpoint,
@@ -225,6 +226,9 @@ export const api = {
 
   saveSegment: (activityId: string, startIdx: number, endIdx: number, name: string) =>
     invoke<Segment>("save_segment", { activityId, startIdx, endIdx, name }),
+
+  getActivitySegmentEfforts: (activityId: string) =>
+    invoke<SegmentEffortRow[]>("get_activity_segment_efforts", { activityId }),
 
   // Plugins
   getPlugins: () => invoke<PluginInfo[]>("get_plugins"),

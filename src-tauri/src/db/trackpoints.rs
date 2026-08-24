@@ -192,18 +192,21 @@ pub fn get_track_geometry(
     activity_id: &str,
 ) -> Result<crate::models::trackpoint::TrackGeometry> {
     let mut stmt = conn.prepare(
-        "SELECT lat, lon, altitude_m FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC",
+        "SELECT t, lat, lon, altitude_m FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC",
     )?;
     let mut geo = crate::models::trackpoint::TrackGeometry {
+        t: Vec::new(),
         lat: Vec::new(),
         lon: Vec::new(),
         altitude_m: Vec::new(),
     };
     let mut rows = stmt.query(params![activity_id])?;
     while let Some(row) = rows.next()? {
-        geo.lat.push(row.get(0)?);
-        geo.lon.push(row.get(1)?);
-        geo.altitude_m.push(row.get(2)?);
+        let t_str: Option<String> = row.get(0)?;
+        geo.t.push(t_str.and_then(|s| parse_time_seconds(&s)));
+        geo.lat.push(row.get(1)?);
+        geo.lon.push(row.get(2)?);
+        geo.altitude_m.push(row.get(3)?);
     }
     Ok(geo)
 }
@@ -466,6 +469,7 @@ mod tests {
 
         let cols = get_trackpoints_columnar(&conn, "tp-geo").unwrap();
         let geo = get_track_geometry(&conn, "tp-geo").unwrap();
+        assert_eq!(geo.t, cols.t);
         assert_eq!(geo.lat, cols.lat);
         assert_eq!(geo.lon, cols.lon);
         assert_eq!(geo.altitude_m, cols.altitude_m);

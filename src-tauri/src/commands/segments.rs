@@ -2,7 +2,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::db;
-use crate::models::segment::{NewSegmentMeta, Segment, SimilarSegment};
+use crate::models::segment::{NewSegmentMeta, Segment, SegmentEffortRow, SimilarSegment};
 use crate::models::trackpoint::TrackGeometry;
 use crate::state::AppState;
 
@@ -86,5 +86,52 @@ pub fn save_segment(
         &geo,
     )?;
     db::segments::insert_segment(&mut conn, &seg, &points).map_err(|e| e.to_string())?;
+    drop(conn);
+    // Backfill efforts over existing same-sport activities in a worker
+    // thread — scanning a large vault takes seconds and must not pin the DB
+    // mutex from a command. Per-activity locking keeps the UI responsive.
+    backfill_segment_off_thread(state.db.clone(), seg.id.clone());
     Ok(seg)
+}
+
+/// Worker-thread backfill for a fresh segment: one short mutex hold per
+/// activity, per-activity failures logged and skipped (matching is
+/// idempotent, so any later rematch repairs a skipped pair).
+fn backfill_segment_off_thread(db_handle: crate::state::Db, segment_id: String) {
+    std::thread::spawn(move || {
+        let act_ids = {
+            let Ok(conn) = db_handle.lock() else { return };
+            let sport = match db::segment_efforts::segment_sport(&conn, &segment_id) {
+                Ok(Some(s)) => s,
+                Ok(None) => return,
+                Err(e) => {
+                    eprintln!("Segment backfill: cannot read segment {segment_id}: {e}");
+                    return;
+                }
+            };
+            match db::segment_efforts::activity_ids_for_sport(&conn, &sport) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Segment backfill: cannot list activities: {e}");
+                    return;
+                }
+            }
+        };
+        for aid in act_ids {
+            let Ok(conn) = db_handle.lock() else { return };
+            if let Err(e) = db::segment_efforts::match_pair(&conn, &segment_id, &aid) {
+                eprintln!("Segment backfill: skipping activity {aid}: {e}");
+            }
+        }
+    });
+}
+
+/// The activity's detected segment passes, with per-segment standings.
+#[tauri::command]
+pub fn get_activity_segment_efforts(
+    activity_id: String,
+    state: State<AppState>,
+) -> Result<Vec<SegmentEffortRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::segment_efforts::efforts_for_activity(&conn, &activity_id).map_err(|e| e.to_string())
 }

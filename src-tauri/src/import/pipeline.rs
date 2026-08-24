@@ -377,6 +377,11 @@ pub fn import_single_file(
         }
     }
 
+    // 9a². Segment efforts — match the fresh track against saved segments of
+    // the same sport (every pass is an effort, hill repeats included).
+    // Non-fatal like best efforts: an import must not die on analysis.
+    let _ = db::segment_efforts::match_activity(conn, &activity_id);
+
     // 9b. Insert laps if present
     if !parsed.laps.is_empty() {
         db::laps::insert_laps(conn, &parsed.laps).map_err(|e| e.to_string())?;

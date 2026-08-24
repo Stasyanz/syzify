@@ -5,5 +5,6 @@ pub mod geocoding;
 pub mod pipeline;
 pub mod runkeeper;
 pub mod runkeeper_csv;
+pub mod segment_matching;
 pub mod volume_monitor;
 pub mod watcher;

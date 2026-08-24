@@ -25,10 +25,13 @@ pub struct TrackPoint {
     pub right_pedal_smoothness: Option<f64>,
 }
 
-/// Geometry-only columnar read: same row order (and therefore the same
-/// index space) as [`TrackPointColumns`], without the other 17 columns.
+/// Geometry+time columnar read: same row order (and therefore the same
+/// index space) as [`TrackPointColumns`], without the other columns. The
+/// segment feature builds polylines and times efforts from this.
 #[derive(Debug, Clone)]
 pub struct TrackGeometry {
+    /// Seconds since epoch, like `TrackPointColumns::t`.
+    pub t: Vec<Option<f64>>,
     pub lat: Vec<Option<f64>>,
     pub lon: Vec<Option<f64>>,
     pub altitude_m: Vec<Option<f64>>,

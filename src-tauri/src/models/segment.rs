@@ -62,3 +62,26 @@ pub struct SimilarSegment {
     pub name: String,
     pub distance_m: f64,
 }
+
+/// One segment pass inside an activity, as the activity page shows it.
+/// Indices address the activity's full trackpoint arrays; speed/pace and
+/// other per-effort stats are derived frontend-side from the track the page
+/// already holds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentEffortRow {
+    pub id: i64,
+    pub segment_id: String,
+    pub segment_name: String,
+    pub start_idx: i64,
+    pub end_idx: i64,
+    /// Actual path length of this pass (may differ ±10% from the segment).
+    pub distance_m: f64,
+    /// Wall-clock seconds between entry and exit; NULL for timeless tracks.
+    pub elapsed_s: Option<f64>,
+    /// The segment's average grade (context for the row).
+    pub avg_grade_pct: Option<f64>,
+    /// 1-based standing among the segment's timed efforts; NULL if untimed.
+    pub rank: Option<i64>,
+    /// How many timed efforts the segment has in total.
+    pub effort_count: i64,
+}

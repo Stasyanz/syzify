@@ -89,6 +89,9 @@ pub fn update_activity(
     // recompute (or clear) its best-effort splits so records stay correct.
     if updates.sport_type.is_some() {
         db::best_efforts::recompute_for_activity(&conn, &id).map_err(|e| e.to_string())?;
+        // Segment efforts are sport-scoped too: drop the ones earned under
+        // the old sport and rematch against the new sport's segments.
+        db::segment_efforts::rematch_activity(&conn, &id).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

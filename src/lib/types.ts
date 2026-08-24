@@ -682,3 +682,18 @@ export interface SimilarSegment {
   name: string;
   distance_m: number;
 }
+
+// One segment pass inside an activity. Indices address the activity's full
+// trackpoint arrays; per-effort speed/pace derive from the loaded track.
+export interface SegmentEffortRow {
+  id: number;
+  segment_id: string;
+  segment_name: string;
+  start_idx: number;
+  end_idx: number;
+  distance_m: number;
+  elapsed_s: number | null;
+  avg_grade_pct: number | null;
+  rank: number | null;
+  effort_count: number;
+}
