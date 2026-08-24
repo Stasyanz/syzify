@@ -12,3 +12,4 @@ pub mod swim_length;
 pub mod tag;
 pub mod time_in_zone;
 pub mod trackpoint;
+pub mod update;

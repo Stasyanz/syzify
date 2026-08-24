@@ -12,6 +12,7 @@ mod models;
 pub mod parser;
 mod plugins;
 pub mod state;
+mod updates;
 mod util;
 mod vault;
 
@@ -433,6 +434,7 @@ pub fn run() {
             commands::settings::relocate_vault,
             commands::settings::switch_vault,
             commands::settings::restart_app,
+            commands::settings::check_for_updates,
             commands::settings::get_detected_devices,
             commands::settings::preview_watch_folders,
             commands::settings::get_suggested_watch_paths,

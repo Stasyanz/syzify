@@ -19,6 +19,7 @@ import type {
   ScanPreview,
   SuggestedPath,
   EncryptionStatus,
+  UpdateCheck,
   EncryptionScopes,
   LocationUpdateResult,
   Photo,
@@ -158,6 +159,9 @@ export const api = {
 
   restartApp: () =>
     invoke<void>("restart_app"),
+
+  checkForUpdates: () =>
+    invoke<UpdateCheck>("check_for_updates"),
 
   // Device Detection
   getDetectedDevices: () =>

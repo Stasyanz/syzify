@@ -24,6 +24,7 @@ import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
 import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
+import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
@@ -376,7 +377,12 @@ export function SettingsPage() {
                 </button>
               </div>
             </div>
-            {appVersion && <span className="sd">Version {appVersion}</span>}
+            {/* Stretch to the text block's height: Version sits on the title
+                line, Check for updates on the license line. */}
+            <div className="flex flex-col items-end justify-between self-stretch">
+              {appVersion && <span className="sd !mt-0">Version {appVersion}</span>}
+              <UpdateCheck />
+            </div>
           </div>
           <div className="set-row">
             <div>

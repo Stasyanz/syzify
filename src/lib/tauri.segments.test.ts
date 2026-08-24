@@ -46,3 +46,10 @@ describe("segment api wrappers", () => {
     });
   });
 });
+
+describe("update api wrapper", () => {
+  it("maps to its command", async () => {
+    await api.checkForUpdates();
+    expect(mocked).toHaveBeenCalledWith("check_for_updates");
+  });
+});

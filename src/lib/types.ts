@@ -725,3 +725,11 @@ export interface SegmentEffortRow {
   rank: number | null;
   effort_count: number;
 }
+
+// Result of a manual update check against GitHub Releases.
+export interface UpdateCheck {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
+}
