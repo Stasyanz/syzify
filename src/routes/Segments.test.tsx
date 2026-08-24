@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
 import type { SegmentLeaderboardRow, SegmentSummaryRow } from "../lib/types";
 import { Segments } from "./Segments";
@@ -122,6 +122,77 @@ describe("Segments page", () => {
     confirmMock.mockResolvedValueOnce(true);
     fireEvent.click(screen.getByLabelText("Delete segment"));
     await waitFor(() => expect(mocked.deleteSegment).toHaveBeenCalledWith("seg-1"));
+  });
+
+  it("shows the loading state while the list is in flight", async () => {
+    mocked.listSegments.mockReturnValue(new Promise(() => {}));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Segments />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Loading segments…")).toBeTruthy();
+  });
+
+  it("submitting an empty rename is a no-op", async () => {
+    await renderPage();
+    await screen.findByText("Siedra from Damlataş");
+    fireEvent.click(screen.getByLabelText("Rename segment"));
+    const input = screen.getByDisplayValue("Siedra from Damlataş");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(mocked.renameSegment).not.toHaveBeenCalled();
+    // The editor stays open — clicking the row must NOT toggle the
+    // leaderboard while editing.
+    fireEvent.click(input.closest("tr")!);
+    expect(mocked.getSegmentEfforts).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a backend rename error inline", async () => {
+    mocked.renameSegment.mockRejectedValue("segment not found");
+    await renderPage();
+    await screen.findByText("Siedra from Damlataş");
+    fireEvent.click(screen.getByLabelText("Rename segment"));
+    fireEvent.keyDown(screen.getByDisplayValue("Siedra from Damlataş"), { key: "Enter" });
+    expect(await screen.findByText(/segment not found/)).toBeTruthy();
+  });
+
+  it("an expanded segment without efforts explains itself", async () => {
+    await renderPage();
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    expect(await screen.findByText(/No efforts yet/)).toBeTruthy();
+  });
+
+  it("renders untimed leaderboard rows with placeholders", async () => {
+    mocked.getSegmentEfforts.mockResolvedValue([
+      lb({ activity_title: null, elapsed_s: null, rank: null }),
+    ]);
+    await renderPage();
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    expect(await screen.findByText("Untitled")).toBeTruthy();
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clicking a leaderboard effort navigates to its activity", async () => {
+    mocked.getSegmentEfforts.mockResolvedValue([lb()]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/segments"]}>
+          <Routes>
+            <Route path="/segments" element={<Segments />} />
+            <Route path="/activity/:id" element={<div>ACTIVITY PAGE</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    fireEvent.click(await screen.findByText("Siedra"));
+    expect(await screen.findByText("ACTIVITY PAGE")).toBeTruthy();
   });
 
   it("expands a row into the leaderboard, best first with a trophy", async () => {
