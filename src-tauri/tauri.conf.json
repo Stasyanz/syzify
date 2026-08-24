@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "copyright": "© 2026 Stanislav Zainullin. AGPL-3.0-only with Syzify Plugin Exception",
     "resources": {
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
@@ -43,5 +44,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYwREZDREM4QjY1NUVDQjUKUldTMTdGVzJ5TTNmOEwyTDhlcWszNXNKcHVCcEZRaERYK2YreERBeUhWcTdkbldnNnZMSys5aDUK",
+      "endpoints": [
+        "https://github.com/Stasyanz/syzify/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

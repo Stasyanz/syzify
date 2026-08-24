@@ -163,6 +163,11 @@ export const api = {
   checkForUpdates: () =>
     invoke<UpdateCheck>("check_for_updates"),
 
+  /** Download + install the signed update bundle; the app restarts itself,
+   * so on success this promise never resolves. */
+  installUpdate: () =>
+    invoke<void>("install_update"),
+
   // Device Detection
   getDetectedDevices: () =>
     invoke<DeviceStats[]>("get_detected_devices"),

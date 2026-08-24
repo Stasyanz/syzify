@@ -28,6 +28,10 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npm test -- --coverage
+      # The release workflow runs from the tag's commit, so bugs there cost
+      # a re-tag — its manifest-assembly script is tested on every push.
+      - name: Release publish-script test
+        run: bash scripts/test_release_manifest.sh
       # Tokenless uploads are rate-limited and the token secret only exists
       # on the public repo, so skip the upload when CI runs on the test repo.
       - name: Upload coverage to Codecov

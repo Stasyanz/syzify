@@ -146,8 +146,23 @@ a column-list `const` as the single source of truth (see `db/activities.rs`).
   3. `npm run gen:notices` — regenerates `THIRD-PARTY-NOTICES.md` from the current
      dependency tree (bundled into the app via `tauri.conf.json` → `bundle.resources`).
   4. `git commit -m "chore(release): vX.Y.Z"` then `git tag vX.Y.Z`.
-- **Distribution:** local builds for now (`npm run tauri build`). A CI workflow
-  (tauri-action → GitHub Releases for mac/win/linux) is deferred until there is a remote.
+- **Distribution:** pushing the `vX.Y.Z` tag runs `.github/workflows/release.yml`:
+  six platform builds (mac/linux/win × x64/arm64), installers attached to a GitHub
+  Release, plus the auto-updater feed (`latest.json` with embedded minisign
+  signatures). The workflow runs from the **tag's** commit — fixing it means
+  re-tagging — so its manifest-assembly script is guarded by
+  `scripts/test_release_manifest.sh` in CI.
+- **Update signing key:** release bundles are signed with a minisign key
+  (`~/.tauri/syzify_updater.key` + its password file next to it; mirrored in the
+  repo's Actions secrets `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD`). The public
+  key is pinned in `tauri.conf.json`. Keep an **offline backup** of both files:
+  the key cannot be rotated — it is baked into every shipped binary, and losing
+  it permanently ends auto-updates for existing installs.
+- **Building from source without the key:** `bundle.createUpdaterArtifacts`
+  makes `tauri build` refuse to run unsigned. Use `npm run tauri build -- --no-bundle`
+  for a bare binary, or generate a throwaway key
+  (`npm run tauri signer generate -- -w /tmp/dev.key`) and export it as
+  `TAURI_SIGNING_PRIVATE_KEY` to produce full local bundles.
 
 ## 6. Conventions checklist (quick)
 

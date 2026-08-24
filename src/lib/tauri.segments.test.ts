@@ -52,4 +52,9 @@ describe("update api wrapper", () => {
     await api.checkForUpdates();
     expect(mocked).toHaveBeenCalledWith("check_for_updates");
   });
+
+  it("maps install to its command", async () => {
+    await api.installUpdate();
+    expect(mocked).toHaveBeenCalledWith("install_update");
+  });
 });

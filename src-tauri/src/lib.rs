@@ -227,6 +227,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("photo", |ctx, request, responder| {
             let app_handle = ctx.app_handle().clone();
             std::thread::spawn(move || {
@@ -435,6 +436,7 @@ pub fn run() {
             commands::settings::switch_vault,
             commands::settings::restart_app,
             commands::settings::check_for_updates,
+            commands::settings::install_update,
             commands::settings::get_detected_devices,
             commands::settings::preview_watch_folders,
             commands::settings::get_suggested_watch_paths,

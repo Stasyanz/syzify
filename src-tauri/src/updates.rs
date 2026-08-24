@@ -1,9 +1,11 @@
 //! Manual update check against GitHub Releases.
 //!
-//! Privacy invariant: the ONLY network call happens on the user's explicit
-//! click, and the Settings row discloses the endpoint. No background polling,
-//! no auto-updater — "updating" means opening the release page in the
-//! browser and installing by hand.
+//! Privacy invariant: the ONLY network calls happen on the user's explicit
+//! clicks, and the Settings row discloses the endpoints. No background
+//! polling. This module answers "is there a newer release?"; actually
+//! updating is a second explicit click handled by `install_update`
+//! (tauri-plugin-updater), which downloads the minisign-verified bundle
+//! published next to each release.
 
 use serde::Deserialize;
 
@@ -108,6 +110,36 @@ mod tests {
         // Broken data on either side → "not newer", never a false alarm.
         assert!(!is_newer("banana", "0.1.1"));
         assert!(!is_newer("0.2.0", "banana"));
+    }
+
+    /// Losing any of these silently would break the whole update trust
+    /// model: no signature enforcement, or a manifest fetched from a host
+    /// we don't control. CI must fail loudly instead.
+    #[test]
+    fn updater_config_keeps_its_trust_anchor() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["bundle"]["createUpdaterArtifacts"], true);
+        let pubkey = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+        // minisign pubkeys start with the base64 of "untrusted comment:".
+        assert!(pubkey.starts_with("dW50cnVzdGVk"));
+        let endpoints = conf["plugins"]["updater"]["endpoints"].as_array().unwrap();
+        assert!(!endpoints.is_empty());
+        for e in endpoints {
+            assert!(e
+                .as_str()
+                .unwrap()
+                .starts_with("https://github.com/Stasyanz/syzify/"));
+        }
+    }
+
+    /// Privacy invariant: only the thin `install_update` command may touch
+    /// the updater plugin. Granting any `updater:*` IPC permission would let
+    /// webview code start network calls without the explicit Settings click.
+    #[test]
+    fn webview_cannot_reach_the_updater_directly() {
+        let caps = include_str!("../capabilities/default.json");
+        assert!(!caps.contains("updater:"));
     }
 
     #[test]

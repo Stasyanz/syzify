@@ -7,7 +7,10 @@ import type { UpdateCheck as UpdateCheckResult } from "../../lib/types";
 import { UpdateCheck } from "./UpdateCheck";
 
 vi.mock("../../lib/tauri", () => ({
-  api: { checkForUpdates: vi.fn() },
+  api: { checkForUpdates: vi.fn(), installUpdate: vi.fn() },
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => () => {}),
 }));
 
 const mocked = vi.mocked(api);
@@ -38,6 +41,7 @@ describe("UpdateCheck", () => {
   it("does not touch the network until clicked, and discloses the endpoint", () => {
     renderRow();
     expect(mocked.checkForUpdates).not.toHaveBeenCalled();
+    expect(mocked.installUpdate).not.toHaveBeenCalled();
     // Disclosure lives in the tooltip, not a permanent caption.
     expect(
       screen.getByText("Check for updates").getAttribute("data-tip"),
@@ -57,7 +61,7 @@ describe("UpdateCheck", () => {
     await waitFor(() => expect(mocked.checkForUpdates).toHaveBeenCalledTimes(2));
   });
 
-  it("offers the release link for a newer version", async () => {
+  it("offers a one-click install for a newer version", async () => {
     mocked.checkForUpdates.mockResolvedValue(
       result({
         update_available: true,
@@ -65,11 +69,35 @@ describe("UpdateCheck", () => {
         release_url: "https://github.com/Stasyanz/syzify/releases/tag/v0.2.0",
       }),
     );
+    // Never resolves: on success the backend restarts the app instead.
+    mocked.installUpdate.mockReturnValue(new Promise(() => {}));
     renderRow();
     fireEvent.click(screen.getByText("Check for updates"));
-    expect(await screen.findByText(/New version 0\.2\.0 available/)).toBeTruthy();
-    const link = screen.getByText("Download") as HTMLAnchorElement;
+    const install = await screen.findByText("Install and restart");
+    // Nothing downloads until the second explicit click, and the download
+    // endpoint is disclosed the same way as the check endpoint.
+    expect(mocked.installUpdate).not.toHaveBeenCalled();
+    expect(install.getAttribute("data-tip")).toContain("github.com");
+    // Release notes stay reachable through the version link.
+    const link = screen.getByText("0.2.0") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toContain("/releases/tag/v0.2.0");
+    fireEvent.click(install);
+    await waitFor(() => expect(mocked.installUpdate).toHaveBeenCalledTimes(1));
+    // In-place morph while the download runs — no appended lines.
+    expect(await screen.findByText(/installing…/)).toBeTruthy();
+    expect(screen.queryByText("Install and restart")).toBeNull();
+  });
+
+  it("surfaces a failed install and keeps the button for a retry", async () => {
+    mocked.checkForUpdates.mockResolvedValue(
+      result({ update_available: true, latest_version: "0.2.0" }),
+    );
+    mocked.installUpdate.mockRejectedValue("Update install failed: bad signature");
+    renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    expect(await screen.findByText(/bad signature/)).toBeTruthy();
+    expect(screen.getByText("Install and restart")).toBeTruthy();
   });
 
   it("surfaces a failed check", async () => {

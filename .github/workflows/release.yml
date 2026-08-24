@@ -16,6 +16,10 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # The signing secrets live in the "release" environment, whose deployment
+    # rule only admits v* tags — workflows on arbitrary branches can't read
+    # the updater key.
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +44,19 @@ jobs:
             rust-targets: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
+      # A tag that doesn't match the app's own version would publish a
+      # latest.json claiming a version no binary reports — every install
+      # would then re-update in an endless loop. Fail in seconds, not after
+      # six platform builds.
+      - name: Verify tag matches app version
+        shell: bash
+        run: |
+          conf="$(jq -r .version src-tauri/tauri.conf.json)"
+          cargo="$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          if [ "v${conf}" != "${GITHUB_REF_NAME}" ] || [ "v${cargo}" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} != tauri.conf.json (${conf}) / Cargo.toml (${cargo})" >&2
+            exit 1
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -62,7 +79,12 @@ jobs:
           workspaces: src-tauri
           key: ${{ matrix.target }}
       - run: npm ci
+      # createUpdaterArtifacts makes the build refuse to run without the
+      # signing key, so a tag can never publish unsigned update payloads.
       - name: Build bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
@@ -120,6 +142,56 @@ jobs:
             esac
             cp "$f" "aliases/Syzify-${arch}${ext}"
           done
+          # --- Updater feed (latest.json) ---
+          # The in-app updater downloads the SAME files users install (the
+          # AppImage / NSIS exe aliases above) plus macOS-only .app.tar.gz
+          # bundles; minisign signatures are embedded in latest.json, so no
+          # .sig files are uploaded. URLs point at THIS tag (never the
+          # /latest permalink) so a manifest can't mix versions.
+          for pair in aarch64-apple-darwin:macos-arm64 x86_64-apple-darwin:macos-x64; do
+            tar=$(find "artifacts/syzify-${pair%%:*}" -name '*.app.tar.gz' | head -n1)
+            if [ -n "$tar" ]; then
+              cp "$tar" "aliases/Syzify-${pair##*:}.app.tar.gz"
+            fi
+          done
+          platforms='{}'
+          while read -r key sigglob asset; do
+            sig=$(find artifacts -path "*syzify-${sigglob}" | head -n1)
+            if [ -z "$sig" ]; then
+              echo "updater: no signature for ${key} (${sigglob})" >&2
+              continue
+            fi
+            platforms=$(jq --arg k "$key" --arg sig "$(cat "$sig")" \
+              --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${asset}" \
+              '.[$k] = {signature: $sig, url: $url}' <<<"$platforms")
+          done <<'TABLE'
+          darwin-aarch64 aarch64-apple-darwin/macos/*.app.tar.gz.sig Syzify-macos-arm64.app.tar.gz
+          darwin-x86_64 x86_64-apple-darwin/macos/*.app.tar.gz.sig Syzify-macos-x64.app.tar.gz
+          linux-x86_64 x86_64-unknown-linux-gnu/*.AppImage.sig Syzify-linux-x64.AppImage
+          linux-aarch64 aarch64-unknown-linux-gnu/*.AppImage.sig Syzify-linux-arm64.AppImage
+          linux-x86_64-deb x86_64-unknown-linux-gnu/*.deb.sig Syzify-linux-x64.deb
+          linux-aarch64-deb aarch64-unknown-linux-gnu/*.deb.sig Syzify-linux-arm64.deb
+          windows-x86_64 x86_64-pc-windows-msvc/*-setup.exe.sig Syzify-windows-x64-setup.exe
+          windows-aarch64 aarch64-pc-windows-msvc/*-setup.exe.sig Syzify-windows-arm64-setup.exe
+          windows-x86_64-msi x86_64-pc-windows-msvc/*.msi.sig Syzify-windows-x64.msi
+          windows-aarch64-msi aarch64-pc-windows-msvc/*.msi.sig Syzify-windows-arm64.msi
+          TABLE
+          count=$(jq 'length' <<<"$platforms")
+          if [ "$count" -ne 10 ]; then
+            # Any missing signature aborts the whole publish (nothing is
+            # released at all): the updater picks its entry by how the user
+            # originally INSTALLED (deb/msi users don't fall back to
+            # AppImage/NSIS correctly), so a partial manifest would break
+            # updates for whoever installed through the missing channel.
+            echo "updater: ${count}/10 platform entries signed — aborting release" >&2
+            exit 1
+          fi
+          jq -n --arg version "${GITHUB_REF_NAME#v}" \
+            --arg notes "See https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$platforms" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
+            > aliases/latest.json
           mapfile -t -O "${#files[@]}" files < <(find aliases -type f)
           # Builds are ad-hoc signed, not notarized: macOS quarantines the
           # download and reports the app as "damaged". Tell users the fix
@@ -129,17 +201,22 @@ jobs:
           > \`\`\`
           > xattr -dr com.apple.quarantine /Applications/Syzify.app
           > \`\`\`"
-          # Idempotent: re-running the tag updates assets instead of failing.
+          # Draft-first: /releases/latest serves latest.json to every
+          # installed app, so it must never point at a release whose assets
+          # are still uploading — publishing is the final flip below.
+          # Idempotent: re-running the tag updates assets instead of failing
+          # (gh resolves drafts by tag name too).
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber "${files[@]}"
-            # Deleting + re-pushing a tag flips its release into a draft —
-            # re-publish it, or the "successful" run leaves no visible release.
-            gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
           else
             gh release create "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
+              --draft \
               --title "${GITHUB_REF_NAME}" \
               --notes "${notes}" \
               --generate-notes \
               "${files[@]}"
           fi
+          # Also covers tag delete + re-push, which flips the existing
+          # release back into a draft.
+          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false

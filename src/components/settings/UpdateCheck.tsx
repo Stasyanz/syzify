@@ -1,12 +1,33 @@
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../../lib/tauri";
 
 /** Manual "Check for updates" under the version in Settings → General.
  * Strictly user-initiated (the app never phones home on its own) with the
- * endpoint disclosed right on the row; an available update links to the
- * release page — installing stays in the user's hands. */
+ * endpoint disclosed right on the row; an available update offers a one-click
+ * signed install — the download still only starts on an explicit click. */
 export function UpdateCheck() {
   const check = useMutation({ mutationFn: () => api.checkForUpdates() });
+  const [progress, setProgress] = useState<number | null>(null);
+  // Success never lands: the backend restarts the app after installing.
+  const install = useMutation({
+    mutationFn: async () => {
+      const unlisten = await listen<{ downloaded: number; total: number | null }>(
+        "update:progress",
+        (e) => {
+          const { downloaded, total } = e.payload;
+          if (total) setProgress(Math.min(99, Math.floor((downloaded / total) * 100)));
+        },
+      );
+      try {
+        await api.installUpdate();
+      } finally {
+        unlisten();
+        setProgress(null);
+      }
+    },
+  });
 
   const upToDate = check.isSuccess && !check.data.update_available;
   // One line that changes in place — never a second appended line.
@@ -25,10 +46,23 @@ export function UpdateCheck() {
       <span className="sd !mt-0">
         {check.isSuccess && check.data.update_available ? (
           <>
-            New version {check.data.latest_version} available —{" "}
+            {/* The version links to the release notes; the action installs. */}
+            New version{" "}
             <a href={check.data.release_url} className="text-accent-2 hover:underline">
-              Download
-            </a>
+              {check.data.latest_version}
+            </a>{" "}
+            available —{" "}
+            {install.isPending ? (
+              `installing…${progress != null ? ` ${progress}%` : ""}`
+            ) : (
+              <button
+                className="text-accent-2 hover:underline tip-left"
+                data-tip="Downloads from github.com and objects.githubusercontent.com"
+                onClick={() => install.mutate()}
+              >
+                Install and restart
+              </button>
+            )}
           </>
         ) : (
           <button
@@ -41,8 +75,10 @@ export function UpdateCheck() {
           </button>
         )}
       </span>
-      {check.isError && (
-        <span className="text-xs text-red-600">{String(check.error)}</span>
+      {(install.isError || check.isError) && (
+        <span className="text-xs text-red-600">
+          {String(install.error ?? check.error)}
+        </span>
       )}
     </div>
   );

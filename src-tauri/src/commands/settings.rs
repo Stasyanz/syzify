@@ -993,6 +993,47 @@ pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, S
         .map_err(|e| format!("Update check task failed: {}", e))?
 }
 
+/// Download the signed update bundle, install it and restart. Only reachable
+/// from the Settings row after an explicit manual check — this never runs on
+/// its own. The updater plugin re-reads `latest.json` itself and verifies the
+/// minisign signature against the public key baked into tauri.conf.json
+/// before touching the installed app; on success `restart()` never returns.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app
+        .updater()
+        .map_err(|e| format!("Updater unavailable: {}", e))?
+        .check()
+        .await
+        .map_err(|e| format!("Update lookup failed: {}", e))?
+        // The Settings row only shows the install button after the manual
+        // check saw a newer release on api.github.com; the updater re-checks
+        // against latest.json, which can lag a freshly published release.
+        .ok_or_else(|| {
+            "The update isn't downloadable yet — retry in a few minutes, \
+             or use the release page"
+                .to_string()
+        })?;
+    let progress = app.clone();
+    let mut downloaded: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = progress.emit(
+                    "update:progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total }),
+                );
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("Update install failed: {}", e))?;
+    app.restart();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
