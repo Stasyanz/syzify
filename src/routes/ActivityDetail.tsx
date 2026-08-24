@@ -18,6 +18,7 @@ import { getSportColor } from "../lib/sportColors";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
+import { SegmentEffortsPanel } from "../components/activity/SegmentEffortsPanel";
 import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
 import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
@@ -508,6 +509,15 @@ export function ActivityDetailPage() {
                 ftpW={activity.threshold_power_w}
                 segmentSource={segmentSourceFor(focusedLeg, activity.id)}
               />
+
+              {/* Segment efforts — full-track indices, so not in leg focus
+                  (same reason segment saving is disabled there). */}
+              {!focusedLeg && (
+                <SegmentEffortsPanel
+                  activityId={activity.id}
+                  sport={activity.sport_type}
+                />
+              )}
 
               <CyclingDynamicsPanel activity={activity} />
 

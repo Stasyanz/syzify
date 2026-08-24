@@ -22,6 +22,7 @@ import {
   powerVisRange,
   powerZoneRanges,
   speedVisRange,
+  nearestChartIdx,
   speedZoneRanges,
   zoneBarCount,
   zoneColorFor,
@@ -598,5 +599,21 @@ describe("bucketMaxBars", () => {
     expect(bucketMaxBars([], [], 40).values).toEqual([]);
     // Zero x-span (all samples at one x) folds into a single bar.
     expect(bucketMaxBars([5, 5], [1, 9], 40).values).toEqual([9]);
+  });
+});
+
+describe("nearestChartIdx", () => {
+  it("prefers the exact mapping and searches outward over holes", () => {
+    // Trackpoints 0..6, chart kept only 0,2,3,6 (holes at 1,4,5).
+    const rm = new Map([
+      [0, 0],
+      [2, 1],
+      [3, 2],
+      [6, 3],
+    ]);
+    expect(nearestChartIdx(rm, 3, 6)).toBe(2); // exact
+    expect(nearestChartIdx(rm, 1, 6)).toBe(0); // hole → nearest neighbor
+    expect(nearestChartIdx(rm, 5, 6)).toBe(3); // 4 and 6 tie-break upward is fine either way
+    expect(nearestChartIdx(new Map(), 3, 6)).toBeNull();
   });
 });

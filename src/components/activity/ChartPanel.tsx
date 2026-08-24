@@ -11,6 +11,7 @@ import {
   ELEVATION_BANDS_M,
   gradeGradientStops,
   gradeSeries,
+  nearestChartIdx,
   nearestIdx,
   selectionGrade,
   hrVisRange,
@@ -265,7 +266,12 @@ function SingleChart({
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
   const hoveredPointIndex = useActivityStore((s) => s.hoveredPointIndex);
   const setSelectedRange = useActivityStore((s) => s.setSelectedRange);
+  const selectedRange = useActivityStore((s) => s.selectedRange);
   const isLocalCursor = useRef(false);
+  // The trackpoint range this chart itself last published — a store range
+  // that differs came from OUTSIDE (a segment-effort click) and must be
+  // drawn onto the plot instead of being treated as our own echo.
+  const publishedRange = useRef<[number, number] | null>(null);
   const [tip, setTip] = useState<{ left: number; text: string } | null>(null);
   // Drag-selection badge: the selected span's stats, centered over the box.
   const [sel, setSel] = useState<{ left: number; width: number; text: string } | null>(
@@ -318,6 +324,7 @@ function SingleChart({
                   const cont = containerRef.current;
                   if (u.select.width <= 0 || !cont) {
                     setSel(null);
+                    publishedRange.current = null;
                     setSelectedRange(null);
                     return;
                   }
@@ -329,16 +336,19 @@ function SingleChart({
                   const text = selectionStats(indexMap[iA], indexMap[iB]);
                   if (!text) {
                     setSel(null);
+                    publishedRange.current = null;
                     setSelectedRange(null);
                     return;
                   }
                   // Publish the trackpoint range — the route map thickens
                   // this segment. Ordered: a time-axis drag maps 1:1, and
                   // indexMap is ascending either way.
-                  setSelectedRange([
+                  const range: [number, number] = [
                     Math.min(indexMap[iA], indexMap[iB]),
                     Math.max(indexMap[iA], indexMap[iB]),
-                  ]);
+                  ];
+                  publishedRange.current = range;
+                  setSelectedRange(range);
                   // select.left is relative to the plot area (u.over).
                   const overLeft =
                     u.over.getBoundingClientRect().left -
@@ -519,6 +529,7 @@ function SingleChart({
     if (selectionStats) {
       plotRef.current.over.addEventListener("dblclick", () => {
         setSel(null);
+        publishedRange.current = null;
         setSelectedRange(null);
       });
     }
@@ -561,6 +572,57 @@ function SingleChart({
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues]);
+
+  // Sync selection FROM external sources (segment-effort click) → chart:
+  // draw uPlot's select box over the published trackpoint range. The box is
+  // set with fire=false and the badge is rendered here directly, so the
+  // store keeps the EXACT effort range (a fired hook would republish it
+  // re-snapped to chart points, deselecting the panel row).
+  useEffect(() => {
+    if (!selectionStats) return;
+    const own = publishedRange.current;
+    const same =
+      selectedRange === own ||
+      (selectedRange != null &&
+        own != null &&
+        selectedRange[0] === own[0] &&
+        selectedRange[1] === own[1]);
+    if (same) return;
+    // valToPos is NaN in the tick the plot is constructed — defer a beat.
+    const t = setTimeout(() => {
+      const u = plotRef.current;
+      const cont = containerRef.current;
+      if (!u || !cont) return;
+      if (selectedRange == null) {
+        publishedRange.current = null;
+        u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+        setSel(null);
+        return;
+      }
+      const maxTp = indexMap.length > 0 ? indexMap[indexMap.length - 1] : 0;
+      const cA = nearestChartIdx(reverseMap, selectedRange[0], maxTp);
+      const cB = nearestChartIdx(reverseMap, selectedRange[1], maxTp);
+      if (cA == null || cB == null || cA === cB) return;
+      const left = u.valToPos(xValues[Math.min(cA, cB)], "x");
+      const right = u.valToPos(xValues[Math.max(cA, cB)], "x");
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return;
+      publishedRange.current = selectedRange;
+      u.setSelect(
+        { left, top: 0, width: right - left, height: u.over.clientHeight },
+        false,
+      );
+      const text = selectionStats(selectedRange[0], selectedRange[1]);
+      if (text) {
+        const overLeft =
+          u.over.getBoundingClientRect().left - cont.getBoundingClientRect().left;
+        setSel({ left: overLeft + left, width: right - left, text });
+      }
+    }, 0);
+    return () => clearTimeout(t);
+    // selectionStats is recreated per parent render; the `same` guard above
+    // makes those re-runs no-ops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRange, reverseMap, xValues, indexMap]);
 
   // Sync cursor FROM external source (map hover) → chart
   useEffect(() => {

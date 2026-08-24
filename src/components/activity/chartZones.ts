@@ -327,6 +327,23 @@ export function nearestIdx(xs: number[], x: number): number {
   return lo > 0 && x - xs[lo - 1] < xs[lo] - x ? lo - 1 : lo;
 }
 
+/** Chart index for a trackpoint index, tolerating holes: points without a
+ * value are absent from `reverseMap`, so search outward from the exact
+ * index. Maps a stored effort range onto the chart's own point space. */
+export function nearestChartIdx(
+  reverseMap: Map<number, number>,
+  tpIdx: number,
+  maxTpIdx: number,
+): number | null {
+  for (let d = 0; d <= maxTpIdx; d++) {
+    const below = reverseMap.get(tpIdx - d);
+    if (below != null) return below;
+    const above = reverseMap.get(tpIdx + d);
+    if (above != null) return above;
+  }
+  return null;
+}
+
 /** What a drag-selected slice of the elevation chart works out to. */
 export interface SelectionGrade {
   /** Horizontal span between the endpoints, meters. */
