@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-30
+
 ### Added
 - Power curve: activities with power data get a mean-max chart (best average
   power from 1 second to 1 hour, log time axis) drawn over the all-time best
@@ -13,7 +15,6 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   Hovering shows which activity holds the record for a window; clicking it
   opens that activity. Curves are computed on import, and existing
   activities are filled in once on first launch.
-
 - Dashboard: the "This month" stats next to the training calendar now include
   total elevation gain for the shown month (hidden when there was no
   climbing).
