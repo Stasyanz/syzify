@@ -491,6 +491,7 @@ pub struct DaySummary {
     pub activity_count: i64,
     pub total_distance_m: f64,
     pub total_duration_s: f64,
+    pub total_elev_gain_m: f64,
     pub sport_types: Vec<String>,
     pub activities: Vec<CalDayActivity>,
 }

@@ -14,6 +14,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   opens that activity. Curves are computed on import, and existing
   activities are filled in once on first launch.
 
+- Dashboard: the "This month" stats next to the training calendar now include
+  total elevation gain for the shown month (hidden when there was no
+  climbing).
+
 ### Changed
 - Share image: the 16:9 crop preset now matches the photo's orientation —
   vertical photos get a vertical frame right away, no manual rotation needed.

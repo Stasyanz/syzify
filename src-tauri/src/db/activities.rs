@@ -590,7 +590,7 @@ pub fn get_calendar_data(
     let where_sql = conditions.join(" AND ");
 
     let sql = format!(
-        "SELECT date(start_time) as day, id, sport_type, title, distance_m, duration_s
+        "SELECT date(start_time) as day, id, sport_type, title, distance_m, duration_s, elev_gain_m
          FROM activity
          WHERE {where_sql}
          ORDER BY day, start_time"
@@ -600,6 +600,7 @@ pub fn get_calendar_data(
     struct Row {
         day: String,
         act: CalDayActivity,
+        elev_gain_m: Option<f64>,
     }
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -612,6 +613,7 @@ pub fn get_calendar_data(
                 distance_m: row.get(4)?,
                 duration_s: row.get(5)?,
             },
+            elev_gain_m: row.get(6)?,
         })
     })?;
 
@@ -619,13 +621,14 @@ pub fn get_calendar_data(
     // per-activity list and deriving the aggregate fields from it.
     let mut days: Vec<DaySummary> = Vec::new();
     for row in rows {
-        let Row { day, act } = row?;
+        let Row { day, act, elev_gain_m } = row?;
         if days.last().map(|d| d.date != day).unwrap_or(true) {
             days.push(DaySummary {
                 date: day,
                 activity_count: 0,
                 total_distance_m: 0.0,
                 total_duration_s: 0.0,
+                total_elev_gain_m: 0.0,
                 sport_types: Vec::new(),
                 activities: Vec::new(),
             });
@@ -634,6 +637,7 @@ pub fn get_calendar_data(
         d.activity_count += 1;
         d.total_distance_m += act.distance_m.unwrap_or(0.0);
         d.total_duration_s += act.duration_s.unwrap_or(0.0);
+        d.total_elev_gain_m += elev_gain_m.unwrap_or(0.0);
         if !d.sport_types.contains(&act.sport_type) {
             d.sport_types.push(act.sport_type.clone());
         }
@@ -1571,17 +1575,20 @@ mod tests {
         a1.start_time = "2025-06-01T08:00:00".to_string();
         a1.distance_m = Some(5000.0);
         a1.duration_s = Some(1800.0);
+        a1.elev_gain_m = Some(120.0);
 
         let mut a2 = sample_activity("c2");
         a2.start_time = "2025-06-01T18:00:00".to_string();
         a2.sport_type = "ride".to_string();
         a2.distance_m = Some(20000.0);
         a2.duration_s = Some(3600.0);
+        a2.elev_gain_m = Some(350.0);
 
         let mut a3 = sample_activity("c3");
         a3.start_time = "2025-06-15T10:00:00".to_string();
         a3.distance_m = Some(10000.0);
         a3.duration_s = Some(3000.0);
+        a3.elev_gain_m = None;
 
         insert_activity(&conn, &a1).unwrap();
         insert_activity(&conn, &a2).unwrap();
@@ -1595,12 +1602,15 @@ mod tests {
         assert_eq!(day1.activity_count, 2);
         assert!((day1.total_distance_m - 25000.0).abs() < 0.1);
         assert!((day1.total_duration_s - 5400.0).abs() < 0.1);
+        assert!((day1.total_elev_gain_m - 470.0).abs() < 0.1);
         assert!(day1.sport_types.contains(&"run".to_string()));
         assert!(day1.sport_types.contains(&"ride".to_string()));
 
         let day15 = &days[1];
         assert_eq!(day15.date, "2025-06-15");
         assert_eq!(day15.activity_count, 1);
+        // No stored elevation reads as 0, not a poisoned NaN/None sum.
+        assert_eq!(day15.total_elev_gain_m, 0.0);
 
         // Different month returns empty
         let empty = get_calendar_data(&conn, 2025, 7, &ActivityFilters::default()).unwrap();

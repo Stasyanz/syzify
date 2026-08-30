@@ -6,7 +6,7 @@ import { api } from "../../lib/tauri";
 import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
 import { formatDistance, formatDuration } from "../../lib/format";
-import { toDistance, distanceUnit, useUnits } from "../../lib/units";
+import { toDistance, distanceUnit, toElevation, elevationUnit, useUnits } from "../../lib/units";
 import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
 import { WEEKDAYS, buildMonthGrid, monthSports } from "../../lib/calendar";
 
@@ -46,6 +46,7 @@ export function MiniCalendar() {
 
   const sessions = days.reduce((s, d) => s + d.activity_count, 0);
   const monthDistance = toDistance(days.reduce((s, d) => s + d.total_distance_m, 0));
+  const monthElevGain = toElevation(days.reduce((s, d) => s + d.total_elev_gain_m, 0));
   const activeDays = days.length;
 
   return (
@@ -145,6 +146,17 @@ export function MiniCalendar() {
               </div>
               <div className="l">Distance</div>
             </div>
+            {/* Hidden while zero: a flat-terrain (or elevation-less GPX)
+                month would otherwise pin a dead "0 m" row to the card. */}
+            {monthElevGain > 0 && (
+              <div>
+                <div className="k">
+                  {Math.round(monthElevGain).toLocaleString("en-US")}
+                  <span>{elevationUnit()}</span>
+                </div>
+                <div className="l">Elev gain</div>
+              </div>
+            )}
             <div>
               <div className="k">{activeDays}</div>
               <div className="l">Active days</div>

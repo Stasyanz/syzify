@@ -299,6 +299,7 @@ export interface DaySummary {
   activity_count: number;
   total_distance_m: number;
   total_duration_s: number;
+  total_elev_gain_m: number;
   sport_types: string[];
   activities: CalDayActivity[];
 }
