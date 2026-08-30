@@ -194,21 +194,22 @@ describe("ShareModal EXIF orientation (natural ≠ stored dims)", () => {
     });
   });
 
-  it("aspect presets compute the crop in natural coordinates", async () => {
+  it("aspect presets compute the crop in natural coordinates, oriented to the photo", async () => {
     const { container, getByText } = renderModal();
 
     await waitFor(() => getByText("16:9"));
     fireEvent.click(getByText("16:9"));
 
     // The stored dims are exactly 16:9, so the old stored-dims math would return
-    // the full frame; in natural (portrait) coordinates a true 16:9 crop is a
-    // letterboxed band. Verify the frame's aspect in photo pixels.
+    // the full frame; in natural (portrait) coordinates the preset must both
+    // use the natural pixels AND flip to vertical (#46): a portrait photo gets
+    // a 9:16 band with no manual quarter turn.
     await waitFor(() => {
-      expect(frameAspect(container)).toBeCloseTo(16 / 9, 4);
+      expect(frameAspect(container)).toBeCloseTo(9 / 16, 4);
     });
   });
 
-  it("a preset on a quarter-turned frame keeps its LOCAL aspect (turned 16:9)", async () => {
+  it("a preset on a quarter-turned frame keeps its LOCAL aspect (photo-oriented)", async () => {
     const { container, getByText, getByLabelText } = renderModal();
 
     await waitFor(() => getByLabelText("Adjust crop"));
@@ -219,13 +220,14 @@ describe("ShareModal EXIF orientation (natural ≠ stored dims)", () => {
 
     // Straighten to the slider bound: 45° folds into the next quarter
     // (autoQuarterOrientation → orientation 90), then apply a preset. The
-    // fresh crop's LOCAL aspect must stay 16:9 and match the resize lock —
-    // a 16:9 preset on a turned frame is a turned 16:9, exported vertical.
+    // fresh crop's LOCAL aspect depends only on the photo (portrait → 9:16),
+    // not on the quarter, so it always matches the resize lock — the turn
+    // shows through the quarter fold, not through a re-derived ratio.
     fireEvent.change(getByLabelText("Straighten crop frame"), { target: { value: "45" } });
     fireEvent.click(getByText("16:9"));
 
     await waitFor(() => {
-      expect(frameAspect(container)).toBeCloseTo(16 / 9, 4);
+      expect(frameAspect(container)).toBeCloseTo(9 / 16, 4);
     });
   });
 

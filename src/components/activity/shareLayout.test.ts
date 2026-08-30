@@ -7,7 +7,29 @@ import {
   straightenQuarter,
   autoQuarterOrientation,
   avoidZone,
+  orientedPresetRatio,
 } from "./shareLayout";
+
+describe("orientedPresetRatio", () => {
+  it("inverts a wide ratio for a portrait photo", () => {
+    expect(orientedPresetRatio(16 / 9, 1080, 1920)).toBeCloseTo(9 / 16, 5);
+  });
+
+  it("keeps a wide ratio on landscape and square photos", () => {
+    expect(orientedPresetRatio(16 / 9, 1920, 1080)).toBeCloseTo(16 / 9, 5);
+    expect(orientedPresetRatio(16 / 9, 1000, 1000)).toBeCloseTo(16 / 9, 5);
+  });
+
+  it("leaves the square preset alone everywhere", () => {
+    expect(orientedPresetRatio(1, 1080, 1920)).toBe(1);
+    expect(orientedPresetRatio(1, 1920, 1080)).toBe(1);
+  });
+
+  it("never inverts an already-vertical ratio", () => {
+    expect(orientedPresetRatio(9 / 16, 1920, 1080)).toBeCloseTo(9 / 16, 5);
+    expect(orientedPresetRatio(9 / 16, 1080, 1920)).toBeCloseTo(9 / 16, 5);
+  });
+});
 
 describe("centeredCrop", () => {
   it("returns the full image for the matching ratio", () => {

@@ -6,6 +6,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Changed
+- Share image: the 16:9 crop preset now matches the photo's orientation —
+  vertical photos get a vertical frame right away, no manual rotation needed.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added

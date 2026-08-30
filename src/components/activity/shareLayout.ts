@@ -150,6 +150,16 @@ export const CROP_PRESETS: CropPreset[] = [
 ];
 
 /**
+ * A wide preset on a portrait photo becomes the inverted (vertical) ratio, so
+ * the default frame matches the photo without a manual quarter turn (#46).
+ * The rule depends only on the photo — not on the frame's current quarter —
+ * so the ratio lock never disagrees with a frame the user turned afterwards.
+ */
+export function orientedPresetRatio(ratio: number, imageW: number, imageH: number): number {
+  return imageH > imageW && ratio > 1 ? 1 / ratio : ratio;
+}
+
+/**
  * Largest centered crop of the given pixel aspect that fits `imageW × imageH`,
  * returned in normalized [0..1] coords. `targetRatio` is width/height in pixels.
  */

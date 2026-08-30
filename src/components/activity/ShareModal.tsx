@@ -28,6 +28,7 @@ import {
   normalizeStraighten,
   straightenQuarter,
   autoQuarterOrientation,
+  orientedPresetRatio,
   MAX_STRAIGHTEN,
   CROP_PRESETS,
   type BlockKind,
@@ -200,16 +201,19 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
   // exceed 1 — see clampCropRotated) instead of snapping them to the photo box.
   const safeCrop = useMemo(() => clampCropRotated(crop, photoW, photoH), [crop, photoW, photoH]);
 
-  // Presets shape the frame's LOCAL sides. With no ±90° buttons, orientation
-  // comes solely from autoQuarterOrientation folds, so the frame's local aspect
-  // and the exported aspect only differ by the quarter the user physically
-  // turned the frame — a 16:9 preset on a turned frame is a turned 16:9.
-  const activeRatio = CROP_PRESETS.find((p) => p.key === cropPreset)?.ratio ?? null;
+  // Presets shape the frame's LOCAL sides, matched to the photo's orientation
+  // (portrait photo → vertical 16:9, see orientedPresetRatio). With no ±90°
+  // buttons, further orientation comes solely from autoQuarterOrientation
+  // folds, so the frame's local aspect and the exported aspect only differ by
+  // the quarter the user physically turned the frame.
+  const presetRatio = CROP_PRESETS.find((p) => p.key === cropPreset)?.ratio ?? null;
+  const activeRatio = presetRatio ? orientedPresetRatio(presetRatio, photoW, photoH) : null;
 
   function applyCropPreset(key: string) {
     setCropPreset(key);
     setCropMode(true);
-    const ratio = CROP_PRESETS.find((p) => p.key === key)?.ratio;
+    const raw = CROP_PRESETS.find((p) => p.key === key)?.ratio;
+    const ratio = raw ? orientedPresetRatio(raw, photoW, photoH) : raw;
     if (ratio && photo) {
       // keep the current rotation when switching aspect; shrink the fresh crop so a
       // tilted frame's rotated bbox still fits the photo (no instant blank corners)
