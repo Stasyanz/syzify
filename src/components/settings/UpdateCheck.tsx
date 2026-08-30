@@ -3,11 +3,13 @@ import { useMutation } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../../lib/tauri";
 
-/** Manual "Check for updates" under the version in Settings → General.
- * Strictly user-initiated (the app never phones home on its own) with the
+/** Manual "Check for updates" under the version in Settings → General, and
+ * (centered) on the vault-too-new boot error screen — both commands it calls
+ * are vault-independent, so it works before the DB opens. Strictly
+ * user-initiated (the app never phones home on its own) with the
  * endpoint disclosed right on the row; an available update offers a one-click
  * signed install — the download still only starts on an explicit click. */
-export function UpdateCheck() {
+export function UpdateCheck({ centered = false }: { centered?: boolean }) {
   const check = useMutation({ mutationFn: () => api.checkForUpdates() });
   const [progress, setProgress] = useState<number | null>(null);
   // Success never lands: the backend restarts the app after installing.
@@ -38,7 +40,9 @@ export function UpdateCheck() {
       : "Check for updates";
 
   return (
-    <div className="flex flex-col items-end gap-0.5 text-right">
+    <div
+      className={`flex flex-col gap-0.5 ${centered ? "items-center text-center" : "items-end text-right"}`}
+    >
       {/* Wrapped in .sd so this matches the license links' size; the
           endpoint disclosure lives in the tooltip (data-tip — WKWebView
           never shows native title=""), keeping the

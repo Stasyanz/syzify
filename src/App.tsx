@@ -17,6 +17,7 @@ import { useWatchFolderListener } from "./hooks/useWatchFolderListener";
 import { ImportProgressOverlay } from "./components/import/ImportProgressOverlay";
 import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
+import { UpdateCheck } from "./components/settings/UpdateCheck";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -28,14 +29,25 @@ const queryClient = new QueryClient({
   },
 });
 
+/** A newer build has migrated this vault past what this binary knows — the
+ * only real fix is updating the app, so the error screen must offer it. */
+export function isVaultTooNew(message: string): boolean {
+  return message.includes("DatabaseTooFarAhead");
+}
+
 /**
  * Shown when the vault can't be opened at boot — most often because it lives
  * in a macOS-protected folder (Documents/Desktop/Downloads) and the app lacks
  * Full Disk Access. Recoverable: grant access (or move the vault back) and
  * reopen. Replaces the previous hard crash at startup.
+ * The DatabaseTooFarAhead case gets a tailored path: the raw migration error
+ * means "this app is older than the vault", which no amount of reopening can
+ * fix — so the screen says that in words and offers the updater inline
+ * (both update commands are vault-independent).
  */
 export function VaultErrorScreen({ message }: { message: string }) {
-  const protectedFolder = /Documents|Desktop|Downloads/.test(message);
+  const tooNew = isVaultTooNew(message);
+  const protectedFolder = !tooNew && /Documents|Desktop|Downloads/.test(message);
   const [switchError, setSwitchError] = useState<string | null>(null);
 
   // Point the app at another vault (or an empty folder for a fresh one)
@@ -61,7 +73,17 @@ export function VaultErrorScreen({ message }: { message: string }) {
     <div className="h-screen flex items-center justify-center bg-bg p-8">
       <div className="max-w-md text-center space-y-4">
         <h1 className="text-xl font-bold text-ink">Can't open your vault</h1>
-        <p className="text-sm text-muted">{message}</p>
+        {tooNew ? (
+          <>
+            <p className="text-sm text-muted">
+              This vault was last used by a newer version of Syzify. Update the
+              app to open it.
+            </p>
+            <UpdateCheck centered />
+          </>
+        ) : (
+          <p className="text-sm text-muted">{message}</p>
+        )}
         {protectedFolder && (
           <p className="text-sm text-muted">
             The vault is in a protected folder. Grant Syzify{" "}
@@ -70,9 +92,11 @@ export function VaultErrorScreen({ message }: { message: string }) {
             location.
           </p>
         )}
+        {/* Reopening can't fix a too-new vault — don't dress it as the
+            primary action there; the update link above is the way out. */}
         <button
           onClick={() => api.restartApp().catch(() => {})}
-          className="btn primary mx-auto"
+          className={`btn ${tooNew ? "ghost" : "primary"} mx-auto`}
         >
           Reopen
         </button>

@@ -6,6 +6,11 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- The "Can't open your vault" screen now recognizes a vault last used by a
+  newer version of Syzify: instead of a raw migration error it says what
+  happened and offers to check for and install the update right there.
+
 ## [0.3.0] - 2026-08-30
 
 ### Added

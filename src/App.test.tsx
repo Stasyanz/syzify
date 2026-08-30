@@ -9,6 +9,8 @@ vi.mock("./lib/tauri", () => ({
     getVaultError: vi.fn().mockResolvedValue(null),
     switchVault: vi.fn().mockResolvedValue(""),
     restartApp: vi.fn().mockResolvedValue(undefined),
+    checkForUpdates: vi.fn(),
+    installUpdate: vi.fn(),
   },
   isTauri: () => false,
 }));
@@ -91,6 +93,37 @@ describe("App boot", { timeout: 20_000 }, () => {
       expect(api.switchVault).toHaveBeenCalledWith("/picked/vault", true),
     );
     await waitFor(() => expect(api.restartApp).toHaveBeenCalled());
+  });
+
+  it("a too-new vault offers the updater instead of the raw migration error", async () => {
+    const raw =
+      "Failed to run migrations: rusqlite_migrate error: MigrationDefinition(DatabaseTooFarAhead)";
+    await bootApp(UNLOCKED, raw);
+    await screen.findByText("Can't open your vault");
+
+    // Human copy replaces the raw error; the update check is right there.
+    screen.getByText(/last used by a newer version/);
+    expect(screen.queryByText(raw)).toBeNull();
+    const { api } = await import("./lib/tauri");
+    vi.mocked(api.checkForUpdates).mockResolvedValue({
+      update_available: true,
+      latest_version: "9.9.9",
+      current_version: "0.3.0",
+      release_url: "https://example.com",
+    } as Awaited<ReturnType<typeof api.checkForUpdates>>);
+    fireEvent.click(screen.getByText("Check for updates"));
+    await screen.findByText("Install and restart");
+
+    // The escape hatches stay available.
+    screen.getByText("Open another vault…");
+    screen.getByText("Reopen");
+  });
+
+  it("other vault errors keep the raw message and no updater", async () => {
+    await bootApp(UNLOCKED, "boom");
+    await screen.findByText("Can't open your vault");
+    screen.getByText("boom");
+    expect(screen.queryByText("Check for updates")).toBeNull();
   });
 
   it("create-new passes expect_existing=false; cancelling picks nothing", async () => {
