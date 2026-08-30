@@ -362,20 +362,10 @@ pub fn import_single_file(
     // 9. Insert trackpoints in batches
     db::trackpoints::insert_trackpoints(conn, &parsed.trackpoints).map_err(|e| e.to_string())?;
 
-    // 9a. Best-effort splits (running only) — computed from the stored track so
-    // cumulative distance / elapsed time match the rest of the app.
-    if matches!(sport.as_str(), "run" | "trail_run" | "treadmill") {
-        if let Ok(cols) = db::trackpoints::get_trackpoints_columnar(conn, &activity_id) {
-            let efforts = crate::import::best_effort::compute_best_efforts(
-                &cols.distance_m,
-                &cols.t,
-                activity.distance_m,
-            );
-            if !efforts.is_empty() {
-                let _ = db::best_efforts::set_best_efforts(conn, &activity_id, &efforts);
-            }
-        }
-    }
+    // 9a. Best-effort splits (running only) and the mean-max power curve —
+    // both computed from the stored track so cumulative distance / elapsed
+    // time match the rest of the app, sharing one columnar load.
+    analyze_stored_track(conn, &activity_id, sport.as_str(), activity.distance_m);
 
     // 9a². Segment efforts — match the fresh track against saved segments of
     // the same sport (every pass is an effort, hill repeats included).
@@ -427,6 +417,54 @@ pub fn import_single_file(
     db::raw_files::insert_raw_file(conn, &raw).map_err(|e| e.to_string())?;
 
     Ok(ImportOutcome::Imported)
+}
+
+/// Post-insert track analysis: running best-effort splits and the mean-max
+/// power curve, from the STORED track (cumulative distance / parsed elapsed
+/// seconds must match what the rest of the app reads). Deliberately
+/// non-fatal — an import must never die on analysis — and gated on the
+/// stored columns themselves, so both features see one source of truth.
+pub(crate) fn analyze_stored_track(
+    conn: &rusqlite::Connection,
+    activity_id: &str,
+    sport: &str,
+    recorded_distance: Option<f64>,
+) {
+    let wants_best_efforts = matches!(sport, "run" | "trail_run" | "treadmill");
+    // Cheap stored-side probe before the full columnar load (which computes
+    // haversine distances) — most imports are neither runs nor powered.
+    let has_power: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM trackpoint WHERE activity_id = ?1 AND power_w > 0)",
+            rusqlite::params![activity_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if !wants_best_efforts && !has_power {
+        return;
+    }
+    let cols = match db::trackpoints::get_trackpoints_columnar(conn, activity_id) {
+        Ok(cols) => cols,
+        Err(_) => return,
+    };
+
+    if wants_best_efforts {
+        let efforts = crate::import::best_effort::compute_best_efforts(
+            &cols.distance_m,
+            &cols.t,
+            recorded_distance,
+        );
+        if !efforts.is_empty() {
+            let _ = db::best_efforts::set_best_efforts(conn, activity_id, &efforts);
+        }
+    }
+
+    if has_power {
+        let curve = crate::import::power_curve::compute_power_curve(&cols.t, &cols.power_w);
+        if !curve.is_empty() {
+            let _ = db::power_curve::set_power_curve(conn, activity_id, &curve);
+        }
+    }
 }
 
 fn store_raw_file(
@@ -621,6 +659,84 @@ pub(crate) fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::models::trackpoint::TrackPoint;
+
+    fn full_tp(activity_id: &str, t: &str, lat: f64, power_w: Option<i32>) -> TrackPoint {
+        TrackPoint {
+            activity_id: activity_id.to_string(),
+            t: Some(t.to_string()),
+            lat: Some(lat),
+            lon: Some(37.62),
+            altitude_m: None, speed_mps: None, hr: None, cadence: None, power_w,
+            temperature_c: None, vertical_oscillation_mm: None,
+            stance_time_ms: None, stance_time_percent: None,
+            step_length_mm: None, grade_percent: None,
+            left_right_balance: None,
+            left_torque_effectiveness: None, right_torque_effectiveness: None,
+            left_pedal_smoothness: None, right_pedal_smoothness: None,
+        }
+    }
+
+    fn seeded_activity(conn: &rusqlite::Connection, id: &str, sport: &str, power: Option<i32>) {
+        let a = crate::models::activity::Activity {
+            id: id.to_string(),
+            start_time: "2025-06-01T08:00:00+00:00".to_string(),
+            sport_type: sport.to_string(),
+            distance_m: Some(6000.0),
+            ..Default::default()
+        };
+        crate::db::activities::insert_activity(conn, &a).unwrap();
+        // ~1 km per 0.009° latitude; 7 points → ~6 km, 5 min apart.
+        let tps: Vec<TrackPoint> = (0..7)
+            .map(|k| {
+                full_tp(
+                    id,
+                    &format!("2025-06-01T08:{:02}:00+00:00", k * 5),
+                    55.0 + 0.009 * k as f64,
+                    power,
+                )
+            })
+            .collect();
+        crate::db::trackpoints::insert_trackpoints(conn, &tps).unwrap();
+    }
+
+    fn best_effort_count(conn: &rusqlite::Connection, id: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM best_effort WHERE activity_id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    /// The analysis entry point drives BOTH features off the stored track:
+    /// a run without power keeps its splits (the refactor must not lose the
+    /// pre-power-curve behavior), a powered ride gets a curve and no splits,
+    /// and a powered run (Stryd) gets both.
+    #[test]
+    fn analyze_stored_track_branches_per_sport_and_power() {
+        let conn = crate::db::test_db();
+
+        seeded_activity(&conn, "run-plain", "run", None);
+        analyze_stored_track(&conn, "run-plain", "run", Some(6000.0));
+        assert!(best_effort_count(&conn, "run-plain") > 0, "run lost its splits");
+        assert!(crate::db::power_curve::get_power_curve(&conn, "run-plain")
+            .unwrap()
+            .is_empty());
+
+        seeded_activity(&conn, "ride-power", "ride", Some(250));
+        analyze_stored_track(&conn, "ride-power", "ride", Some(6000.0));
+        assert_eq!(best_effort_count(&conn, "ride-power"), 0, "ride must not get run splits");
+        assert!(!crate::db::power_curve::get_power_curve(&conn, "ride-power")
+            .unwrap()
+            .is_empty());
+
+        seeded_activity(&conn, "run-stryd", "run", Some(300));
+        analyze_stored_track(&conn, "run-stryd", "run", Some(6000.0));
+        assert!(best_effort_count(&conn, "run-stryd") > 0);
+        assert!(!crate::db::power_curve::get_power_curve(&conn, "run-stryd")
+            .unwrap()
+            .is_empty());
+    }
 
     /// A content-duplicate import (same workout from a second source, so a
     /// different hash) stores its raw file LINKED to the matched activity.

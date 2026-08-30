@@ -9,6 +9,7 @@ pub mod migrations;
 pub mod multisport_legs;
 pub mod photos;
 pub mod plugins;
+pub mod power_curve;
 pub mod raw_files;
 pub mod segment_efforts;
 pub mod segments;

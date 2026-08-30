@@ -200,6 +200,17 @@ pub fn get_activity_record_badges(
     db::activities::get_record_badges(&conn, &id).map_err(|e| e.to_string())
 }
 
+/// The activity's mean-max power curve plus its sport group's all-time
+/// envelope, in one fetch — the Power Curve panel always draws them together.
+#[tauri::command]
+pub fn get_power_curve(
+    id: String,
+    state: State<AppState>,
+) -> Result<crate::models::power_curve::PowerCurveData, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::power_curve::get_data(&conn, &id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_adjacent_activities(
     id: String,

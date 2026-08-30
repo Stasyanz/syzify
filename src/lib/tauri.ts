@@ -24,6 +24,7 @@ import type {
   LocationUpdateResult,
   Photo,
   AttachPhotosResult,
+  PowerCurveData,
   Segment,
   SegmentEffortRow,
   SegmentLeaderboardRow,
@@ -66,6 +67,10 @@ export const api = {
 
   getActivityRecordBadges: (id: string) =>
     invoke<RecordBadge[]>("get_activity_record_badges", { id }),
+
+  /** Mean-max power curve of the activity + the all-time envelope. */
+  getPowerCurve: (id: string) =>
+    invoke<PowerCurveData>("get_power_curve", { id }),
 
   updateActivity: (id: string, updates: ActivityUpdate) =>
     invoke<void>("update_activity", { id, updates }),

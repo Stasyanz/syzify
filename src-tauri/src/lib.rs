@@ -94,7 +94,58 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
         db::settings::set_setting(conn, SEGMENT_EFFORTS_FLAG, "1")
             .map_err(|e| format!("Failed to mark segment-efforts backfill done: {}", e))?;
     }
+
     Ok(())
+}
+
+/// One-time mean-max power-curve backfill. Unlike `run_startup_backfills`
+/// this walks every powered activity's full trackpoint stream, which on a
+/// large power-meter library takes real time — so it takes the DB lock per
+/// CHUNK instead of holding it throughout, letting commands interleave.
+/// Best-effort like the rest: any failure leaves the flag unset to retry
+/// next launch.
+fn run_power_curve_backfill(state: &AppState) {
+    const POWER_CURVE_FLAG: &str = "power_curve_backfilled_v1";
+    const CHUNK: usize = 25;
+
+    let ids = {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        match db::settings::get_setting(&conn, POWER_CURVE_FLAG) {
+            Ok(None) => {}
+            Ok(Some(_)) => return,
+            Err(e) => {
+                eprintln!("Failed to read settings for power-curve backfill: {}", e);
+                return;
+            }
+        }
+        match db::power_curve::powered_activity_ids(&conn) {
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!("Power-curve backfill failed to list activities: {}", e);
+                return;
+            }
+        }
+    };
+
+    for chunk in ids.chunks(CHUNK) {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if let Err(e) = db::power_curve::recompute_for(&conn, chunk) {
+            eprintln!("Power-curve backfill failed (will retry next launch): {}", e);
+            return;
+        }
+    }
+
+    if let Ok(conn) = state.db.lock() {
+        if let Err(e) = db::settings::set_setting(&conn, POWER_CURVE_FLAG, "1") {
+            eprintln!("Failed to mark power-curve backfill done: {}", e);
+        }
+    }
 }
 
 /// Open the plaintext vault database (database scope off).
@@ -187,6 +238,9 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
     let bf_handle = handle.clone();
     std::thread::spawn(move || {
         let state = bf_handle.state::<AppState>();
+        // Heavy per-activity work first, with per-chunk locking — the block
+        // below holds the lock for its whole run, so it must come after.
+        run_power_curve_backfill(&state);
         let conn = match state.db.lock() {
             Ok(c) => c,
             Err(_) => return,
@@ -408,6 +462,7 @@ pub fn run() {
             commands::activities::get_activity_locations,
             commands::activities::get_adjacent_activities,
             commands::activities::get_activity_record_badges,
+            commands::activities::get_power_curve,
             commands::activities::get_calendar_data,
             commands::activities::get_used_sport_types,
             commands::activities::get_activity_year_range,

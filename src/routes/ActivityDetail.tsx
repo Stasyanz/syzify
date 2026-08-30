@@ -19,6 +19,7 @@ import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
 import { SegmentEffortsPanel } from "../components/activity/SegmentEffortsPanel";
+import { PowerCurvePanel } from "../components/activity/PowerCurvePanel";
 import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
 import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
@@ -518,6 +519,10 @@ export function ActivityDetailPage() {
                   sport={activity.sport_type}
                 />
               )}
+
+              {/* Mean-max power — stored per full activity, so not in leg
+                  focus either. Renders nothing without power data. */}
+              {!focusedLeg && <PowerCurvePanel activityId={activity.id} />}
 
               <CyclingDynamicsPanel activity={activity} />
 

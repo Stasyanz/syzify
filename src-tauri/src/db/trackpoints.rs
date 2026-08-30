@@ -214,7 +214,7 @@ pub fn get_track_geometry(
 /// Trackpoint time → seconds. Accepts an ISO-8601 timestamp (what parsers
 /// store, e.g. "2025-02-07T18:55:09+03:00") returned as epoch seconds, or a
 /// bare numeric offset. Returns `None` for anything unparseable.
-fn parse_time_seconds(s: &str) -> Option<f64> {
+pub(crate) fn parse_time_seconds(s: &str) -> Option<f64> {
     if let Ok(v) = s.parse::<f64>() {
         return Some(v);
     }

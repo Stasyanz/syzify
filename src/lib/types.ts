@@ -700,6 +700,27 @@ export interface SegmentSummaryRow {
   best_elapsed_s: number | null;
 }
 
+// One mean-max point: best average power held for window_s seconds.
+export interface PowerCurvePoint {
+  window_s: number;
+  watts: number;
+}
+
+// One all-time-envelope point, attributed to the activity that set it.
+export interface PowerCurveEnvelopePoint {
+  window_s: number;
+  watts: number;
+  activity_id: string;
+  title: string | null;
+  start_time: string;
+}
+
+// The Power Curve panel's single fetch: this activity's curve + the envelope.
+export interface PowerCurveData {
+  points: PowerCurvePoint[];
+  envelope: PowerCurveEnvelopePoint[];
+}
+
 // One leaderboard row of a segment: an effort with its activity context.
 export interface SegmentLeaderboardRow {
   id: number;

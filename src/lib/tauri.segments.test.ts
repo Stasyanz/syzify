@@ -53,6 +53,11 @@ describe("update api wrapper", () => {
     expect(mocked).toHaveBeenCalledWith("check_for_updates");
   });
 
+  it("maps power curve to its command", async () => {
+    await api.getPowerCurve("act-1");
+    expect(mocked).toHaveBeenCalledWith("get_power_curve", { id: "act-1" });
+  });
+
   it("maps install to its command", async () => {
     await api.installUpdate();
     expect(mocked).toHaveBeenCalledWith("install_update");

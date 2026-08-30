@@ -3,6 +3,7 @@ pub mod datasource;
 pub mod dedup;
 pub mod geocoding;
 pub mod pipeline;
+pub mod power_curve;
 pub mod runkeeper;
 pub mod runkeeper_csv;
 pub mod segment_matching;

@@ -6,6 +6,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Power curve: activities with power data get a mean-max chart (best average
+  power from 1 second to 1 hour, log time axis) drawn over the all-time best
+  of the same kind of sport — running power never shadows cycling records.
+  Hovering shows which activity holds the record for a window; clicking it
+  opens that activity. Curves are computed on import, and existing
+  activities are filled in once on first launch.
+
 ### Changed
 - Share image: the 16:9 crop preset now matches the photo's orientation —
   vertical photos get a vertical frame right away, no manual rotation needed.
