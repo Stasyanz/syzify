@@ -47,6 +47,8 @@ export function MiniCalendar() {
   const sessions = days.reduce((s, d) => s + d.activity_count, 0);
   const monthDistance = toDistance(days.reduce((s, d) => s + d.total_distance_m, 0));
   const monthElevGain = toElevation(days.reduce((s, d) => s + d.total_elev_gain_m, 0));
+  // Same shape as the This Week Duration card: decimal hours + "h".
+  const monthHours = days.reduce((s, d) => s + d.total_duration_s, 0) / 3600;
   const activeDays = days.length;
 
   return (
@@ -145,6 +147,12 @@ export function MiniCalendar() {
                 <span>{distanceUnit()}</span>
               </div>
               <div className="l">Distance</div>
+            </div>
+            {/* No "h" suffix — the "Hours" label below already names the unit
+                (unlike Distance/Elev gain, whose labels don't carry km/m). */}
+            <div>
+              <div className="k">{monthHours.toFixed(1)}</div>
+              <div className="l">Hours</div>
             </div>
             {/* Hidden while zero: a flat-terrain (or elevation-less GPX)
                 month would otherwise pin a dead "0 m" row to the card. */}

@@ -54,6 +54,9 @@ describe("MiniCalendar month stats", () => {
     await waitFor(() => getByText("Elev gain"));
     // 375 + 839, metric units, thousands-separated like the other stats.
     getByText("1,214");
+    // Two 3600 s days → 2.0 decimal hours, the This Week Duration shape.
+    getByText("Hours");
+    getByText("2.0");
   });
 
   it("hides the row for a month with zero climbing", async () => {
