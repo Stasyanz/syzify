@@ -66,8 +66,12 @@ export function Segments() {
   return (
     <div className="flex flex-col h-full">
       <main className="flex-1 overflow-y-auto scroll-themed">
-        <div className="p-6 space-y-5">
-          <h2 className="!m-0 text-lg font-bold">Segments</h2>
+        {/* Tighter top than the stock p-6: a lone heading under the navbar
+            reads detached with the full 24px (#57). The heading's pb (padding,
+            not margin — margins collapse into space-y's) drops the list a bit
+            so the breathing room sits below the title, not above it. */}
+        <div className="px-6 pb-6 pt-3 space-y-5">
+          <h2 className="!m-0 pb-2 text-lg font-bold">Segments</h2>
 
           {isLoading ? (
             <p className="text-sm text-faint">Loading segments…</p>

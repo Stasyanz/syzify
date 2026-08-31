@@ -10,6 +10,7 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Dashboard: the This Month stats also show total training hours.
 
 ### Fixed
+- The Segments page heading no longer sits detached below the title bar.
 - The "Can't open your vault" screen now recognizes a vault last used by a
   newer version of Syzify: instead of a raw migration error it says what
   happened and offers to check for and install the update right there.
