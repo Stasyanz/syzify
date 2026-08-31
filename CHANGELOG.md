@@ -8,6 +8,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ### Added
 - Dashboard: the This Month stats also show total training hours.
+- Segments: the page header sticks to the top while the list scrolls, and a
+  search field filters segments by name.
 
 ### Fixed
 - The Segments page heading no longer sits detached below the title bar.

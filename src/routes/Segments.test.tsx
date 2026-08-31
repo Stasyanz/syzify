@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
 import type { SegmentLeaderboardRow, SegmentSummaryRow } from "../lib/types";
-import { Segments } from "./Segments";
+import { Segments, filterSegments } from "./Segments";
 
 vi.mock("../lib/tauri", () => ({
   api: {
@@ -73,6 +73,28 @@ async function renderPage() {
   await screen.findByText("Segments");
 }
 
+describe("filterSegments", () => {
+  const rows = [
+    summary({ id: "a", name: "Rock - Stream climb" }),
+    summary({ id: "b", name: "D400-Sapadere" }),
+    summary({ id: "c", name: "Siedra from Damlataş" }),
+  ];
+
+  it("matches case-insensitive substrings and trims the query", () => {
+    expect(filterSegments(rows, "sapa").map((s) => s.id)).toEqual(["b"]);
+    expect(filterSegments(rows, "  ROCK ").map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("empty query returns the list untouched", () => {
+    expect(filterSegments(rows, "")).toBe(rows);
+    expect(filterSegments(rows, "   ")).toBe(rows);
+  });
+
+  it("handles non-ASCII names", () => {
+    expect(filterSegments(rows, "damlataş").map((s) => s.id)).toEqual(["c"]);
+  });
+});
+
 describe("Segments page", () => {
   it("lists segments with distance, grade, effort count and best time", async () => {
     await renderPage();
@@ -80,6 +102,34 @@ describe("Segments page", () => {
     expect(screen.getByText("3.15 km")).toBeTruthy();
     expect(screen.getByText("+6.9%")).toBeTruthy();
     expect(screen.getByText("23:26")).toBeTruthy();
+  });
+
+  it("search filters the list and clears back", async () => {
+    mocked.listSegments.mockResolvedValue([
+      summary({ id: "a", name: "Rock - Stream climb" }),
+      summary({ id: "b", name: "D400-Sapadere" }),
+    ]);
+    await renderPage();
+    await screen.findByText("Rock - Stream climb");
+
+    fireEvent.change(screen.getByLabelText("Search segments"), {
+      target: { value: "sapadere" },
+    });
+    expect(screen.queryByText("Rock - Stream climb")).toBeNull();
+    screen.getByText("D400-Sapadere");
+
+    fireEvent.click(screen.getByTitle("Clear search"));
+    await screen.findByText("Rock - Stream climb");
+  });
+
+  it("a query matching nothing explains itself instead of a bare table", async () => {
+    await renderPage();
+    await screen.findByText("Siedra from Damlataş");
+    fireEvent.change(screen.getByLabelText("Search segments"), {
+      target: { value: "everest" },
+    });
+    screen.getByText("No segments match “everest”.");
+    expect(screen.queryByText("Siedra from Damlataş")).toBeNull();
   });
 
   it("shows the how-to empty state without segments", async () => {

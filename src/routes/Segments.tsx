@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Pencil, Trash2, Trophy, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Pencil, Search, Trash2, Trophy, X } from "lucide-react";
 import { api } from "../lib/tauri";
 import { MAX_SEGMENT_NAME_LENGTH, type SegmentSummaryRow } from "../lib/types";
 import {
@@ -14,12 +14,25 @@ import {
 import { SportGlyph } from "../components/brand/SportIcon";
 import { confirmDialog } from "../stores/confirmStore";
 
+/** Case-insensitive substring filter over segment names. Client-side by
+ * design: the list is user-curated and small, a backend query would only
+ * add a round trip. */
+export function filterSegments(
+  segments: SegmentSummaryRow[],
+  query: string,
+): SegmentSummaryRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return segments;
+  return segments.filter((s) => s.name.toLowerCase().includes(q));
+}
+
 /** The /segments page: every saved segment with rename/delete and an
  * expandable per-segment leaderboard (best effort first, click → activity). */
 export function Segments() {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
+  const [query, setQuery] = useState("");
 
   const { data: segments, isLoading } = useQuery({
     queryKey: ["segments"],
@@ -66,13 +79,36 @@ export function Segments() {
   return (
     <div className="flex flex-col h-full">
       <main className="flex-1 overflow-y-auto scroll-themed">
-        {/* Tighter top than the stock p-6: a lone heading under the navbar
-            reads detached with the full 24px (#57). The heading's pb (padding,
-            not margin — margins collapse into space-y's) drops the list a bit
-            so the breathing room sits below the title, not above it. */}
-        <div className="px-6 pb-6 pt-3 space-y-5">
-          <h2 className="!m-0 pb-2 text-lg font-bold">Segments</h2>
-
+        {/* Sticky header bar (#59): title + search stay put while the list
+            scrolls underneath. Needs the opaque page background — an
+            unpainted sticky element would show rows through itself. Spacing
+            keeps the #57 rhythm: 12px above the title, more room below. */}
+        {/* 1fr|auto|1fr grid: the search sits on the bar's true center line
+            regardless of the title's width (flex justify-between pinned it
+            to the right edge). */}
+        <div className="sticky top-0 z-10 bg-bg grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-6 pt-3 pb-2">
+          <h2 className="!m-0 text-lg font-bold">Segments</h2>
+          <div className="fsearch w-64">
+            <Search size={15} />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search segments…"
+              aria-label="Search segments"
+            />
+            {query && (
+              <span
+                className="fsearch-x"
+                title="Clear search"
+                onClick={() => setQuery("")}
+              >
+                <X size={14} />
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="px-6 pb-6 pt-1">
           {isLoading ? (
             <p className="text-sm text-faint">Loading segments…</p>
           ) : !segments || segments.length === 0 ? (
@@ -82,6 +118,12 @@ export function Segments() {
                 an activity, then right-click the selection and choose Save
                 segment — every past and future workout over the same route
                 will be timed against it.
+              </p>
+            </div>
+          ) : filterSegments(segments, query).length === 0 ? (
+            <div className="dash-card">
+              <p className="text-sm text-muted">
+                No segments match “{query.trim()}”.
               </p>
             </div>
           ) : (
@@ -101,7 +143,7 @@ export function Segments() {
                   </tr>
                 </thead>
                 <tbody>
-                  {segments.map((s) => (
+                  {filterSegments(segments, query).map((s) => (
                     <SegmentRows
                       key={s.id}
                       segment={s}
