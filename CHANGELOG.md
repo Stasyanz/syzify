@@ -10,6 +10,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Dashboard: the This Month stats also show total training hours.
 - Segments: the page header sticks to the top while the list scrolls, and a
   search field filters segments by name.
+- Dashboard: arrow keys page the training calendar's month, same as in the
+  Library's calendar view.
 - Segments: power where a ride carried a power meter — each effort shows its
   average watts (segment leaderboard and the activity's Segments panel), and
   the segment list gets a Power column with the best effort-average.

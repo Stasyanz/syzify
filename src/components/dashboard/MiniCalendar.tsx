@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -38,6 +38,20 @@ export function MiniCalendar() {
     setMonth(m);
     setYear(y);
   };
+
+  // Arrow keys page the month, same listener as the Library's calendar view
+  // (typing targets excluded so the keys never hijack a form field).
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowLeft") shift(-1);
+      if (e.key === "ArrowRight") shift(1);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, year]);
 
   const monthLabel = new Date(year, month - 1).toLocaleString("en-US", {
     month: "long",

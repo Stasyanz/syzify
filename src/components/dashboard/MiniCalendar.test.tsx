@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaySummary } from "../../lib/types";
@@ -42,6 +42,38 @@ function renderCal() {
 }
 
 afterEach(cleanup);
+
+describe("MiniCalendar keyboard paging", () => {
+  it("arrow keys flip the month like the Library calendar", async () => {
+    vi.mocked(api.getCalendarData).mockResolvedValue([]);
+    const { getByText } = renderCal();
+    const label = (d: Date) =>
+      d.toLocaleString("en-US", { month: "long", year: "numeric" });
+    const now = new Date();
+    await waitFor(() => getByText(label(now)));
+
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    getByText(label(new Date(now.getFullYear(), now.getMonth() + 1)));
+
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    getByText(label(new Date(now.getFullYear(), now.getMonth() - 1)));
+  });
+
+  it("ignores arrows while a form field is focused", async () => {
+    vi.mocked(api.getCalendarData).mockResolvedValue([]);
+    const { getByText } = renderCal();
+    const label = new Date().toLocaleString("en-US", { month: "long", year: "numeric" });
+    await waitFor(() => getByText(label));
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+    getByText(label); // month unchanged
+    input.remove();
+  });
+});
 
 describe("MiniCalendar month stats", () => {
   it("sums elevation gain across the month's days", async () => {
