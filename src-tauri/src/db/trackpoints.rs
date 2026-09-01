@@ -211,6 +211,16 @@ pub fn get_track_geometry(
     Ok(geo)
 }
 
+/// The activity's power column alone, in the SAME row order as
+/// [`get_track_geometry`] / [`get_trackpoints_columnar`] — segment efforts
+/// address it by index, so the ORDER BY must never diverge.
+pub fn get_power_column(conn: &Connection, activity_id: &str) -> Result<Vec<Option<i32>>> {
+    let mut stmt = conn
+        .prepare("SELECT power_w FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map(params![activity_id], |row| row.get::<_, Option<i32>>(0))?;
+    rows.collect()
+}
+
 /// Trackpoint time → seconds. Accepts an ISO-8601 timestamp (what parsers
 /// store, e.g. "2025-02-07T18:55:09+03:00") returned as epoch seconds, or a
 /// bare numeric offset. Returns `None` for anything unparseable.

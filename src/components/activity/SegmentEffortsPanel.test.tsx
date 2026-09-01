@@ -26,6 +26,7 @@ function effort(over: Partial<SegmentEffortRow> = {}): SegmentEffortRow {
     end_idx: 1269,
     distance_m: 3145.1,
     elapsed_s: 1511,
+    avg_power_w: null,
     avg_grade_pct: 6.94,
     rank: 2,
     effort_count: 2,
@@ -109,6 +110,21 @@ describe("SegmentEffortsPanel", () => {
     useActivityStore.setState({ selectedRange: [800, 1200] });
     const row = screen.getByText("Siedra from Damlataş").closest("tr")!;
     expect(row.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("adds a Power column only when some pass carries watts", async () => {
+    await renderPanel([
+      effort({ avg_power_w: 233.6 }),
+      effort({ id: 2, start_idx: 30, end_idx: 40 }),
+    ]);
+    expect(screen.getByText("Power")).toBeTruthy();
+    screen.getByText("234 W");
+    screen.getByText("--");
+  });
+
+  it("keeps the meterless layout without any power data", async () => {
+    await renderPanel([effort(), effort({ id: 2, start_idx: 30, end_idx: 40 })]);
+    expect(screen.queryByText("Power")).toBeNull();
   });
 
   it("shows untimed efforts without rank or pace", async () => {

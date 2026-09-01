@@ -276,7 +276,10 @@ pub fn list_segments(conn: &Connection) -> Result<Vec<crate::models::segment::Se
                 s.created_at,
                 (SELECT COUNT(*) FROM segment_effort e
                  WHERE e.segment_id = s.id AND e.elapsed_s IS NOT NULL),
-                (SELECT MIN(e.elapsed_s) FROM segment_effort e WHERE e.segment_id = s.id)
+                (SELECT MIN(e.elapsed_s) FROM segment_effort e WHERE e.segment_id = s.id),
+                (SELECT e.avg_power_w FROM segment_effort e
+                 WHERE e.segment_id = s.id AND e.elapsed_s IS NOT NULL
+                 ORDER BY e.elapsed_s ASC, e.avg_power_w DESC LIMIT 1)
          FROM segment s
          ORDER BY s.created_at DESC",
     )?;
@@ -291,6 +294,7 @@ pub fn list_segments(conn: &Connection) -> Result<Vec<crate::models::segment::Se
             created_at: r.get(6)?,
             effort_count: r.get(7)?,
             best_elapsed_s: r.get(8)?,
+            best_effort_power_w: r.get(9)?,
         })
     })?;
     rows.collect()

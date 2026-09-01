@@ -78,6 +78,11 @@ export function formatHR(hr: number | null): string {
   return `${Math.round(hr)} bpm`;
 }
 
+export function formatPower(watts: number | null): string {
+  if (watts == null) return "--";
+  return `${Math.round(watts)} W`;
+}
+
 /** Signed grade percent, one decimal — "+8.3%", "-2.0%", "0.0%". One
  * decimal is all the smoothing window supports. */
 export function formatGrade(pct: number): string {

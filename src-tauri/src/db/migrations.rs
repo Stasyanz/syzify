@@ -35,6 +35,7 @@ fn migration_list() -> Vec<M<'static>> {
         M::up(include_str!("../../migrations/026_segments.sql")),
         M::up(include_str!("../../migrations/027_segment_efforts.sql")),
         M::up(include_str!("../../migrations/028_power_curve.sql")),
+        M::up(include_str!("../../migrations/029_segment_effort_power.sql")),
     ]
 }
 

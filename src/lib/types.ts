@@ -699,6 +699,7 @@ export interface SegmentSummaryRow {
   created_at: string;
   effort_count: number;
   best_elapsed_s: number | null;
+  best_effort_power_w: number | null; // avg W of the fastest effort (the "Best" pass)
 }
 
 // One mean-max point: best average power held for window_s seconds.
@@ -730,6 +731,7 @@ export interface SegmentLeaderboardRow {
   start_time: string;
   distance_m: number;
   elapsed_s: number | null;
+  avg_power_w: number | null; // mean W over the pass; null without a meter
   rank: number | null;
 }
 
@@ -743,6 +745,7 @@ export interface SegmentEffortRow {
   end_idx: number;
   distance_m: number;
   elapsed_s: number | null;
+  avg_power_w: number | null; // mean W over the pass; null without a meter
   avg_grade_pct: number | null;
   rank: number | null;
   effort_count: number;

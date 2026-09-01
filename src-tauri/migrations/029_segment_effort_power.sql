@@ -1,0 +1,1 @@
+ALTER TABLE segment_effort ADD COLUMN avg_power_w REAL;

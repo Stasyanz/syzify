@@ -34,6 +34,7 @@ function summary(over: Partial<SegmentSummaryRow> = {}): SegmentSummaryRow {
     created_at: "2026-08-24T10:00:00Z",
     effort_count: 2,
     best_elapsed_s: 1406,
+    best_effort_power_w: null,
     ...over,
   };
 }
@@ -46,6 +47,7 @@ function lb(over: Partial<SegmentLeaderboardRow> = {}): SegmentLeaderboardRow {
     start_time: "2024-09-19T07:59:22+03:00",
     distance_m: 3111.9,
     elapsed_s: 1406,
+    avg_power_w: null,
     rank: 1,
     ...over,
   };
@@ -243,6 +245,74 @@ describe("Segments page", () => {
     fireEvent.click(await screen.findByText("Siedra from Damlataş"));
     fireEvent.click(await screen.findByText("Siedra"));
     expect(await screen.findByText("ACTIVITY PAGE")).toBeTruthy();
+  });
+
+  it("shows the Power column when a segment has watts, dash for meterless", async () => {
+    mocked.listSegments.mockResolvedValue([summary({ best_effort_power_w: 245.4 })]);
+    mocked.getSegmentEfforts.mockResolvedValue([
+      lb({ avg_power_w: 245.4 }),
+      lb({ id: 2, activity_id: "act-2", elapsed_s: 1511, rank: 2 }),
+    ]);
+    await renderPage();
+    await screen.findByText("Siedra from Damlataş");
+    // Summary row: the segment's best effort-average power.
+    screen.getByText("Power");
+    screen.getByText("245 W");
+    fireEvent.click(screen.getByText("Siedra from Damlataş"));
+    // Leaderboard: the powered pass repeats the value, the meterless dashes.
+    // findAll resolves at ≥1 match (the summary cell) — wait for both.
+    await waitFor(() => expect(screen.getAllByText("245 W")).toHaveLength(2));
+    expect(screen.getByText("--")).toBeTruthy();
+  });
+
+  it("a fully meterless library has no Power column at all", async () => {
+    mocked.getSegmentEfforts.mockResolvedValue([lb(), lb({ id: 2, rank: 2 })]);
+    await renderPage();
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    await screen.findByText("#1");
+    expect(screen.queryByText("Power")).toBeNull();
+    expect(screen.queryByText(/\d+ W$/)).toBeNull();
+  });
+
+  it("every row spans the same column count in both power modes", async () => {
+    // Mutation guard for the table-fixed layout (#41/#42): a dropped or extra
+    // <td> shifts every value one column over without failing a getByText.
+    const rowWidths = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll("tr")).map((tr) =>
+        Array.from(tr.querySelectorAll("th, td")).reduce(
+          (sum, cell) => sum + (cell as HTMLTableCellElement).colSpan,
+          0,
+        ),
+      );
+
+    // Powered mode: 8 columns everywhere.
+    mocked.listSegments.mockResolvedValue([summary({ best_effort_power_w: 245.4 })]);
+    mocked.getSegmentEfforts.mockResolvedValue([lb({ avg_power_w: 245.4 }), lb({ id: 2, rank: 2 })]);
+    const first = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <Segments />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    await screen.findByText("#1");
+    expect(new Set(rowWidths(first.container))).toEqual(new Set([8]));
+    cleanup();
+
+    // Meterless mode: 7 columns everywhere.
+    mocked.listSegments.mockResolvedValue([summary()]);
+    mocked.getSegmentEfforts.mockResolvedValue([lb(), lb({ id: 2, rank: 2 })]);
+    const second = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <Segments />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    await screen.findByText("#1");
+    expect(new Set(rowWidths(second.container))).toEqual(new Set([7]));
   });
 
   it("expands a row into the leaderboard, best first with a trophy", async () => {

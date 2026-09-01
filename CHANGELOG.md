@@ -10,6 +10,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Dashboard: the This Month stats also show total training hours.
 - Segments: the page header sticks to the top while the list scrolls, and a
   search field filters segments by name.
+- Segments: power where a ride carried a power meter — each effort shows its
+  average watts (segment leaderboard and the activity's Segments panel), and
+  the segment list gets a Power column with the best effort-average.
+  Existing efforts are filled in once on first launch.
 
 ### Fixed
 - The Segments page heading no longer sits detached below the title bar.

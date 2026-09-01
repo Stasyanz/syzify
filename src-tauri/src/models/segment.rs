@@ -76,6 +76,10 @@ pub struct SegmentSummaryRow {
     /// Timed efforts only — what the leaderboard ranks.
     pub effort_count: i64,
     pub best_elapsed_s: Option<f64>,
+    /// Average power of the FASTEST timed effort — the same pass the "Best"
+    /// time belongs to, so the two columns describe one ride. NULL when that
+    /// pass carried no meter (or no timed efforts exist).
+    pub best_effort_power_w: Option<f64>,
 }
 
 /// One leaderboard row of a segment: an effort with its activity context.
@@ -88,6 +92,8 @@ pub struct SegmentLeaderboardRow {
     pub start_time: String,
     pub distance_m: f64,
     pub elapsed_s: Option<f64>,
+    /// Mean power over the pass (zeros included); NULL without a power meter.
+    pub avg_power_w: Option<f64>,
     /// 1-based competition rank among timed efforts; NULL if untimed.
     pub rank: Option<i64>,
 }
@@ -107,6 +113,8 @@ pub struct SegmentEffortRow {
     pub distance_m: f64,
     /// Wall-clock seconds between entry and exit; NULL for timeless tracks.
     pub elapsed_s: Option<f64>,
+    /// Mean power over the pass (zeros included); NULL without a power meter.
+    pub avg_power_w: Option<f64>,
     /// The segment's average grade (context for the row).
     pub avg_grade_pct: Option<f64>,
     /// 1-based standing among the segment's timed efforts; NULL if untimed.

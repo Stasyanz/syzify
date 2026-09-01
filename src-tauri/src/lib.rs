@@ -95,6 +95,19 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to mark segment-efforts backfill done: {}", e))?;
     }
 
+    // Average power for segment efforts recorded before the avg_power_w
+    // column existed. Touches only powered activities that have efforts —
+    // a tiny intersection, safe to run under the held lock.
+    const EFFORT_POWER_FLAG: &str = "segment_effort_power_backfilled_v2";
+    if db::settings::get_setting(conn, EFFORT_POWER_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        db::segment_efforts::backfill_effort_power(conn)
+            .map_err(|e| format!("Failed to backfill effort power: {}", e))?;
+        db::settings::set_setting(conn, EFFORT_POWER_FLAG, "1")
+            .map_err(|e| format!("Failed to mark effort-power backfill done: {}", e))?;
+    }
     Ok(())
 }
 

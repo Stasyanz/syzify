@@ -10,6 +10,7 @@ import {
   formatDuration,
   formatGrade,
   formatPaceOrSpeed,
+  formatPower,
 } from "../lib/format";
 import { SportGlyph } from "../components/brand/SportIcon";
 import { confirmDialog } from "../stores/confirmStore";
@@ -43,6 +44,8 @@ export function Segments() {
     qc.invalidateQueries({ queryKey: ["segments"] });
     // Activity pages show segment names in their efforts panel.
     qc.invalidateQueries({ queryKey: ["segment-efforts"] });
+    // Expanded leaderboards cache under their own key prefix.
+    qc.invalidateQueries({ queryKey: ["segment-leaderboard"] });
   };
 
   const rename = useMutation({
@@ -75,6 +78,10 @@ export function Segments() {
     if (!name) return;
     rename.mutate({ id: editing.id, name });
   };
+
+  // One switch for the whole table (segment rows AND expanded leaderboards):
+  // per-row power cells would shift the table-fixed grid (#41/#42 lesson).
+  const showPower = (segments ?? []).some((s) => s.best_effort_power_w != null);
 
   return (
     <div className="flex flex-col h-full">
@@ -138,6 +145,9 @@ export function Segments() {
                     <th className="font-semibold pb-2 text-right w-24">Distance</th>
                     <th className="font-semibold pb-2 text-right w-20">Grade</th>
                     <th className="font-semibold pb-2 text-right w-20">Efforts</th>
+                    {showPower && (
+                      <th className="font-semibold pb-2 text-right w-20">Power</th>
+                    )}
                     <th className="font-semibold pb-2 text-right w-20">Best</th>
                     <th className="w-16 pb-2" aria-label="Actions" />
                   </tr>
@@ -147,6 +157,7 @@ export function Segments() {
                     <SegmentRows
                       key={s.id}
                       segment={s}
+                      showPower={showPower}
                       expanded={expanded === s.id}
                       onToggle={() => setExpanded(expanded === s.id ? null : s.id)}
                       editing={editing?.id === s.id ? editing.draft : null}
@@ -172,6 +183,7 @@ export function Segments() {
 
 function SegmentRows({
   segment: s,
+  showPower,
   expanded,
   onToggle,
   editing,
@@ -183,6 +195,8 @@ function SegmentRows({
   renameError,
 }: {
   segment: SegmentSummaryRow;
+  /** The whole table shows a Power column (any segment has a powered pass). */
+  showPower: boolean;
   expanded: boolean;
   onToggle: () => void;
   /** Non-null while this row's name is being edited (the draft value). */
@@ -251,6 +265,11 @@ function SegmentRows({
           {s.avg_grade_pct != null ? formatGrade(s.avg_grade_pct) : "--"}
         </td>
         <td className="py-2 text-right tabular-nums">{s.effort_count}</td>
+        {showPower && (
+          <td className="py-2 text-right tabular-nums">
+            {formatPower(s.best_effort_power_w)}
+          </td>
+        )}
         <td className="py-2 text-right tabular-nums">{formatDuration(s.best_elapsed_s)}</td>
         <td className="py-2 text-right">
           <span className="inline-flex gap-2" onClick={(e) => e.stopPropagation()}>
@@ -271,12 +290,18 @@ function SegmentRows({
           </span>
         </td>
       </tr>
-      {expanded && <LeaderboardRows segment={s} />}
+      {expanded && <LeaderboardRows segment={s} showPower={showPower} />}
     </>
   );
 }
 
-function LeaderboardRows({ segment }: { segment: SegmentSummaryRow }) {
+function LeaderboardRows({
+  segment,
+  showPower,
+}: {
+  segment: SegmentSummaryRow;
+  showPower: boolean;
+}) {
   const navigate = useNavigate();
   const { data: efforts, isLoading } = useQuery({
     queryKey: ["segment-leaderboard", segment.id],
@@ -286,7 +311,7 @@ function LeaderboardRows({ segment }: { segment: SegmentSummaryRow }) {
   if (isLoading) {
     return (
       <tr>
-        <td colSpan={7} className="py-2 pl-8 text-xs text-faint">
+        <td colSpan={showPower ? 8 : 7} className="py-2 pl-8 text-xs text-faint">
           Loading efforts…
         </td>
       </tr>
@@ -295,7 +320,7 @@ function LeaderboardRows({ segment }: { segment: SegmentSummaryRow }) {
   if (!efforts || efforts.length === 0) {
     return (
       <tr>
-        <td colSpan={7} className="py-2 pl-8 text-xs text-faint">
+        <td colSpan={showPower ? 8 : 7} className="py-2 pl-8 text-xs text-faint">
           No efforts yet — ride or run this route and import the workout.
         </td>
       </tr>
@@ -327,7 +352,16 @@ function LeaderboardRows({ segment }: { segment: SegmentSummaryRow }) {
               ? formatPaceOrSpeed(segment.sport, e.distance_m / e.elapsed_s)
               : "--"}
           </td>
-          <td className="py-1.5 text-right tabular-nums" colSpan={2}>
+          {showPower && (
+            <>
+              {/* Empty slot under Efforts — rank already lives by the name. */}
+              <td />
+              <td className="py-1.5 text-right tabular-nums text-faint">
+                {formatPower(e.avg_power_w)}
+              </td>
+            </>
+          )}
+          <td className="py-1.5 text-right tabular-nums" colSpan={showPower ? 1 : 2}>
             {formatDuration(e.elapsed_s)}
           </td>
           <td />

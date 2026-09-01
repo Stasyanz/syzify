@@ -7,6 +7,7 @@ import {
   formatDuration,
   formatGrade,
   formatPaceOrSpeed,
+  formatPower,
   paceOrSpeedLabel,
 } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
@@ -45,6 +46,10 @@ export function SegmentEffortsPanel({
 
   if (!efforts || efforts.length === 0) return null;
 
+  // All-or-nothing: the column only exists when some pass has power, so
+  // meterless libraries keep today's layout.
+  const hasPower = efforts.some((e) => e.avg_power_w != null);
+
   const isActive = (e: SegmentEffortRow) =>
     selectedRange != null &&
     selectedRange[0] === e.start_idx &&
@@ -59,6 +64,7 @@ export function SegmentEffortsPanel({
             <tr className="text-faint text-xs uppercase tracking-wide">
               <th className="font-semibold pb-2 text-left">Segment</th>
               <th className="font-semibold pb-2 text-right">Time</th>
+              {hasPower && <th className="font-semibold pb-2 text-right">Power</th>}
               <th className="font-semibold pb-2 text-right">{paceOrSpeedLabel(sport)}</th>
               <th className="font-semibold pb-2 text-right">Distance</th>
               <th className="font-semibold pb-2 text-right">Grade</th>
@@ -90,6 +96,11 @@ export function SegmentEffortsPanel({
                 <td className="py-1.5 text-right tabular-nums">
                   {formatDuration(e.elapsed_s)}
                 </td>
+                {hasPower && (
+                  <td className="py-1.5 text-right tabular-nums">
+                    {formatPower(e.avg_power_w)}
+                  </td>
+                )}
                 <td className="py-1.5 text-right tabular-nums">
                   {formatPaceOrSpeed(sport, effortSpeedMps(e))}
                 </td>

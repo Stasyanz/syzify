@@ -15,9 +15,40 @@ struct NewEffort {
     distance_m: f64,
     start_time_epoch_s: Option<f64>,
     elapsed_s: Option<f64>,
+    avg_power_w: Option<f64>,
 }
 
-fn to_new_efforts(matches: &[EffortMatch], t: &[Option<f64>]) -> Vec<NewEffort> {
+/// Mean power over the effort's trackpoint range, on the SAME 1 Hz elapsed
+/// grid as the power curve (`resample_1s`: values held across smart-recording
+/// gaps up to 10 s, longer silences count as 0 W) — one averaging basis for
+/// the whole app, and it stays consistent with the effort's elapsed_s when a
+/// pause falls inside the pass. None when the range carries no power at all
+/// (meterless rides render "--", never a fake 0 W) and for out-of-range
+/// indices — a clamp would turn a desynced index into a plausible number.
+fn avg_power(
+    t: &[Option<f64>],
+    power_w: &[Option<i32>],
+    start_idx: usize,
+    end_idx: usize,
+) -> Option<f64> {
+    if start_idx > end_idx || end_idx >= power_w.len() || end_idx >= t.len() {
+        return None;
+    }
+    let series = crate::import::power_curve::resample_1s(
+        &t[start_idx..=end_idx],
+        &power_w[start_idx..=end_idx],
+    );
+    if series.is_empty() {
+        return None;
+    }
+    Some(series.iter().sum::<f64>() / series.len() as f64)
+}
+
+fn to_new_efforts(
+    matches: &[EffortMatch],
+    t: &[Option<f64>],
+    power_w: &[Option<i32>],
+) -> Vec<NewEffort> {
     matches
         .iter()
         .map(|m| {
@@ -33,6 +64,7 @@ fn to_new_efforts(matches: &[EffortMatch], t: &[Option<f64>]) -> Vec<NewEffort> 
                 distance_m: m.distance_m,
                 start_time_epoch_s: t0,
                 elapsed_s,
+                avg_power_w: avg_power(t, power_w, m.start_idx, m.end_idx),
             }
         })
         .collect()
@@ -55,8 +87,8 @@ fn set_efforts(
     {
         let mut stmt = tx.prepare(
             "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx,
-                 start_time_epoch_s, elapsed_s, distance_m)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 start_time_epoch_s, elapsed_s, distance_m, avg_power_w)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for e in efforts {
             stmt.execute(params![
@@ -67,6 +99,7 @@ fn set_efforts(
                 e.start_time_epoch_s,
                 e.elapsed_s,
                 e.distance_m,
+                e.avg_power_w,
             ])?;
         }
     }
@@ -95,11 +128,17 @@ fn match_geometry_against_segment(
     segment_id: &str,
     activity_id: &str,
     geo: &TrackGeometry,
+    power_w: &[Option<i32>],
 ) -> Result<usize> {
     let (slat, slon, scum) = segment_polyline(conn, segment_id)?;
     let matches = find_efforts(&slat, &slon, &scum, &geo.lat, &geo.lon);
     let n = matches.len();
-    set_efforts(conn, segment_id, activity_id, &to_new_efforts(&matches, &geo.t))?;
+    set_efforts(
+        conn,
+        segment_id,
+        activity_id,
+        &to_new_efforts(&matches, &geo.t, power_w),
+    )?;
     Ok(n)
 }
 
@@ -139,6 +178,11 @@ pub fn match_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
         .collect::<Result<_>>()?;
+    if segs.is_empty() {
+        return Ok(0);
+    }
+    // Loaded only once segments of this sport exist — most imports have none.
+    let power_w = crate::db::trackpoints::get_power_column(conn, activity_id)?;
     let mut n = 0;
     for (sid, min_lat, max_lat, min_lon, max_lon) in &segs {
         let lat_apart = max_lat + BBOX_PAD_DEG < tb.0 || min_lat - BBOX_PAD_DEG > tb.1;
@@ -156,7 +200,7 @@ pub fn match_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
             )?;
             continue;
         }
-        n += match_geometry_against_segment(conn, sid, activity_id, &geo)?;
+        n += match_geometry_against_segment(conn, sid, activity_id, &geo, &power_w)?;
     }
     Ok(n)
 }
@@ -188,7 +232,8 @@ pub fn match_pair(conn: &Connection, segment_id: &str, activity_id: &str) -> Res
     if geo.lat.is_empty() {
         return Ok(0);
     }
-    match_geometry_against_segment(conn, segment_id, activity_id, &geo)
+    let power_w = crate::db::trackpoints::get_power_column(conn, activity_id)?;
+    match_geometry_against_segment(conn, segment_id, activity_id, &geo, &power_w)
 }
 
 /// Match one segment against every activity of its sport, in one sitting.
@@ -250,6 +295,7 @@ pub fn efforts_for_segment(
 ) -> Result<Vec<crate::models::segment::SegmentLeaderboardRow>> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.activity_id, a.title, a.start_time, e.distance_m, e.elapsed_s,
+                e.avg_power_w,
                 CASE WHEN e.elapsed_s IS NULL THEN NULL ELSE
                     (SELECT COUNT(*) + 1 FROM segment_effort b
                      WHERE b.segment_id = e.segment_id
@@ -268,7 +314,8 @@ pub fn efforts_for_segment(
             start_time: r.get(3)?,
             distance_m: r.get(4)?,
             elapsed_s: r.get(5)?,
-            rank: r.get(6)?,
+            avg_power_w: r.get(6)?,
+            rank: r.get(7)?,
         })
     })?;
     rows.collect()
@@ -280,7 +327,7 @@ pub fn efforts_for_segment(
 pub fn efforts_for_activity(conn: &Connection, activity_id: &str) -> Result<Vec<SegmentEffortRow>> {
     let mut stmt = conn.prepare(
         "SELECT se.id, se.segment_id, s.name, se.start_idx, se.end_idx,
-                se.distance_m, se.elapsed_s, s.avg_grade_pct,
+                se.distance_m, se.elapsed_s, se.avg_power_w, s.avg_grade_pct,
                 CASE WHEN se.elapsed_s IS NULL THEN NULL ELSE
                     (SELECT COUNT(*) + 1 FROM segment_effort b
                      WHERE b.segment_id = se.segment_id
@@ -302,12 +349,83 @@ pub fn efforts_for_activity(conn: &Connection, activity_id: &str) -> Result<Vec<
             end_idx: r.get(4)?,
             distance_m: r.get(5)?,
             elapsed_s: r.get(6)?,
-            avg_grade_pct: r.get(7)?,
-            rank: r.get(8)?,
-            effort_count: r.get(9)?,
+            avg_power_w: r.get(7)?,
+            avg_grade_pct: r.get(8)?,
+            rank: r.get(9)?,
+            effort_count: r.get(10)?,
         })
     })?;
     rows.collect()
+}
+
+/// One-time backfill: RECOMPUTE avg_power_w for every effort of every
+/// powered activity (not just NULL rows — a basis change must be able to
+/// overwrite old numbers under a fresh flag). By the efforts' own stored
+/// indices, no rematching. `power_w IS NOT NULL` mirrors the matcher: an
+/// all-zero recording is a real meter reading 0 W, not "meterless". Only
+/// activities that BOTH have efforts and carry power are touched, so the
+/// scan is tiny; one transaction, and a broken activity is logged and
+/// skipped, never fatal for the rest (the sibling backfills' contract).
+pub fn backfill_effort_power(conn: &Connection) -> Result<usize> {
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT e.activity_id FROM segment_effort e
+             WHERE EXISTS (SELECT 1 FROM trackpoint t
+                           WHERE t.activity_id = e.activity_id
+                             AND t.power_w IS NOT NULL)",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_>>()?
+    };
+    let tx = conn.unchecked_transaction()?;
+    let mut n = 0usize;
+    for aid in &ids {
+        let filled = backfill_one_activity(&tx, aid);
+        match filled {
+            Ok(k) => n += k,
+            Err(e) => eprintln!("Effort-power backfill: skipping activity {aid}: {e}"),
+        }
+    }
+    tx.commit()?;
+    Ok(n)
+}
+
+fn backfill_one_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
+    let mut t: Vec<Option<f64>> = Vec::new();
+    let mut power_w: Vec<Option<i32>> = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT t, power_w FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![activity_id], |r| {
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<i32>>(1)?))
+        })?;
+        for row in rows {
+            let (ts, p) = row?;
+            t.push(ts.as_deref().and_then(crate::db::trackpoints::parse_time_seconds));
+            power_w.push(p);
+        }
+    }
+    let efforts: Vec<(i64, i64, i64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, start_idx, end_idx FROM segment_effort WHERE activity_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![activity_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+        rows.collect::<Result<_>>()?
+    };
+    let mut n = 0usize;
+    for (id, start_idx, end_idx) in efforts {
+        if let Some(w) = avg_power(&t, &power_w, start_idx as usize, end_idx as usize) {
+            conn.execute(
+                "UPDATE segment_effort SET avg_power_w = ?1 WHERE id = ?2",
+                params![w, id],
+            )?;
+            n += 1;
+        }
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -378,6 +496,102 @@ mod tests {
         insert_activity(conn, "a1", "ride");
         insert_track(conn, "a1", 100, 10);
         insert_line_segment(conn, "seg1", "a1", 20, 50);
+    }
+
+    /// Same straight-north track, with a power meter: watts = point index
+    /// (deterministic, so range means are exact).
+    pub(super) fn insert_powered_track(conn: &Connection, id: &str, n: usize) {
+        let tps: Vec<TrackPoint> = (0..n)
+            .map(|i| TrackPoint {
+                activity_id: id.to_string(),
+                t: Some(
+                    // 1 s cadence: the elapsed-basis grid then equals the
+                    // sample sequence and range means stay exact integers.
+                    chrono::DateTime::from_timestamp(T0 + i as i64, 0)
+                        .unwrap()
+                        .to_rfc3339(),
+                ),
+                lat: Some(55.0 + i as f64 * STEP_DEG),
+                lon: Some(37.0),
+                altitude_m: None, speed_mps: None,
+                hr: None, cadence: None, power_w: Some(i as i32), temperature_c: None,
+                vertical_oscillation_mm: None, stance_time_ms: None, stance_time_percent: None,
+                step_length_mm: None, grade_percent: None,
+                left_right_balance: None, left_torque_effectiveness: None,
+                right_torque_effectiveness: None, left_pedal_smoothness: None,
+                right_pedal_smoothness: None,
+            })
+            .collect();
+        db::trackpoints::insert_trackpoints(conn, &tps).unwrap();
+    }
+
+    #[test]
+    fn avg_power_elapsed_basis_zeros_and_holds() {
+        // 1 Hz timestamps: plain mean, explicit 0 W counts, None is a gap.
+        let t: Vec<Option<f64>> = (0..4).map(|i| Some(1000.0 + i as f64)).collect();
+        let p = [Some(0), Some(100), None, Some(200)];
+        // Grid over the range: [0, 100, 100(held), 200] ⇒ 100.
+        assert_eq!(avg_power(&t, &p, 0, 3), Some(100.0));
+        assert_eq!(avg_power(&t, &p, 1, 1), Some(100.0));
+        // A range with no power at all reads as "no meter", not 0 W.
+        assert_eq!(avg_power(&t, &[None, None], 0, 1), None);
+        // Out-of-range indices are a desync, not something to clamp into a
+        // plausible number.
+        assert_eq!(avg_power(&t, &p, 2, 99), None);
+        assert_eq!(avg_power(&t, &p, 3, 2), None);
+        assert_eq!(avg_power(&[], &[], 0, 5), None);
+    }
+
+    #[test]
+    fn avg_power_pauses_count_as_zero_matching_elapsed() {
+        // Two samples 60 s apart at 300 W (auto-pause between): the hold
+        // covers 10 s, the rest is pause zeros — elapsed basis means the
+        // average reflects the same wall clock elapsed_s reports.
+        let t = vec![Some(1000.0), Some(1060.0)];
+        let p = vec![Some(300), Some(300)];
+        // Grid: 61 slots, 12 carry 300 (sample+10 held+sample) ⇒ 12·300/61.
+        let got = avg_power(&t, &p, 0, 1).unwrap();
+        assert!((got - 300.0 * 12.0 / 61.0).abs() < 1e-9, "got {got}");
+    }
+
+    #[test]
+    fn match_stores_avg_power_when_the_track_has_watts() {
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_powered_track(&conn, "a1", 100);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+
+        assert_eq!(match_activity(&conn, "a1").unwrap(), 1);
+        let rows = efforts_for_activity(&conn, "a1").unwrap();
+        // watts = index ⇒ mean over 20..=50 is exactly 35.
+        assert_eq!(rows[0].avg_power_w, Some(35.0));
+        let lb = efforts_for_segment(&conn, "seg1").unwrap();
+        assert_eq!(lb[0].avg_power_w, Some(35.0));
+    }
+
+    #[test]
+    fn backfill_fills_pre_column_efforts_and_skips_meterless() {
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_powered_track(&conn, "a1", 100);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+        insert_activity(&conn, "a2", "ride");
+        insert_track(&conn, "a2", 100, 10); // no power meter
+        assert_eq!(match_activity(&conn, "a1").unwrap(), 1);
+        assert_eq!(match_activity(&conn, "a2").unwrap(), 1);
+
+        // Simulate rows written before the column existed.
+        conn.execute("UPDATE segment_effort SET avg_power_w = NULL", []).unwrap();
+
+        let n = backfill_effort_power(&conn).unwrap();
+        assert_eq!(n, 1, "only the powered activity's effort is filled");
+        let rows = efforts_for_segment(&conn, "seg1").unwrap();
+        let by_activity: Vec<(String, Option<f64>)> = rows
+            .iter()
+            .map(|r| (r.activity_id.clone(), r.avg_power_w))
+            .collect();
+        assert!(by_activity.contains(&("a1".to_string(), Some(35.0))));
+        assert!(by_activity.contains(&("a2".to_string(), None)));
     }
 
     #[test]
@@ -577,7 +791,7 @@ mod tests {
 
 #[cfg(test)]
 mod page_tests {
-    use super::tests::{insert_activity, insert_line_segment, insert_track};
+    use super::tests::{insert_activity, insert_line_segment, insert_powered_track, insert_track};
     use super::*;
     use crate::db;
 
@@ -599,9 +813,51 @@ mod page_tests {
         assert_eq!(s1.effort_count, 2);
         // Best of 10 s/point vs 5 s/point pacing: 30 hops × 5 s.
         assert_eq!(s1.best_elapsed_s, Some(150.0));
+        assert_eq!(s1.best_effort_power_w, None, "meterless library stays null");
         let s2 = rows.iter().find(|r| r.id == "seg2").unwrap();
         assert_eq!(s2.effort_count, 0);
         assert_eq!(s2.best_elapsed_s, None);
+        assert_eq!(s2.best_effort_power_w, None);
+    }
+
+    #[test]
+    fn saving_a_segment_fills_power_via_match_pair() {
+        // The save-time path (backfill_segment → match_pair) must store power
+        // too — a regression here is unfixable later: the one-shot startup
+        // backfill's flag is already set by then.
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_powered_track(&conn, "a1", 100);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+
+        backfill_segment(&conn, "seg1").unwrap();
+        let rows = efforts_for_segment(&conn, "seg1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].avg_power_w, Some(35.0));
+    }
+
+    #[test]
+    fn list_segments_power_belongs_to_the_fastest_pass() {
+        // "Power" sits next to "Best" — it must describe the SAME pass, not
+        // the wattiest one. Fast pass 200 W, slow pass 268 W ⇒ 200.
+        let mut conn = db::test_db();
+        insert_activity(&conn, "a1", "ride");
+        insert_track(&conn, "a1", 100, 10);
+        insert_line_segment(&mut conn, "seg1", "a1", 20, 50);
+        conn.execute_batch(
+            "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx,
+                 start_time_epoch_s, elapsed_s, distance_m, avg_power_w) VALUES
+             ('seg1', 'a1', 20, 50, 1.0, 100.0, 330.0, 200.0),
+             ('seg1', 'a1', 60, 90, 2.0, 150.0, 330.0, 268.0),
+             ('seg1', 'a1', 10, 15, NULL, NULL, 60.0, 999.0);",
+        )
+        .unwrap();
+
+        let rows = db::segments::list_segments(&conn).unwrap();
+        let s1 = rows.iter().find(|r| r.id == "seg1").unwrap();
+        assert_eq!(s1.best_elapsed_s, Some(100.0));
+        // Not 268 (slower pass), not 999 (untimed pass).
+        assert_eq!(s1.best_effort_power_w, Some(200.0));
     }
 
     #[test]

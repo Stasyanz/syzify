@@ -76,7 +76,7 @@ pub fn compute_power_curve(
 /// timestamps are NOT assumed ordered (rows come back in insert order), a
 /// duplicate second keeps the later row, and timestamps more than a day from
 /// the median are discarded as corrupt instead of stretching the grid.
-fn resample_1s(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<f64> {
+pub(crate) fn resample_1s(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<f64> {
     // Samples that can land on a time grid: timestamp + power value. An
     // explicit 0 W is a real sample (coasting) and must reset the hold.
     let mut samples: Vec<(f64, f64)> = t
