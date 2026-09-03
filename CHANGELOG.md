@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-03
+
 ### Added
 - Dashboard: the This Month stats also show total training hours.
 - Segments: the page header sticks to the top while the list scrolls, and a
