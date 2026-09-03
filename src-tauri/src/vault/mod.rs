@@ -36,6 +36,29 @@ pub fn write_location(config_dir: &Path, vault_root: &Path) -> Result<(), String
     .map_err(|e| format!("Failed to save vault location: {}", e))
 }
 
+/// `write_location` that proves the root survives the round-trip. The marker
+/// is a trimmed string: a root whose name ends in whitespace (or isn't UTF-8)
+/// reads back as a DIFFERENT path, and the next boot would create a fresh
+/// vault there — the user's data left aside. On mismatch the previous marker
+/// (or its absence) is restored, so a refused switch changes nothing.
+pub fn write_location_checked(config_dir: &Path, vault_root: &Path) -> Result<(), String> {
+    let marker = config_dir.join(LOCATION_FILE);
+    let previous = fs::read(&marker).ok();
+    write_location(config_dir, vault_root)?;
+    if read_location(config_dir).as_deref() == Some(vault_root) {
+        return Ok(());
+    }
+    let restored = match previous {
+        Some(bytes) => fs::write(&marker, bytes),
+        None => fs::remove_file(&marker),
+    };
+    restored.map_err(|e| format!("Failed to restore vault location: {}", e))?;
+    Err(format!(
+        "Failed to save vault location: \"{}\" can't be stored as written",
+        vault_root.display()
+    ))
+}
+
 /// Where the vault ends up for a user-picked destination directory: an empty
 /// (or missing) pick becomes the vault root itself; a non-empty pick gets a
 /// `Syzify` subfolder, which in turn must be empty or missing.
@@ -53,15 +76,118 @@ pub fn resolve_target_root(dest: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// Resolve the vault root for SWITCHING (no data is moved, unlike relocate):
-/// a folder that already contains a vault.db is opened as-is; anything else
-/// follows the relocate rules (empty/missing dir, or its `Syzify` subfolder),
-/// and the boot path creates a fresh vault there.
-pub fn resolve_switch_root(dest: &Path) -> Result<PathBuf, String> {
-    if dest.join("vault.db").is_file() {
-        return Ok(dest.to_path_buf());
+/// Resolve the root of an EXISTING vault to switch to (no data is moved):
+/// the picked folder itself, or its `Syzify` subfolder — the usual miss when
+/// the dialog lands one level above the vault. Anything else is "no vault
+/// here", never a fallback to the relocate placement rules (those would
+/// happily report a *placement* error about a folder that holds the very
+/// vault the user meant to open).
+pub fn resolve_existing_vault_root(dest: &Path) -> Result<PathBuf, String> {
+    let dest = normalize_path(dest)?;
+    for candidate in [dest.clone(), dest.join("Syzify")] {
+        match fs::metadata(candidate.join("vault.db")) {
+            Ok(m) if m.is_file() => return Ok(candidate),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            // "No vault found" would be a lie on a folder we can't read —
+            // and lacking Full Disk Access is why the boot screen exists.
+            Err(e) => {
+                return Err(format!("Couldn't check \"{}\": {}", candidate.display(), e));
+            }
+        }
     }
-    resolve_target_root(dest)
+    Err(format!("No vault found in \"{}\"", dest.display()))
+}
+
+/// Resolve the root for a NEW vault. Same placement rules as relocate, but a
+/// pick that already holds a vault — or sits anywhere inside one — is refused:
+/// the boot path would otherwise nest a fresh vault in the old one (a real
+/// `…/Syzify/Syzify` from picking the existing vault folder), where relocate
+/// can never move it out and the outer vault's backups swallow it.
+pub fn resolve_new_vault_root(dest: &Path) -> Result<PathBuf, String> {
+    let dest = normalize_path(dest)?;
+    if let Some(existing) = enclosing_vault(&dest)? {
+        return Err(if existing == dest {
+            format!(
+                "\"{}\" already holds a vault — use \"Open another vault…\" to open it",
+                dest.display()
+            )
+        } else {
+            format!(
+                "\"{}\" is inside the vault at \"{}\" — pick a folder outside it",
+                dest.display(),
+                existing.display()
+            )
+        });
+    }
+    resolve_target_root(&dest)
+}
+
+/// Boot-time twin of `resolve_new_vault_root`: a root that has no vault.db is
+/// about to become a fresh vault, so refuse it when it lies inside another
+/// vault. Catches markers written by older builds (which never checked) and a
+/// vault that appeared above the marker's path later. A root whose vault.db
+/// can't even be stat'ed is left alone — the open that follows reports the
+/// real error (missing Full Disk Access, a gone volume) in its own words.
+pub fn ensure_not_nested(root: &Path) -> Result<(), String> {
+    match fs::metadata(root.join("vault.db")) {
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Ok(()),
+    }
+    let Some(parent) = root.parent() else {
+        return Ok(());
+    };
+    match enclosing_vault(parent)? {
+        Some(outer) => Err(format!(
+            "Refusing to create a vault at \"{}\": it is inside the vault at \"{}\"",
+            root.display(),
+            outer.display()
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Canonical form of a path that may not exist yet: the deepest existing
+/// ancestor is resolved through symlinks and `..`, the rest re-appended.
+/// Lexical ancestors alone would let `~/Shortcut → ~/Syzify/photos` pass the
+/// enclosing-vault check and drop a vault into the real one, and would flag
+/// `~/Syzify/../Other` as "inside" a vault it is not.
+pub fn normalize_path(path: &Path) -> Result<PathBuf, String> {
+    let existing = path
+        .ancestors()
+        .find(|p| p.exists())
+        .ok_or_else(|| format!("\"{}\" cannot be resolved", path.display()))?;
+    let canon = fs::canonicalize(existing)
+        .map_err(|e| format!("Couldn't resolve \"{}\": {}", existing.display(), e))?;
+    let rest = path
+        .strip_prefix(existing)
+        .map_err(|_| format!("\"{}\" cannot be resolved", path.display()))?;
+    // `join("")` would append a trailing separator — harmless to Path
+    // comparisons, but it would leak into the marker file and the UI.
+    if rest.as_os_str().is_empty() {
+        return Ok(canon);
+    }
+    Ok(canon.join(rest))
+}
+
+/// The nearest vault root at `path` or above it (a directory with a
+/// `vault.db` file). `Ok(None)` means every level was checked and none holds
+/// a vault; a level that can't be checked (macOS TCC on Documents, a vanished
+/// volume) is an error, not a "no" — guessing "no" there is exactly how a
+/// vault ends up nested inside another.
+fn enclosing_vault(path: &Path) -> Result<Option<&Path>, String> {
+    for p in path.ancestors() {
+        match fs::metadata(p.join("vault.db")) {
+            Ok(m) if m.is_file() => return Ok(Some(p)),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!("Couldn't check \"{}\": {}", p.display(), e));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn is_missing_or_empty(path: &Path) -> Result<bool, String> {
@@ -293,25 +419,176 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// A root the marker can't hold verbatim is refused AND leaves the
+    /// marker exactly as it was — the poisoned-marker path would otherwise
+    /// boot a fresh vault next to the user's data.
+    #[cfg(unix)]
     #[test]
-    fn switch_root_prefers_existing_vault_over_relocate_rules() {
-        let tmp = test_dir("switch_root");
-        // A folder holding a vault.db is used as-is, even though it is
-        // non-empty (relocate rules would divert to a Syzify subfolder).
-        let existing = tmp.join("existing");
-        fs::create_dir(&existing).unwrap();
-        fs::write(existing.join("vault.db"), b"db").unwrap();
-        assert_eq!(resolve_switch_root(&existing).unwrap(), existing);
+    fn write_location_checked_restores_marker_on_mismatch() {
+        let tmp = test_dir("marker_roundtrip");
+        let cfg = tmp.join("cfg");
+        let good = tmp.join("good");
+        let trailing = tmp.join("trailing ");
+        fs::create_dir_all(&good).unwrap();
+        fs::create_dir_all(&trailing).unwrap();
 
-        // No vault.db → relocate rules: empty dir itself, busy dir's subfolder.
+        // No marker yet → refused, still no marker.
+        let err = write_location_checked(&cfg, &trailing).unwrap_err();
+        assert!(err.contains("can't be stored"), "{err}");
+        assert_eq!(read_location(&cfg), None);
+
+        // Existing marker → refused, previous value intact.
+        write_location_checked(&cfg, &good).unwrap();
+        assert!(write_location_checked(&cfg, &trailing).is_err());
+        assert_eq!(read_location(&cfg), Some(good));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn normalize_path_resolves_existing_prefix_and_keeps_the_rest() {
+        let tmp = test_dir("normalize");
+        let canon = fs::canonicalize(&tmp).unwrap();
+        assert_eq!(normalize_path(&tmp).unwrap(), canon);
+        assert!(!normalize_path(&tmp).unwrap().to_string_lossy().ends_with('/'));
+        assert_eq!(normalize_path(&tmp.join("a/b/c")).unwrap(), canon.join("a/b/c"));
+        assert_eq!(normalize_path(Path::new("/")).unwrap(), PathBuf::from("/"));
+        // `..` through an existing prefix is resolved by the filesystem.
+        let sub = tmp.join("sub");
+        fs::create_dir(&sub).unwrap();
+        assert_eq!(normalize_path(&sub.join("../x")).unwrap(), canon.join("x"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Opening an existing vault accepts the vault folder or its parent
+    /// (the `Syzify` subfolder), and reports "no vault" for anything else —
+    /// never a relocate placement error about the folder the user meant.
+    #[test]
+    fn existing_vault_root_accepts_vault_or_its_parent_only() {
+        let tmp = test_dir("existing_root");
+        let home = tmp.join("home");
+        let vault = home.join("Syzify");
+        make_vault(&vault);
+        fs::write(home.join("other.txt"), b"x").unwrap();
+        let canon_vault = fs::canonicalize(&vault).unwrap();
+
+        assert_eq!(resolve_existing_vault_root(&vault).unwrap(), canon_vault);
+        assert_eq!(resolve_existing_vault_root(&home).unwrap(), canon_vault);
+
         let empty = tmp.join("empty");
         fs::create_dir(&empty).unwrap();
-        assert_eq!(resolve_switch_root(&empty).unwrap(), empty);
+        let err = resolve_existing_vault_root(&empty).unwrap_err();
+        assert!(err.contains("No vault found"), "{err}");
+        let err = resolve_existing_vault_root(&tmp.join("missing")).unwrap_err();
+        assert!(err.contains("No vault found"), "{err}");
+        // The refusal creates nothing.
+        assert!(!empty.join("Syzify").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
 
+    /// A new vault follows the relocate placement rules, but never lands in
+    /// (or inside) an existing vault — the `…/Syzify/Syzify` nesting seen
+    /// live when the existing vault folder itself was picked.
+    #[test]
+    fn new_vault_root_refuses_existing_and_nested_vaults() {
+        let tmp = test_dir("new_vault_root");
+        let vault = tmp.join("vault");
+        make_vault(&vault);
+
+        // The vault folder itself: relocate rules would create vault/Syzify.
+        let err = resolve_new_vault_root(&vault).unwrap_err();
+        assert!(err.contains("already holds a vault"), "{err}");
+        assert!(!vault.join("Syzify").exists());
+
+        // Any folder below it, existing or not, existing-empty included.
+        let inside = vault.join("photos/2026");
+        let err = resolve_new_vault_root(&inside).unwrap_err();
+        assert!(err.contains("inside the vault at"), "{err}");
+        assert!(err.contains(&vault.display().to_string()), "{err}");
+        let empty_inside = vault.join("fresh");
+        fs::create_dir(&empty_inside).unwrap();
+        assert!(resolve_new_vault_root(&empty_inside).is_err());
+        assert!(resolve_new_vault_root(&vault.join("does/not/exist")).is_err());
+
+        // Outside a vault the relocate rules apply unchanged (results are
+        // canonical: on macOS the temp dir itself sits behind a symlink).
+        let canon = fs::canonicalize(&tmp).unwrap();
+        let empty = tmp.join("empty");
+        fs::create_dir(&empty).unwrap();
+        assert_eq!(resolve_new_vault_root(&empty).unwrap(), canon.join("empty"));
+        assert_eq!(
+            resolve_new_vault_root(&tmp.join("missing")).unwrap(),
+            canon.join("missing")
+        );
+        // A sibling of the vault is not "inside" it — not even spelled via `..`.
         let busy = tmp.join("busy");
         fs::create_dir(&busy).unwrap();
         fs::write(busy.join("x.txt"), b"x").unwrap();
-        assert_eq!(resolve_switch_root(&busy).unwrap(), busy.join("Syzify"));
+        assert_eq!(resolve_new_vault_root(&busy).unwrap(), canon.join("busy/Syzify"));
+        assert_eq!(
+            resolve_new_vault_root(&vault.join("../busy")).unwrap(),
+            canon.join("busy/Syzify")
+        );
+        // A vault.db that is a directory is not a vault.
+        let odd = tmp.join("odd");
+        fs::create_dir_all(odd.join("vault.db")).unwrap();
+        assert_eq!(resolve_new_vault_root(&odd).unwrap(), canon.join("odd/Syzify"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A symlink pointing into a vault must not smuggle a new vault inside
+    /// it: lexical ancestors of the link never see the vault.
+    #[cfg(unix)]
+    #[test]
+    fn new_vault_root_sees_through_symlinks() {
+        let tmp = test_dir("new_vault_symlink");
+        let vault = tmp.join("vault");
+        make_vault(&vault);
+        let link = tmp.join("shortcut");
+        std::os::unix::fs::symlink(vault.join("photos"), &link).unwrap();
+
+        let err = resolve_new_vault_root(&link).unwrap_err();
+        assert!(err.contains("inside the vault at"), "{err}");
+        let err = resolve_new_vault_root(&link.join("new")).unwrap_err();
+        assert!(err.contains("inside the vault at"), "{err}");
+        assert!(!vault.join("photos/Syzify").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// An ancestor that can't be checked is a refusal, not a pass — the
+    /// boot-error screen (no Full Disk Access) is where new vaults get made.
+    #[cfg(unix)]
+    #[test]
+    fn new_vault_root_refuses_when_an_ancestor_is_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = test_dir("new_vault_unreadable");
+        let locked = tmp.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root (some CI containers) reads anything; the guard is moot there.
+        let readable_anyway = fs::read_dir(&locked).is_ok();
+
+        let result = resolve_new_vault_root(&locked.join("sub"));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        if !readable_anyway {
+            let err = result.unwrap_err();
+            assert!(err.contains("Couldn't check"), "{err}");
+        }
+        assert!(!locked.join("sub").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Boot-time guard: a marker pointing at a vault-less folder inside a
+    /// vault must not create one there; an existing vault is left alone.
+    #[test]
+    fn ensure_not_nested_guards_only_fresh_roots() {
+        let tmp = test_dir("ensure_not_nested");
+        let vault = tmp.join("vault");
+        make_vault(&vault);
+
+        assert!(ensure_not_nested(&vault).is_ok());
+        let err = ensure_not_nested(&vault.join("Syzify")).unwrap_err();
+        assert!(err.contains("inside the vault at"), "{err}");
+        assert!(ensure_not_nested(&tmp.join("fresh")).is_ok());
         let _ = fs::remove_dir_all(&tmp);
     }
 

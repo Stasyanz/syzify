@@ -157,8 +157,10 @@ export const api = {
   relocateVault: (destPath: string) =>
     invoke<string>("relocate_vault", { destPath }),
 
-  /** Point the app at another vault root without moving data (boot-error
-   * screen only); caller restarts the app afterwards. */
+  /** Point the app at another vault root without moving data — the current
+   * vault stays on disk. With `expectExisting` the folder must already hold a
+   * vault; otherwise a fresh one is created there (never inside an existing
+   * vault). Caller restarts the app afterwards. */
   switchVault: (destPath: string, expectExisting: boolean) =>
     invoke<string>("switch_vault", { destPath, expectExisting }),
 

@@ -6,6 +6,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Settings: "Open another…" next to the vault location switches to a
+  different existing vault without moving anything — the current vault stays
+  on disk. The old "Change" button is now "Move…" and does what it always did.
+
+### Fixed
+- "Create new vault…" on the boot-error screen no longer creates a vault
+  inside an existing one (picking the existing vault folder itself used to
+  nest a fresh `Syzify` vault in it); it explains and asks for another folder.
+
 ## [0.4.0] - 2026-09-03
 
 ### Added

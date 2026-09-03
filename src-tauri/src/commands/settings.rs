@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -246,6 +246,9 @@ pub async fn relocate_vault(
         match vault::relocate(&src, Path::new(&dest_path), &config_dir, &progress) {
             Ok(target) => {
                 *conn = reopen(&target)?;
+                // The app restarts from here: keep the vault-operation slot
+                // taken until then (see switch_vault_core for why).
+                std::mem::forget(_flight);
                 Ok(target.to_string_lossy().to_string())
             }
             Err(e) => {
@@ -261,32 +264,74 @@ pub async fn relocate_vault(
 }
 
 /// Point the app at a different vault root WITHOUT moving any data: write the
-/// location marker and let the caller restart. Only allowed while the current
-/// vault failed to open (the boot-error screen) — with a healthy vault this
-/// would silently abandon it, so relocate_vault is the way then. With
-/// `expect_existing` the picked folder must already hold a vault.db; otherwise
-/// an empty folder (or its `Syzify` subfolder) gets a fresh vault on reboot.
+/// location marker and let the caller restart. Works from the boot-error
+/// screen and from Settings alike — the current vault is left untouched on
+/// disk, and the UI confirms that with the user before calling. With
+/// `expect_existing` the picked folder must already hold a vault; otherwise
+/// an empty folder (or its `Syzify` subfolder) gets a fresh vault on reboot,
+/// never inside an existing vault.
 #[tauri::command]
-pub fn switch_vault(
+pub async fn switch_vault(
     dest_path: String,
     expect_existing: bool,
     app: AppHandle,
-    state: State<AppState>,
 ) -> Result<String, String> {
-    if state.vault_error.lock().map_err(|e| e.to_string())?.is_none() {
-        return Err("Vault is open — use Move vault in Settings instead".into());
+    // Off the main thread: the checks stat every ancestor of the pick, which
+    // on a stale network volume can take seconds.
+    tauri::async_runtime::spawn_blocking(move || {
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .map_err(|e| format!("No config dir: {}", e))?;
+        let state = app.state::<AppState>();
+        switch_vault_core(Path::new(&dest_path), expect_existing, &config_dir, &state)
+            .map(|root| root.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Switch task failed: {}", e))?
+}
+
+/// The switch itself, `AppHandle`-free so it is testable. On success the
+/// `vault_flight` slot is deliberately NOT released: the app is about to
+/// restart, and until it does no backup/restore/encryption toggle may start —
+/// the restart would tear it mid-way, and the marker already points the next
+/// boot (and its stale-file scrubbers) at a different vault, so the damage
+/// would sit in the old one unrepaired.
+pub(crate) fn switch_vault_core(
+    dest: &Path,
+    expect_existing: bool,
+    config_dir: &Path,
+    state: &AppState,
+) -> Result<PathBuf, String> {
+    let flight = state
+        .vault_flight
+        .try_begin()
+        .ok_or("Another vault operation is already in progress")?;
+    let root = if expect_existing {
+        vault::resolve_existing_vault_root(dest)?
+    } else {
+        vault::resolve_new_vault_root(dest)?
+    };
+    // Compare canonical forms: APFS is case-insensitive and /tmp is a symlink,
+    // and a marker spelled differently from the running root would later slip
+    // past relocate's "into itself" checks.
+    let current = vault::normalize_path(&state.vault_path)
+        .unwrap_or_else(|_| state.vault_path.clone());
+    if root == current {
+        return Err("This is already the current vault".into());
     }
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("No config dir: {}", e))?;
-    let dest = Path::new(&dest_path);
-    let root = vault::resolve_switch_root(dest)?;
-    if expect_existing && !root.join("vault.db").is_file() {
-        return Err(format!("No vault found in \"{}\"", dest.display()));
+    // Fold the WAL into vault.db before leaving: people tend to copy or
+    // archive a vault they just left by hand. Best effort — a background
+    // writer may add to the WAL again before the restart, which SQLite
+    // recovers on the next open anyway.
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .map_err(|e| format!("Failed to checkpoint database: {}", e))?;
     }
-    vault::write_location(&config_dir, &root)?;
-    Ok(root.to_string_lossy().to_string())
+    vault::write_location_checked(config_dir, &root)?;
+    std::mem::forget(flight);
+    Ok(root)
 }
 
 /// Relaunch the app — used after a vault relocation so every service picks up
@@ -1712,5 +1757,103 @@ mod tests {
 
         let _ = std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o644));
         let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    fn switch_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("syz_switch_{}", name));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let current = tmp.join("current");
+        let other = tmp.join("other");
+        for v in [&current, &other] {
+            std::fs::create_dir_all(v).unwrap();
+            std::fs::write(v.join("vault.db"), b"db").unwrap();
+        }
+        (tmp, current, other)
+    }
+
+    /// Switching only ever writes the marker — and keeps the vault-operation
+    /// slot taken afterwards, so nothing mutates the old vault before the
+    /// restart that follows.
+    #[test]
+    fn switch_vault_writes_marker_and_holds_the_flight_slot() {
+        let (tmp, current, other) = switch_fixture("ok");
+        let cfg = tmp.join("cfg");
+        let state = test_state(&current);
+
+        let root = switch_vault_core(&other, true, &cfg, &state).unwrap();
+        assert_eq!(root, std::fs::canonicalize(&other).unwrap());
+        assert_eq!(vault::read_location(&cfg), Some(root));
+        assert!(state.vault_flight.try_begin().is_none(), "slot must stay taken");
+        // Both vaults untouched.
+        assert!(current.join("vault.db").exists());
+        assert!(other.join("vault.db").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Every refusal is side-effect-free: no marker, slot released.
+    #[test]
+    fn switch_vault_refusals_leave_no_marker() {
+        let (tmp, current, other) = switch_fixture("refuse");
+        let cfg = tmp.join("cfg");
+        let state = test_state(&current);
+
+        {
+            let _running = state.vault_flight.try_begin().unwrap();
+            let err = switch_vault_core(&other, true, &cfg, &state).unwrap_err();
+            assert!(err.contains("already in progress"), "{err}");
+        }
+        let err = switch_vault_core(&current, true, &cfg, &state).unwrap_err();
+        assert!(err.contains("already the current vault"), "{err}");
+        // Spelled through a symlink it is still the current vault.
+        #[cfg(unix)]
+        {
+            let alias = tmp.join("alias");
+            std::os::unix::fs::symlink(&current, &alias).unwrap();
+            let err = switch_vault_core(&alias, true, &cfg, &state).unwrap_err();
+            assert!(err.contains("already the current vault"), "{err}");
+        }
+        let empty = tmp.join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let err = switch_vault_core(&empty, true, &cfg, &state).unwrap_err();
+        assert!(err.contains("No vault found"), "{err}");
+        let err = switch_vault_core(&current.join("nested"), false, &cfg, &state).unwrap_err();
+        assert!(err.contains("inside the vault at"), "{err}");
+
+        // A root the marker can't hold verbatim (trailing space is legal on
+        // unix filesystems) is refused after the write — and rolled back.
+        #[cfg(unix)]
+        {
+            let trailing = tmp.join("trailing ");
+            std::fs::create_dir(&trailing).unwrap();
+            std::fs::write(trailing.join("vault.db"), b"db").unwrap();
+            let err = switch_vault_core(&trailing, true, &cfg, &state).unwrap_err();
+            assert!(err.contains("can't be stored"), "{err}");
+        }
+
+        assert_eq!(vault::read_location(&cfg), None);
+        assert!(state.vault_flight.try_begin().is_some(), "slot must be free");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The parent of a vault (the usual one-level-up miss) opens the vault in
+    /// its `Syzify` subfolder; a fresh vault in an empty folder is allowed.
+    #[test]
+    fn switch_vault_resolves_parent_pick_and_fresh_folder() {
+        let (tmp, current, _other) = switch_fixture("parent");
+        let cfg = tmp.join("cfg");
+        let home = tmp.join("home");
+        std::fs::create_dir_all(home.join("Syzify")).unwrap();
+        std::fs::write(home.join("Syzify/vault.db"), b"db").unwrap();
+        std::fs::write(home.join("notes.txt"), b"x").unwrap();
+        let state = test_state(&current);
+        let root = switch_vault_core(&home, true, &cfg, &state).unwrap();
+        assert_eq!(root, std::fs::canonicalize(home.join("Syzify")).unwrap());
+
+        let state = test_state(&current);
+        let fresh = tmp.join("fresh");
+        let root = switch_vault_core(&fresh, false, &cfg, &state).unwrap();
+        assert_eq!(root, std::fs::canonicalize(&tmp).unwrap().join("fresh"));
+        assert_eq!(vault::read_location(&cfg), Some(root));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

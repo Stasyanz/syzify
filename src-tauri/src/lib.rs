@@ -161,8 +161,11 @@ fn run_power_curve_backfill(state: &AppState) {
     }
 }
 
-/// Open the plaintext vault database (database scope off).
+/// Open the plaintext vault database (database scope off). A root without a
+/// vault.db becomes a fresh vault here — unless it sits inside another vault
+/// (a marker from an older build could still point there).
 pub(crate) fn init_vault(vault_path: &Path) -> Result<Connection, String> {
+    vault::ensure_not_nested(vault_path)?;
     ensure_vault_dirs(vault_path)?;
     let mut conn = Connection::open(vault_path.join("vault.db"))
         .map_err(|e| format!("Failed to open database: {}", e))?;

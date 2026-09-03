@@ -11,7 +11,6 @@ import {
   Github,
   Mail,
   Loader2,
-  Settings as SettingsIcon,
 } from "lucide-react";
 import { api } from "../lib/tauri";
 import { confirmDialog } from "../stores/confirmStore";
@@ -25,6 +24,7 @@ import { Toggle } from "../components/ui/Toggle";
 import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
+import { VaultLocation } from "../components/settings/VaultLocation";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
@@ -38,12 +38,6 @@ export function SettingsPage() {
   const setThemeMode = useThemeStore((s) => s.setMode);
   const unitsMode = useUnitsStore((s) => s.mode);
   const setUnitsMode = useUnitsStore((s) => s.setMode);
-
-  // Vault path
-  const { data: vaultPath } = useQuery({
-    queryKey: ["vaultPath"],
-    queryFn: () => api.getVaultPath(),
-  });
 
   // Legal-document viewer (Settings → General → License)
   const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
@@ -88,7 +82,6 @@ export function SettingsPage() {
   const [clearing, setClearing] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [relocating, setRelocating] = useState(false);
 
   // Encryption UI state
   const [showEncryptDialog, setShowEncryptDialog] = useState(false);
@@ -131,58 +124,6 @@ export function SettingsPage() {
       addToast("success", "Tile cache cleared");
     } finally {
       setClearing(false);
-    }
-  }
-
-  async function handleChangeVaultLocation() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Choose a new vault location",
-    });
-    if (!selected || typeof selected !== "string") return;
-
-    // macOS protects Documents/Desktop/Downloads (TCC): a vault there won't
-    // open on next launch until the app has Full Disk Access. Warn up front.
-    const inProtectedFolder = /\/(Documents|Desktop|Downloads)(\/|$)/.test(selected);
-    const warning = inProtectedFolder
-      ? `\n\nNote: "${selected}" is a protected macOS folder — you'll need to grant Syzify Full Disk Access for it to open on the next launch.`
-      : "";
-
-    const confirmed = await confirmDialog({
-      title: "Move vault",
-      message: `Move the vault to "${selected}"?\n\nAll files will be moved there and the app will restart.${warning}`,
-      confirmLabel: "Move",
-    });
-    if (!confirmed) return;
-
-    setRelocating(true);
-    const toastId = addToast("info", "Moving vault… 0%", undefined, true);
-    const unlisten = await listen<{ processed: number; total: number }>(
-      "vault:relocate:progress",
-      (e) => {
-        const { processed, total } = e.payload;
-        const pct = total > 0 ? Math.floor((processed / total) * 100) : 100;
-        updateToast(toastId, { message: `Moving vault… ${pct}%` });
-      }
-    );
-    try {
-      const newPath = await api.relocateVault(selected);
-      removeToast(toastId);
-      addToast("success", `Vault moved to ${newPath} — restarting…`);
-      // Give the toast a beat to render; the restart reloads every service
-      // against the new location. Note: in `tauri dev` the relaunched window
-      // comes up blank (the CLI tears down vite when its child exits) — a
-      // manual dev-server restart is needed there; production restarts fine.
-      setTimeout(() => {
-        api.restartApp().catch(() => {});
-      }, 1500);
-    } catch (e) {
-      removeToast(toastId);
-      addToast("error", `Move failed: ${e}`);
-      setRelocating(false);
-    } finally {
-      unlisten();
     }
   }
 
@@ -545,20 +486,7 @@ export function SettingsPage() {
         {/* Vault */}
         <section className="card">
           <h3>Vault</h3>
-          <div className="set-row">
-            <div className="min-w-0">
-              <div className="sl">Location</div>
-              <div className="sd code">{vaultPath ?? "…"}</div>
-            </div>
-            <button
-              onClick={handleChangeVaultLocation}
-              disabled={relocating}
-              className="btn ghost shrink-0"
-            >
-              <SettingsIcon size={15} />
-              {relocating ? "Moving…" : "Change"}
-            </button>
-          </div>
+          <VaultLocation />
           <div className="set-row">
             <div className="flex-1">
               <div className="sl">Encryption</div>
