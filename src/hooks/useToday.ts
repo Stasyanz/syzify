@@ -27,7 +27,8 @@ const POLL_MS = 60_000;
 
 let currentKey = dayKey(new Date());
 const listeners = new Set<() => void>();
-let timer: ReturnType<typeof setInterval> | null = null;
+// undefined while idle (no subscriber) — clearInterval(undefined) is a no-op.
+let timer: ReturnType<typeof setInterval> | undefined;
 
 function check() {
   const now = dayKey(new Date());
@@ -54,12 +55,11 @@ function subscribe(listener: () => void): () => void {
   }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && timer != null) {
-      clearInterval(timer);
-      timer = null;
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", check);
-    }
+    if (listeners.size > 0) return;
+    clearInterval(timer);
+    timer = undefined;
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("focus", check);
   };
 }
 
@@ -68,7 +68,7 @@ function subscribe(listener: () => void): () => void {
 // it on the spot — the initial render then already sees the right day, and
 // the subscribe-time catch-up below never looks like a day change to it.
 function getSnapshot(): string {
-  if (timer == null) currentKey = dayKey(new Date());
+  if (timer === undefined) currentKey = dayKey(new Date());
   return currentKey;
 }
 

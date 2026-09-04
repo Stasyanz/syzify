@@ -61,6 +61,19 @@ describe("useToday", () => {
     expect(dayKey(result.current)).toBe("2026-09-05");
   });
 
+  it("ignores a visibility event while the window is hidden", () => {
+    const { result } = renderHook(() => useToday());
+    vi.setSystemTime(new Date(2026, 8, 4, 8, 0, 0));
+    const state = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(dayKey(result.current)).toBe("2026-09-03");
+    state.mockRestore();
+  });
+
   it("shares one ticker and one value across subscribers", () => {
     const a = renderHook(() => useTodayKey());
     const b = renderHook(() => useTodayKey());
