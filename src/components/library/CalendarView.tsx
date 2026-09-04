@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -10,13 +10,15 @@ import { SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
 import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
 import { WEEKDAYS, buildMonthGrid } from "../../lib/calendar";
+import { useMonthView, useToday } from "../../hooks/useToday";
 
 export function CalendarView() {
   useUnits();
-  const today = new Date();
+  // Live day: the "today" ring moves at midnight and the view follows a
+  // month rollover while it shows the current month.
+  const today = useToday();
   const navigate = useNavigate();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth() + 1);
+  const { year, month, setYear, setMonth } = useMonthView(today);
   const filters = useActivityStore((s) => s.filters);
 
   const { data: days = [] } = useQuery({

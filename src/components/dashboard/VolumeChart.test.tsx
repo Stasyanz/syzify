@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup, fireEvent } from "@testing-library/react";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { render, cleanup, fireEvent, act } from "@testing-library/react";
 import type { VolumeBucket } from "../../lib/types";
 import { VolumeChart, formatVolumeValue, weekSports } from "./VolumeChart";
 import { getSportColor } from "../../lib/sportColors";
@@ -97,5 +97,33 @@ describe("VolumeChart hover value", () => {
     // Leaving the chart clears the value again.
     fireEvent.mouseLeave(container.querySelector(".bars") as HTMLElement);
     expect(labelText()).toEqual([]);
+  });
+});
+
+describe("VolumeChart day rollover", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 3, 23, 59, 30)); // a Thursday
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+  const dayLabels = (c: HTMLElement) =>
+    [...c.querySelectorAll(".bars > div > span:last-child")].map((s) => s.textContent);
+  const short = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short" });
+
+  it("slides the 7-day window at midnight", () => {
+    const { container } = render(<VolumeChart weekVolume={[]} />);
+    const labels = dayLabels(container);
+    expect(labels).toHaveLength(7);
+    expect(labels[6]).toBe(short(new Date(2026, 8, 3)));
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    const after = dayLabels(container);
+    expect(after[6]).toBe(short(new Date(2026, 8, 4)));
+    expect(after[5]).toBe(labels[6]);
   });
 });

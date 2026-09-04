@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { firstWeekday, daysInMonth, buildMonthGrid, monthSports } from "./calendar";
+import {
+  firstWeekday,
+  daysInMonth,
+  buildMonthGrid,
+  monthSports,
+  dayKey,
+  dateOfDayKey,
+} from "./calendar";
+
+describe("dayKey", () => {
+  it("formats the LOCAL date, zero-padded", () => {
+    expect(dayKey(new Date(2026, 0, 5, 23, 30))).toBe("2026-01-05");
+    expect(dayKey(new Date(2026, 11, 31, 0, 0))).toBe("2026-12-31");
+  });
+
+  it("round-trips through dateOfDayKey on the calendar fields", () => {
+    const d = dateOfDayKey("2026-02-28");
+    expect([d.getFullYear(), d.getMonth() + 1, d.getDate()]).toEqual([2026, 2, 28]);
+    expect(dayKey(d)).toBe("2026-02-28");
+  });
+});
 
 describe("monthSports", () => {
   const day = (...sports: string[]) => ({

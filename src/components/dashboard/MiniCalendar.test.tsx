@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { render, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaySummary } from "../../lib/types";
@@ -97,5 +97,44 @@ describe("MiniCalendar month stats", () => {
     const { queryByText, getByText } = renderCal();
     await waitFor(() => getByText("Sessions"));
     expect(queryByText("Elev gain")).toBeNull();
+  });
+});
+
+describe("MiniCalendar day rollover", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 30 s before the month turns.
+    vi.setSystemTime(new Date(2026, 8, 30, 23, 59, 30));
+    vi.mocked(api.getCalendarData).mockResolvedValue([]);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+  const todayCell = (c: HTMLElement) =>
+    c.querySelector(".cal-cell.today .cal-num")?.textContent ?? null;
+
+  it("moves the today ring and follows the month at midnight", () => {
+    const { container, getByText } = renderCal();
+    getByText("September 2026");
+    expect(todayCell(container)).toBe("30");
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    getByText("October 2026");
+    expect(todayCell(container)).toBe("1");
+  });
+
+  it("leaves a month the user paged to alone", () => {
+    const { container, getByText } = renderCal();
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    getByText("August 2026");
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    getByText("August 2026");
+    expect(todayCell(container)).toBeNull();
   });
 });

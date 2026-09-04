@@ -4,6 +4,26 @@
 /** Weekday headers, Monday-first. */
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** The LOCAL calendar day of a Date as "YYYY-MM-DD" — the key the backend's
+ * day buckets use (`date(start_time, 'localtime')`), so a frontend date and a
+ * bucket agree on which day it is. Not toISOString(): that is UTC and shifts
+ * evenings into tomorrow east of Greenwich. */
+export function dayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** The start of the local day a "YYYY-MM-DD" key names. Usually midnight;
+ * where a DST jump skips 00:00 (Santiago, Tehran) the Date constructor
+ * lands on the first hour that exists — the calendar fields are right
+ * either way, and those are all the callers read. */
+export function dateOfDayKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 /** Monday-based day-of-week index (0 = Mon … 6 = Sun) of the 1st of the month.
  * `month` is 1-based (1 = Jan … 12 = Dec). */
 export function firstWeekday(year: number, month: number): number {

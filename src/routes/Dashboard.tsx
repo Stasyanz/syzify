@@ -6,6 +6,7 @@ import { SportDistribution } from "../components/dashboard/SportDistribution";
 import { PersonalRecords } from "../components/dashboard/PersonalRecords";
 import { MiniCalendar } from "../components/dashboard/MiniCalendar";
 import { PluginContributions } from "../components/plugins/PluginContributions";
+import { useInvalidateOnNewDay } from "../hooks/useToday";
 import "../lib/chartSetup";
 
 export function DashboardPage() {
@@ -13,6 +14,10 @@ export function DashboardPage() {
     queryKey: ["dashboard"],
     queryFn: () => api.getDashboardData(),
   });
+  // The backend cuts "this week" / "last 7 days" at ITS clock when asked
+  // (date('now','localtime')), so the answer is only good for the day it was
+  // fetched on — refetch past midnight, keeping the page on screen meanwhile.
+  useInvalidateOnNewDay(["dashboard"]);
 
   return (
     <div className="flex flex-col h-full">

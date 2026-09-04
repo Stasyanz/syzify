@@ -14,6 +14,7 @@ import { useActivityStore } from "../../stores/activityStore";
 import { SPORT_LABELS, SPORT_TYPES, type ActivityFilters } from "../../lib/types";
 import { SportIcon } from "../brand/SportIcon";
 import { buildMonthGrid } from "../../lib/calendar";
+import { useToday } from "../../hooks/useToday";
 import { Select } from "../ui/Select";
 import {
   useUnits,
@@ -58,7 +59,8 @@ function DateField({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const today = new Date();
+  // Live day, so the picker's "today" mark survives midnight.
+  const today = useToday();
   const todayIso = isoOf(today.getFullYear(), today.getMonth(), today.getDate());
   const sel = value ? new Date(value + "T00:00:00") : null;
   const [view, setView] = useState(() => {

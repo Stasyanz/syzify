@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -9,14 +9,16 @@ import { formatDistance, formatDuration } from "../../lib/format";
 import { toDistance, distanceUnit, toElevation, elevationUnit, useUnits } from "../../lib/units";
 import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
 import { WEEKDAYS, buildMonthGrid, monthSports } from "../../lib/calendar";
+import { useMonthView, useToday } from "../../hooks/useToday";
 
 /** Compact month calendar with activity dots + per-activity hover popups. */
 export function MiniCalendar() {
   useUnits();
-  const today = new Date();
+  // Live day: the "today" ring moves at midnight and the view follows a
+  // month rollover while it shows the current month.
+  const today = useToday();
   const navigate = useNavigate();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth() + 1);
+  const { year, month, setYear, setMonth } = useMonthView(today);
 
   const { data: days = [] } = useQuery({
     queryKey: ["calendar", year, month],

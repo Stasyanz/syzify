@@ -15,6 +15,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   the same number the summary tiles show.
 
 ### Fixed
+- Calendars and the dashboard roll over to the new day at midnight on their
+  own: the "today" mark moves, a calendar showing the current month follows
+  a month change, and the This Week tiles and 7-day volume chart refetch
+  for the new day (they used to show yesterday until something re-rendered).
 - "Create new vault…" on the boot-error screen no longer creates a vault
   inside an existing one (picking the existing vault folder itself used to
   nest a fresh `Syzify` vault in it); it explains and asks for another folder.

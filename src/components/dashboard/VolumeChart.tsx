@@ -4,17 +4,12 @@ import { getSportColor } from "../../lib/sportColors";
 import { SPORT_LABELS, type SportType } from "../../lib/types";
 import { useDashboardStore } from "../../stores/dashboardStore";
 import { useUnits, toDistance, distanceUnit } from "../../lib/units";
+import { dayKey } from "../../lib/calendar";
+import { useToday } from "../../hooks/useToday";
 
 interface Props {
   /** Daily buckets for the last 7 days (only days with activity). */
   weekVolume: VolumeBucket[];
-}
-
-function ymd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }
 
 /** Format a hovered bar segment value. Time (value in minutes) shows whole
@@ -51,6 +46,8 @@ export function VolumeChart({ weekVolume }: Props) {
   const volumeMetric = useDashboardStore((s) => s.volumeMetric);
   const setVolumeMetric = useDashboardStore((s) => s.setVolumeMetric);
   const units = useUnits();
+  // Live day: the 7 day keys slide at midnight along with the refetched data.
+  const today = useToday();
   // Segment under the cursor: { day index, segment index }.
   const [hover, setHover] = useState<{ d: number; s: number } | null>(null);
 
@@ -62,9 +59,9 @@ export function VolumeChart({ weekVolume }: Props) {
 
     // Build the 7-day grid: 6 days ago → today.
     const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
+      const d = new Date(today);
       d.setDate(d.getDate() - (6 - i));
-      const bucket = byDate.get(ymd(d));
+      const bucket = byDate.get(dayKey(d));
       const segs = bucket
         ? Object.entries(bucket.by_sport)
             .map(([sport, sb]) => ({ sport, value: metric(sb) }))
@@ -82,7 +79,7 @@ export function VolumeChart({ weekVolume }: Props) {
     return { days, max };
     // `units` feeds toDistance() inside metric().
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekVolume, volumeMetric, units]);
+  }, [weekVolume, volumeMetric, units, today]);
 
   const unit = volumeMetric === "distance" ? distanceUnit() : "min";
   const fmt = (v: number) => formatVolumeValue(v, unit);
