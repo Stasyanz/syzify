@@ -26,10 +26,22 @@ import {
   type ElevationBand,
   type ZoneRange,
 } from "./chartZones";
+import {
+  avgLineLayout,
+  meanPace,
+  paceOfSpeed,
+  rangeSpanning,
+  seriesMean,
+} from "./chartAverage";
 import { api } from "../../lib/tauri";
 import { formatGrade, formatSelectionStats } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
-import { chartTextColor, chartGridColor } from "../../lib/chartTheme";
+import {
+  chartTextColor,
+  chartGridColor,
+  chartInkColor,
+  chartSurfaceColor,
+} from "../../lib/chartTheme";
 import { SaveSegmentPopover } from "./SaveSegmentPopover";
 import { useResolvedDark } from "../../lib/theme";
 import {
@@ -58,6 +70,18 @@ interface Props {
    * slice drops points and rebases indices, so its selection indices don't
    * address the stored trackpoints. */
   segmentSource?: { activityId: string };
+  /** The device's summary averages for the charted span (the activity's, or
+   * a focused leg's) — the "avg" lines show THESE where present so they
+   * match the summary tiles; a missing one falls back to the samples. */
+  summaryAverages?: SummaryAverages;
+}
+
+/** Summary averages in the units the data model stores them in. */
+export interface SummaryAverages {
+  hr?: number | null;
+  power_w?: number | null;
+  cadence?: number | null;
+  speed_mps?: number | null;
 }
 
 type ChartType = "elevation" | "hr" | "pace" | "speed" | "cadence" | "power";
@@ -76,6 +100,18 @@ interface ChartConfig {
   invertY?: boolean;
   /** Hypsometric fill bands (display units) — elevation's atlas coloring. */
   elevationBands?: ElevationBand[];
+  /** No "avg" reference line — average altitude is not a training reference. */
+  noAverage?: boolean;
+  /** The summary's average in this chart's display units, if the summary
+   * carries one (pace/speed convert from m/s). Preferred over the samples. */
+  summaryAvg?: (s: SummaryAverages) => number | null | undefined;
+  /** Fallback average from the samples. Defaults to the time-weighted mean
+   * of the metric's own series; pace derives it from the speeds instead. */
+  sampleAvg?: (
+    series: (number | null)[],
+    speedMps: (number | null)[],
+    t: (number | null)[],
+  ) => number | null;
 }
 
 // Hypsometric band definitions live in chartZones.ts (ELEVATION_BANDS_M),
@@ -107,6 +143,7 @@ const ELEVATION = (): ChartConfig => ({
     to: isImperial() ? b.to * FT_PER_M : b.to,
     color: b.color,
   })),
+  noAverage: true,
 });
 const HR: ChartConfig = {
   key: "hr",
@@ -115,47 +152,59 @@ const HR: ChartConfig = {
   color: "#dc2626",
   fill: "rgba(220,38,38,0.10)",
   getData: (tp) => tp.hr,
+  summaryAvg: (s) => s.hr,
 };
-const PACE = (): ChartConfig => ({
-  key: "pace",
-  label: "Pace",
-  unit: `min/${distanceUnit()}`,
-  color: "#c2410c",
-  fill: "rgba(194,65,12,0.10)",
-  // Pace from speed; ignore near-stops so the line doesn't spike to infinity.
-  getData: (tp) => {
-    const perUnit = isImperial() ? M_PER_MILE : 1000;
-    return speedSeries(tp).map((v) => (v != null && v > 0.5 ? perUnit / v / 60 : null));
-  },
-  valueFmt: fmtPace,
-  invertY: true,
-});
-const SWIM_PACE = (): ChartConfig => ({
-  key: "pace",
-  label: "Pace",
-  unit: `min/100${isImperial() ? "yd" : "m"}`,
-  color: "#c2410c",
-  fill: "rgba(194,65,12,0.10)",
-  // Swim pace per 100 m/yd; the near-stop cutoff sits lower than running's
-  // (0.2 m/s ≈ 8:20 /100m) — swim speeds live well below running speeds.
-  getData: (tp) => {
-    const per100 = isImperial() ? M_PER_100YD : 100;
-    return speedSeries(tp).map((v) => (v != null && v > 0.2 ? per100 / v / 60 : null));
-  },
-  valueFmt: fmtPace,
-  invertY: true,
-});
-const SPEED = (): ChartConfig => ({
-  key: "speed",
-  label: "Speed",
-  unit: speedUnit(),
-  color: "#3f7d4e",
-  fill: "rgba(63,125,78,0.10)",
-  getData: (tp) => {
-    const factor = isImperial() ? MPH_PER_MPS : 3.6;
-    return speedSeries(tp).map((v) => (v != null ? v * factor : null));
-  },
-});
+// Pace from speed; ignore near-stops so the line doesn't spike to infinity.
+// The cutoff and the per-unit distance are shared by the series and its
+// average so the two can never drift apart.
+const RUN_STOP_MPS = 0.5;
+const PACE = (): ChartConfig => {
+  const perUnit = isImperial() ? M_PER_MILE : 1000;
+  return {
+    key: "pace",
+    label: "Pace",
+    unit: `min/${distanceUnit()}`,
+    color: "#c2410c",
+    fill: "rgba(194,65,12,0.10)",
+    getData: (tp) =>
+      speedSeries(tp).map((v) => (v != null && v > RUN_STOP_MPS ? perUnit / v / 60 : null)),
+    summaryAvg: (s) => paceOfSpeed(s.speed_mps, perUnit),
+    sampleAvg: (_series, speedMps, t) => meanPace(speedMps, RUN_STOP_MPS, perUnit, t),
+    valueFmt: fmtPace,
+    invertY: true,
+  };
+};
+// Swim pace per 100 m/yd; the near-stop cutoff sits lower than running's
+// (0.2 m/s ≈ 8:20 /100m) — swim speeds live well below running speeds.
+const SWIM_STOP_MPS = 0.2;
+const SWIM_PACE = (): ChartConfig => {
+  const per100 = isImperial() ? M_PER_100YD : 100;
+  return {
+    key: "pace",
+    label: "Pace",
+    unit: `min/100${isImperial() ? "yd" : "m"}`,
+    color: "#c2410c",
+    fill: "rgba(194,65,12,0.10)",
+    getData: (tp) =>
+      speedSeries(tp).map((v) => (v != null && v > SWIM_STOP_MPS ? per100 / v / 60 : null)),
+    summaryAvg: (s) => paceOfSpeed(s.speed_mps, per100),
+    sampleAvg: (_series, speedMps, t) => meanPace(speedMps, SWIM_STOP_MPS, per100, t),
+    valueFmt: fmtPace,
+    invertY: true,
+  };
+};
+const SPEED = (): ChartConfig => {
+  const factor = isImperial() ? MPH_PER_MPS : 3.6;
+  return {
+    key: "speed",
+    label: "Speed",
+    unit: speedUnit(),
+    color: "#3f7d4e",
+    fill: "rgba(63,125,78,0.10)",
+    getData: (tp) => speedSeries(tp).map((v) => (v != null ? v * factor : null)),
+    summaryAvg: (s) => (s.speed_mps != null ? s.speed_mps * factor : null),
+  };
+};
 const CADENCE: ChartConfig = {
   key: "cadence",
   label: "Cadence",
@@ -163,6 +212,7 @@ const CADENCE: ChartConfig = {
   color: "#ca8a04",
   fill: "rgba(202,138,4,0.10)",
   getData: (tp) => tp.cadence,
+  summaryAvg: (s) => s.cadence,
 };
 const POWER: ChartConfig = {
   key: "power",
@@ -171,6 +221,7 @@ const POWER: ChartConfig = {
   color: "#7c3aed",
   fill: "rgba(124,58,237,0.10)",
   getData: (tp) => tp.power_w,
+  summaryAvg: (s) => s.power_w,
 };
 
 type XAxis = "distance" | "time";
@@ -231,6 +282,7 @@ function SingleChart({
   gradeValues,
   selectionStats,
   onSelectionMenu,
+  avgValue,
 }: {
   config: ChartConfig;
   xValues: number[];
@@ -256,6 +308,9 @@ function SingleChart({
   /** Right-click handler for the active selection box (client coords) —
    * opens the "Save segment" form. */
   onSelectionMenu?: (x: number, y: number) => void;
+  /** The metric's average (display units) — drawn as a dashed reference
+   * line with an "avg …" label; absent for charts without one (elevation). */
+  avgValue?: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -296,6 +351,57 @@ function SingleChart({
 
     const tickColor = chartTextColor();
     const gridColor = chartGridColor();
+    const inkColor = chartInkColor();
+    const surfaceColor = chartSurfaceColor();
+
+    // The "avg" reference: a dashed line across the plot with its value at
+    // the right edge. Drawn in the draw hook so it sits ON TOP of bars and
+    // lines; the label wears a surface-colored halo so it stays legible
+    // over whatever bar it crosses. Ink at reduced alpha keeps it apart
+    // from the grid (border token) on every chart alike. Canvas coordinates
+    // are device pixels (bbox / valToPos(…, true)), hence the pxRatio
+    // scaling — uPlot's own cached ratio, the one its bbox is scaled by.
+    const drawAverage = (u: uPlot) => {
+      if (avgValue == null || !isFinite(avgValue)) return;
+      const pxr = uPlot.pxRatio || 1;
+      const lineW = Math.round(pxr);
+      const { left, width, top, height } = u.bbox;
+      const layout = avgLineLayout(
+        u.valToPos(avgValue, "y", true),
+        top,
+        height,
+        lineW,
+        16 * pxr,
+      );
+      if (!layout) return;
+      const { y, side } = layout;
+      const ctx = u.ctx;
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([4 * pxr, 4 * pxr]);
+      ctx.lineWidth = lineW;
+      ctx.strokeStyle = inkColor;
+      ctx.globalAlpha = 0.55;
+      ctx.moveTo(left, y);
+      ctx.lineTo(left + width, y);
+      ctx.stroke();
+
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+      ctx.font = `600 ${11 * pxr}px sans-serif`;
+      ctx.textAlign = "right";
+      ctx.textBaseline = side === "above" ? "bottom" : "top";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 3 * pxr;
+      ctx.strokeStyle = surfaceColor;
+      ctx.fillStyle = inkColor;
+      const text = `avg ${fmtVal(avgValue)}`;
+      const tx = left + width - 4 * pxr;
+      const ty = side === "above" ? y - 2 * pxr : y + 2 * pxr;
+      ctx.strokeText(text, tx, ty);
+      ctx.fillText(text, tx, ty);
+      ctx.restore();
+    };
 
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
@@ -318,6 +424,7 @@ function SingleChart({
         ? {}
         : { select: { show: false, left: 0, top: 0, width: 0, height: 0 } }),
       hooks: {
+        draw: [drawAverage],
         ...(selectionStats
           ? {
               setSelect: [
@@ -409,9 +516,16 @@ function SingleChart({
         },
         // dir:-1 puts small values (fast pace) at the top.
         ...(config.invertY ? { y: { dir: -1 as const } } : {}),
-        // Bars use the design's padded, tens-rounded range (per metric).
+        // Bars use the design's padded, tens-rounded range (per metric),
+        // widened first to span the average — bucket-max bars can all sit
+        // above the true mean, which would push the avg line off the plot.
         ...(barZones && barRange
-          ? { y: { range: (_u: uPlot, min: number, max: number) => barRange(min, max) } }
+          ? {
+              y: {
+                range: (_u: uPlot, min: number, max: number) =>
+                  barRange(...rangeSpanning(min, max, avgValue)),
+              },
+            }
           : {}),
       },
       axes: [
@@ -572,7 +686,7 @@ function SingleChart({
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues]);
+  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, avgValue]);
 
   // Sync selection FROM external sources (segment-effort click) → chart:
   // draw uPlot's select box over the published trackpoint range. The box is
@@ -673,7 +787,14 @@ function normalizeOrder(order: ChartType[]): ChartType[] {
   return [...order.filter((k) => DEFAULT_ORDER.includes(k)), ...DEFAULT_ORDER.filter((k) => !seen.has(k))];
 }
 
-export function ChartPanel({ trackpoints, sport, timeInZones, ftpW, segmentSource }: Props) {
+export function ChartPanel({
+  trackpoints,
+  sport,
+  timeInZones,
+  ftpW,
+  segmentSource,
+  summaryAverages,
+}: Props) {
   const showPace = isPaceSport(sport);
   // Right-click on the elevation selection → "Save segment" form at the
   // click point. The range snapshot is taken at open so a later selection
@@ -729,6 +850,43 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW, segmentSourc
     () => configs.filter((c) => hasData(seriesByKey.get(c.key) ?? [])),
     [configs, seriesByKey],
   );
+  // Per-metric value for the "avg" reference line: the device's summary
+  // average where the caller has one (it matches the summary tiles), else
+  // the time-weighted mean of the charted samples — a focused leg's slice
+  // averages that leg, a GPX import needs no summary at all. Pace needs the
+  // raw speeds (its series is already inverted into min/unit), materialized
+  // once here rather than re-derived per config.
+  // Keyed on the summary's primitives: callers pass a fresh object literal
+  // per render, and the pace fallback's speedSeries pass is O(N).
+  const { hr: sumHr, power_w: sumPower, cadence: sumCadence, speed_mps: sumSpeed } =
+    summaryAverages ?? {};
+  const averages = useMemo(() => {
+    const summary: SummaryAverages = {
+      hr: sumHr,
+      power_w: sumPower,
+      cadence: sumCadence,
+      speed_mps: sumSpeed,
+    };
+    const m = new Map<ChartType, number | null>();
+    const needsSpeed = available.some((c) => c.key === "pace");
+    const speedMps = needsSpeed ? speedSeries(trackpoints) : [];
+    for (const c of available) {
+      if (c.noAverage) continue;
+      const fromSummary = c.summaryAvg?.(summary);
+      if (fromSummary != null && isFinite(fromSummary)) {
+        m.set(c.key, fromSummary);
+        continue;
+      }
+      const series = seriesByKey.get(c.key) ?? [];
+      m.set(
+        c.key,
+        c.sampleAvg
+          ? c.sampleAvg(series, speedMps, trackpoints.t)
+          : seriesMean(series, trackpoints.t),
+      );
+    }
+    return m;
+  }, [available, seriesByKey, trackpoints, sumHr, sumPower, sumCadence, sumSpeed]);
 
   // Persisted, drag-reorderable global chart order.
   const { data: savedOrder } = useQuery({
@@ -1038,6 +1196,7 @@ export function ChartPanel({ trackpoints, sport, timeInZones, ftpW, segmentSourc
                   ? openSegmentMenu
                   : undefined
               }
+              avgValue={averages.get(config.key)}
             />
           </div>
         ))}

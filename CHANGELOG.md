@@ -10,6 +10,9 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Settings: "Open another…" next to the vault location switches to a
   different existing vault without moving anything — the current vault stays
   on disk. The old "Change" button is now "Move…" and does what it always did.
+- Activity charts: every metric chart (heart rate, power, cadence, speed or
+  pace) draws its average as a dashed reference line with an `avg …` label,
+  the same number the summary tiles show.
 
 ### Fixed
 - "Create new vault…" on the boot-error screen no longer creates a vault

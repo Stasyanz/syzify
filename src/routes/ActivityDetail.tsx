@@ -509,6 +509,18 @@ export function ActivityDetailPage() {
                 timeInZones={data.time_in_zones}
                 ftpW={activity.threshold_power_w}
                 segmentSource={segmentSourceFor(focusedLeg, activity.id)}
+                summaryAverages={
+                  focusedLeg
+                    ? // A leg's summary carries HR and speed only; power and
+                      // cadence fall back to the leg's own samples.
+                      { hr: focusedLeg.avg_hr, speed_mps: focusedLeg.avg_speed_mps }
+                    : {
+                        hr: activity.avg_hr,
+                        power_w: activity.avg_power_w,
+                        cadence: activity.avg_cadence,
+                        speed_mps: activity.avg_speed_mps,
+                      }
+                }
               />
 
               {/* Segment efforts — full-track indices, so not in leg focus
