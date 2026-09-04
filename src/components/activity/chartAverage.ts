@@ -97,6 +97,82 @@ export function snapLineY(y: number, lineWidth: number): number {
   return Math.round(y) + (Math.round(lineWidth) % 2 === 1 ? 0.5 : 0);
 }
 
+/** The slice of CanvasRenderingContext2D the avg line needs — narrow so a
+ * recording fake can stand in for it in tests. */
+export interface AvgLineContext {
+  save(): void;
+  restore(): void;
+  beginPath(): void;
+  setLineDash(segments: number[]): void;
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  stroke(): void;
+  strokeText(text: string, x: number, y: number): void;
+  fillText(text: string, x: number, y: number): void;
+  lineWidth: number;
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  fillStyle: string | CanvasGradient | CanvasPattern;
+  globalAlpha: number;
+  font: string;
+  textAlign: CanvasTextAlign;
+  textBaseline: CanvasTextBaseline;
+  lineJoin: CanvasLineJoin;
+}
+
+export interface AvgLineOptions {
+  /** Plot area in device pixels (uPlot's bbox). */
+  bbox: { left: number; top: number; width: number; height: number };
+  /** The average's y in device pixels (valToPos(…, "y", true)). */
+  linePos: number;
+  /** Device pixels per CSS pixel — uPlot's own cached ratio. */
+  pxRatio: number;
+  /** The label, e.g. "avg 213 W". */
+  text: string;
+  /** Ink (line at reduced alpha, label at full). */
+  ink: string;
+  /** Surface color for the halo under the label. */
+  surface: string;
+}
+
+/** Draw the "avg" reference: a dashed line across the plot with its value
+ * at the right edge, the label wearing a surface-colored halo so it stays
+ * legible over whatever bar it crosses. Ink at reduced alpha keeps the line
+ * apart from the grid on every chart alike. Returns false (nothing drawn)
+ * when the line falls outside the plot. */
+export function drawAverageLine(ctx: AvgLineContext, o: AvgLineOptions): boolean {
+  const pxr = o.pxRatio || 1;
+  const lineW = Math.round(pxr);
+  const { left, width, top, height } = o.bbox;
+  const layout = avgLineLayout(o.linePos, top, height, lineW, 16 * pxr);
+  if (!layout) return false;
+  const { y, side } = layout;
+  ctx.save();
+  ctx.beginPath();
+  ctx.setLineDash([4 * pxr, 4 * pxr]);
+  ctx.lineWidth = lineW;
+  ctx.strokeStyle = o.ink;
+  ctx.globalAlpha = 0.55;
+  ctx.moveTo(left, y);
+  ctx.lineTo(left + width, y);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.font = `600 ${11 * pxr}px sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = side === "above" ? "bottom" : "top";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3 * pxr;
+  ctx.strokeStyle = o.surface;
+  ctx.fillStyle = o.ink;
+  const tx = left + width - 4 * pxr;
+  const ty = side === "above" ? y - 2 * pxr : y + 2 * pxr;
+  ctx.strokeText(o.text, tx, ty);
+  ctx.fillText(o.text, tx, ty);
+  ctx.restore();
+  return true;
+}
+
 /** Canvas placement of the avg line inside the plot area: the snapped y
  * and the label's side; null when the line falls outside the plot. The
  * y-range is widened to span the average beforehand (rangeSpanning), so

@@ -2,12 +2,97 @@ import { describe, expect, it } from "vitest";
 import {
   avgLabelSide,
   avgLineLayout,
+  drawAverageLine,
   meanPace,
   paceOfSpeed,
   rangeSpanning,
   seriesMean,
   snapLineY,
+  type AvgLineContext,
 } from "./chartAverage";
+
+/** A canvas context that records every call and property write in order. */
+function recordingContext(): { ctx: AvgLineContext; log: string[] } {
+  const log: string[] = [];
+  const state: Record<string, unknown> = {};
+  const call =
+    (name: string) =>
+    (...args: unknown[]) => {
+      log.push(`${name}(${args.map((a) => JSON.stringify(a)).join(",")})`);
+    };
+  const ctx = new Proxy({} as AvgLineContext, {
+    get: (_t, prop: string) => {
+      if (prop in state) return state[prop];
+      return call(prop);
+    },
+    set: (_t, prop: string, value) => {
+      state[prop] = value;
+      log.push(`${prop}=${JSON.stringify(value)}`);
+      return true;
+    },
+  });
+  return { ctx, log };
+}
+
+describe("drawAverageLine", () => {
+  const bbox = { left: 40, top: 10, width: 400, height: 200 };
+  const base = { bbox, pxRatio: 2, text: "avg 213 W", ink: "#000", surface: "#fff" };
+
+  it("draws a dashed line across the plot and a haloed label above it", () => {
+    const { ctx, log } = recordingContext();
+    expect(drawAverageLine(ctx, { ...base, linePos: 100.4 })).toBe(true);
+    expect(log).toEqual([
+      "save()",
+      "beginPath()",
+      "setLineDash([8,8])",
+      "lineWidth=2",
+      'strokeStyle="#000"',
+      "globalAlpha=0.55",
+      "moveTo(40,100)",
+      "lineTo(440,100)",
+      "stroke()",
+      "globalAlpha=1",
+      "setLineDash([])",
+      'font="600 22px sans-serif"',
+      'textAlign="right"',
+      'textBaseline="bottom"',
+      'lineJoin="round"',
+      "lineWidth=6",
+      'strokeStyle="#fff"',
+      'fillStyle="#000"',
+      'strokeText("avg 213 W",432,96)',
+      'fillText("avg 213 W",432,96)',
+      "restore()",
+    ]);
+  });
+
+  it("puts the label below a line near the top", () => {
+    const { ctx, log } = recordingContext();
+    drawAverageLine(ctx, { ...base, linePos: 20 });
+    expect(log).toContain('textBaseline="top"');
+    expect(log).toContain('fillText("avg 213 W",432,24)');
+  });
+
+  it("snaps an odd-width line to a half pixel at ratio 1", () => {
+    const { ctx, log } = recordingContext();
+    drawAverageLine(ctx, { ...base, pxRatio: 1, linePos: 100.4 });
+    expect(log).toContain("moveTo(40,100.5)");
+    expect(log).toContain("lineWidth=1");
+  });
+
+  it("treats a missing pixel ratio as 1", () => {
+    const { ctx, log } = recordingContext();
+    drawAverageLine(ctx, { ...base, pxRatio: 0, linePos: 100.4 });
+    expect(log).toContain("setLineDash([4,4])");
+  });
+
+  it("draws nothing and touches no state when the line is off the plot", () => {
+    const { ctx, log } = recordingContext();
+    expect(drawAverageLine(ctx, { ...base, linePos: 5 })).toBe(false);
+    expect(drawAverageLine(ctx, { ...base, linePos: NaN })).toBe(false);
+    expect(log).toEqual([]);
+  });
+});
 
 describe("seriesMean", () => {
   it("averages the samples evenly without timestamps", () => {
