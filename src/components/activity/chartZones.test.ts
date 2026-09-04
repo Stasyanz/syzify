@@ -45,40 +45,104 @@ const zone = (
 });
 
 describe("hrZoneRanges", () => {
-  it("builds contiguous top-anchored ranges from unsorted FIT boundaries", () => {
-    // Garmin-style 5 boundaries → 6 ranges, deliberately out of order.
-    const ranges = hrZoneRanges([
-      zone(3, 165),
-      zone(0, 115),
-      zone(4, 185),
-      zone(1, 135),
-      zone(2, 150),
-    ]);
-    expect(ranges).toHaveLength(6);
+  // The shape every Garmin FIT in the vault carries (fenix 6X, 2026-09-04
+  // ride, max HR 186): bucket 0 = below Z1 with the Z1 floor as its
+  // ceiling, 1–5 = Z1–Z5 with ceilings, 6 = above max, no boundary.
+  const fenix = [
+    zone(6, null),
+    zone(3, 149),
+    zone(0, 93),
+    zone(5, 186),
+    zone(1, 112),
+    zone(4, 167),
+    zone(2, 130),
+  ];
+
+  it("colors by zone index: below-Z1 shares Z1's green, Z5 is maximum, above max stays maximum", () => {
+    const ranges = hrZoneRanges(fenix);
+    expect(ranges.map((r) => r.to)).toEqual([93, 112, 130, 149, 167, 186, Infinity]);
     // Contiguous cover of [0, ∞).
     expect(ranges[0].from).toBe(0);
     for (let i = 1; i < ranges.length; i++) {
       expect(ranges[i].from).toBe(ranges[i - 1].to);
     }
-    expect(ranges[5].to).toBe(Infinity);
-    // Hot end anchored: top range dark red; the two coolest share green.
-    expect(ranges[5].color).toBe(HR_ZONE_COLORS[4]);
-    expect(ranges[0].color).toBe(HR_ZONE_COLORS[0]);
-    expect(ranges[1].color).toBe(HR_ZONE_COLORS[0]);
+    expect(ranges.map((r) => r.color)).toEqual([
+      HR_ZONE_COLORS[0], // below Z1
+      HR_ZONE_COLORS[0], // Z1 recovery
+      HR_ZONE_COLORS[1], // Z2 easy — used to read as green
+      HR_ZONE_COLORS[2], // Z3 aerobic
+      HR_ZONE_COLORS[3], // Z4 threshold
+      HR_ZONE_COLORS[4], // Z5 maximum — used to read as threshold red
+      HR_ZONE_COLORS[4], // above the configured max
+    ]);
+    // The bars of the ride that exposed the bug.
+    expect(zoneColorFor(128, ranges)).toBe(HR_ZONE_COLORS[1]);
+    expect(zoneColorFor(170, ranges)).toBe(HR_ZONE_COLORS[4]);
   });
 
-  it("ignores power zones and degenerate boundaries", () => {
+  it("folds degenerate middle boundaries into the next zone and ignores other metrics", () => {
     const ranges = hrZoneRanges([
       zone(0, 115),
-      zone(1, 115), // repeated — dropped
-      zone(2, 0), // zero — dropped
-      zone(3, null), // missing — dropped
+      zone(1, 115), // repeated — folds into Z2
+      zone(2, 0), // zero — folds
+      zone(3, null), // missing — folds
       zone(4, 185),
+      zone(5, 195),
       zone(0, 250, "power"), // other metric — dropped
     ]);
-    // Two usable boundaries → 3 ranges, hottest at the top.
     expect(ranges.map((r) => r.to)).toEqual([115, 185, Infinity]);
-    expect(ranges[2].color).toBe(HR_ZONE_COLORS[4]);
+    // The surviving buckets keep THEIR zone's color: 4 → threshold.
+    expect(ranges.map((r) => r.color)).toEqual([
+      HR_ZONE_COLORS[0],
+      HR_ZONE_COLORS[3],
+      HR_ZONE_COLORS[4],
+    ]);
+  });
+
+  it("treats the top index as open-ended whatever ceiling it stores", () => {
+    // A device that writes Z5's ceiling (= max HR) but no above-max bucket:
+    // HR past the configured max is still Z5, not "outside every range".
+    const ranges = hrZoneRanges([zone(0, 93), zone(1, 112), zone(5, 186)]);
+    expect(ranges.map((r) => r.to)).toEqual([93, 112, Infinity]);
+    expect(zoneColorFor(195, ranges)).toBe(HR_ZONE_COLORS[4]);
+  });
+
+  it("survives per-lap duplicates: the top index stays open, no sentinel sneaks back", () => {
+    // The parser keeps one row set per lap plus the session's — every
+    // index appears several times. A positional "last row" rule would
+    // read a lap's copy of the top ceiling as a real boundary.
+    const twoLaps = [...fenix, ...fenix];
+    expect(hrZoneRanges(twoLaps)).toEqual(hrZoneRanges(fenix));
+    const power = [0, 129, 176, 212, 247, 282, 353, 3393].map((b, i) => zone(i, b, "power"));
+    const ranges = powerZoneRanges([...power, ...power, ...power]);
+    expect(ranges!.map((r) => r.to)).toEqual([129, 176, 212, 247, 282, 353, Infinity]);
+  });
+
+  it("lets a usable lap copy fill a null session boundary, and vice versa", () => {
+    // The 38 multisport activities in the vault carry partially null
+    // boundaries next to lap copies of the same index — whichever row of
+    // an index has a real ceiling wins, regardless of order.
+    const holes = fenix.map((z) => (z.zone_index === 2 ? { ...z, zone_high_boundary: null } : z));
+    expect(hrZoneRanges([...holes, ...fenix])).toEqual(hrZoneRanges(fenix));
+    expect(hrZoneRanges([...fenix, ...holes])).toEqual(hrZoneRanges(fenix));
+  });
+
+  it("maps bucket 0 to Z1 for a writer without a below-Z1 bucket (one bucket per zone)", () => {
+    // Not a Garmin shape (none in the vault) — exactly as many buckets as
+    // the palette has zones, so index 0 IS zone 1 and nothing shifts.
+    const ranges = hrZoneRanges([
+      zone(0, 120),
+      zone(1, 140),
+      zone(2, 160),
+      zone(3, 175),
+      zone(4, 190),
+    ]);
+    expect(ranges.map((r) => r.to)).toEqual([120, 140, 160, 175, Infinity]);
+    expect(ranges.map((r) => r.color)).toEqual(HR_ZONE_COLORS);
+  });
+
+  it("refuses a two-bucket device (one boundary is not a zone system) so the defaults take over", () => {
+    expect(hrZoneRanges([zone(0, 100), zone(1, 140)])).toBe(DEFAULT_HR_RANGES);
   });
 
   it("falls back to the design defaults without usable boundaries", () => {
@@ -89,24 +153,34 @@ describe("hrZoneRanges", () => {
 });
 
 describe("powerZoneRanges", () => {
-  it("builds ranges from power boundaries, one distinct color per zone", () => {
-    // Coggan-style 6 boundaries → 7 ranges — exactly the power palette.
+  it("maps Garmin's 8 power buckets 1:1 onto the 7 zones, ignoring the sentinel ceiling", () => {
+    // The fenix 6X rows of the 2026-09-04 ride at FTP 235: bucket 0 is an
+    // empty 0 W zone, 1–7 are Coggan Z1–Z7, and Z7's stored ceiling
+    // (3393 W) is a sentinel, not a boundary. Read as a boundary it made
+    // an 8th range and shifted every color one zone too cool.
     const ranges = powerZoneRanges([
-      zone(0, 150, "power"),
-      zone(1, 200, "power"),
-      zone(2, 250, "power"),
-      zone(3, 300, "power"),
-      zone(4, 350, "power"),
-      zone(5, 420, "power"),
+      zone(0, 0, "power"),
+      zone(1, 129, "power"),
+      zone(2, 176, "power"),
+      zone(3, 212, "power"),
+      zone(4, 247, "power"),
+      zone(5, 282, "power"),
+      zone(6, 353, "power"),
+      zone(7, 3393, "power"),
       zone(0, 115), // hr row — must not leak in
     ]);
     expect(ranges).not.toBeNull();
-    expect(ranges!).toHaveLength(7);
+    expect(ranges!.map((r) => r.to)).toEqual([129, 176, 212, 247, 282, 353, Infinity]);
     expect(ranges![0].from).toBe(0);
-    expect(ranges![6].to).toBe(Infinity);
     // Every zone gets its own color — Z6 vs Z7 used to merge into one red.
     expect(ranges!.map((r) => r.color)).toEqual(POWER_ZONE_COLORS);
-    expect(new Set(ranges!.map((r) => r.color)).size).toBe(7);
+    // The bars that exposed the bug: 210 W is Z3 tempo (teal), not Z2 green.
+    expect(zoneColorFor(210, ranges!)).toBe(POWER_ZONE_COLORS[2]);
+    expect(zoneColorFor(233, ranges!)).toBe(POWER_ZONE_COLORS[3]);
+    expect(zoneColorFor(272, ranges!)).toBe(POWER_ZONE_COLORS[4]);
+    expect(zoneColorFor(331, ranges!)).toBe(POWER_ZONE_COLORS[5]);
+    expect(zoneColorFor(450, ranges!)).toBe(POWER_ZONE_COLORS[6]);
+    expect(zoneColorFor(4000, ranges!)).toBe(POWER_ZONE_COLORS[6]);
   });
 
   it("returns null without usable power boundaries — no FTP, no zones", () => {
@@ -133,8 +207,14 @@ describe("powerZoneRanges", () => {
   });
 
   it("real FIT boundaries beat the FTP fallback; bad FTP stays a line", () => {
-    const ranges = powerZoneRanges([zone(0, 100, "power"), zone(1, 200, "power")], 299);
+    const ranges = powerZoneRanges(
+      [zone(0, 100, "power"), zone(1, 200, "power"), zone(2, null, "power")],
+      299,
+    );
     expect(ranges!.map((r) => r.to)).toEqual([100, 200, Infinity]);
+    // Two buckets carry one boundary → the FTP-derived Coggan zones win.
+    const flat = powerZoneRanges([zone(0, 100, "power"), zone(1, 200, "power")], 299);
+    expect(flat!).toHaveLength(8);
     expect(powerZoneRanges([], 0)).toBeNull();
     expect(powerZoneRanges([], null)).toBeNull();
     expect(powerZoneRanges([], NaN)).toBeNull();
@@ -173,16 +253,26 @@ describe("cadenceZoneRanges", () => {
   const runValues = (base: number) =>
     Array.from({ length: 100 }, (_, i) => base + (i % 10));
 
-  it("prefers FIT boundaries for any sport", () => {
+  it("prefers FIT boundaries for any sport, colored by zone index", () => {
+    // Garmin bucket shape: below-Z1, Z1–Z5 with ceilings, above-top open.
     const ranges = cadenceZoneRanges(
-      [zone(0, 70, "cadence"), zone(1, 85, "cadence")],
+      [
+        zone(0, 60, "cadence"),
+        zone(1, 75, "cadence"),
+        zone(2, 90, "cadence"),
+        zone(3, 105, "cadence"),
+        zone(4, 120, "cadence"),
+        zone(5, null, "cadence"),
+      ],
       "ride",
       runValues(75),
     );
     expect(ranges).not.toBeNull();
-    expect(ranges!.map((r) => r.to)).toEqual([70, 85, Infinity]);
-    // Cadence palette anchors its top (brown) to the highest range.
-    expect(ranges![2].color).toBe(CADENCE_ZONE_COLORS[4]);
+    expect(ranges!.map((r) => r.to)).toEqual([60, 75, 90, 105, 120, Infinity]);
+    // Zone 5 wears the brown top; below-Z1 shares Z1's red.
+    expect(ranges![5].color).toBe(CADENCE_ZONE_COLORS[4]);
+    expect(ranges![0].color).toBe(CADENCE_ZONE_COLORS[0]);
+    expect(ranges![1].color).toBe(CADENCE_ZONE_COLORS[0]);
   });
 
   it("falls back to Garmin run thresholds, halved for per-leg data", () => {
@@ -198,6 +288,8 @@ describe("cadenceZoneRanges", () => {
 
   it("rides get the fixed rpm bands (crank rpm — no per-leg halving)", () => {
     const ranges = cadenceZoneRanges([], "ride", runValues(85));
+    // A two-bucket device (one boundary) yields to the same fixed bands.
+    expect(cadenceZoneRanges([zone(0, 70, "cadence"), zone(1, 85, "cadence")], "ride", runValues(85))).toEqual(ranges);
     expect(ranges!.map((r) => r.to)).toEqual([60, 75, 90, 105, Infinity]);
     // 85 rpm sits in the optimal green band; 110+ is the brown top.
     expect(zoneColorFor(85, ranges!)).toBe(CADENCE_ZONE_COLORS[2]);
@@ -216,14 +308,21 @@ describe("cadenceZoneRanges", () => {
 describe("speedZoneRanges", () => {
   it("prefers FIT boundaries (m/s) converted to the display unit", () => {
     const ranges = speedZoneRanges(
-      [zone(0, 5, "speed"), zone(1, 10, "speed")],
+      [
+        zone(0, 2.5, "speed"),
+        zone(1, 5, "speed"),
+        zone(2, 7.5, "speed"),
+        zone(3, 10, "speed"),
+        zone(4, 12.5, "speed"),
+        zone(5, null, "speed"),
+      ],
       "run", // FIT zones apply to any sport
       3.6,
     );
     expect(ranges).not.toBeNull();
-    expect(ranges!.map((r) => r.to)).toEqual([18, 36, Infinity]);
-    // Inverted palette: the fastest range reads green.
-    expect(ranges![2].color).toBe(SPEED_ZONE_COLORS[4]);
+    expect(ranges!.map((r) => r.to)).toEqual([9, 18, 27, 36, 45, Infinity]);
+    // Inverted palette: the fastest zone reads green.
+    expect(ranges![5].color).toBe(SPEED_ZONE_COLORS[4]);
     expect(SPEED_ZONE_COLORS[4]).toBe(HR_ZONE_COLORS[0]);
   });
 

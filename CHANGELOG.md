@@ -15,6 +15,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   the same number the summary tiles show.
 
 ### Fixed
+- Zone-colored bars (heart rate, power) painted every bar one zone too cool
+  when the FIT file carried zone boundaries: Garmin's top bucket ceiling is
+  a sentinel, not a boundary. Colors now follow the device's zone index —
+  Z2 easy is gold, Z5 maximum is dark red, power Z3 tempo is teal.
 - Calendars and the dashboard roll over to the new day at midnight on their
   own: the "today" mark moves, a calendar showing the current month follows
   a month change, and the This Week tiles and 7-day volume chart refetch

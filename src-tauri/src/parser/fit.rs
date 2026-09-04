@@ -71,10 +71,12 @@ fn decode_lr_balance(raw: f64, scale100: bool) -> Option<f64> {
 
 /// Choose which TimeInZone messages feed the activity's zone rows. Garmin
 /// writes one message per LAP plus one per SESSION (`reference_mesg` labels
-/// each); ingesting all of them duplicated every zone row — invisible today
-/// (the UI only reads boundaries, which dedup), but any "time in zones"
-/// feature would multiply times by the lap count + 1. Keep session-scoped
-/// messages when any exist; unlabeled files keep everything.
+/// each); ingesting all of them duplicated every zone row. Vaults imported
+/// before this selection still hold those duplicates: the chart code keys
+/// buckets by `zone_index` (chartZones.ts `deviceZoneRanges`) so they stay
+/// harmless there, but any "time in zones" feature would multiply times by
+/// the lap count + 1. Keep session-scoped messages when any exist;
+/// unlabeled files keep everything.
 fn select_time_in_zones(
     groups: Vec<(Option<String>, Vec<TimeInZone>)>,
 ) -> Vec<TimeInZone> {

@@ -30,24 +30,72 @@ export const DEFAULT_HR_RANGES: ZoneRange[] = [
   { from: 175, to: Infinity, color: HR_ZONE_COLORS[4] },
 ];
 
-/** Usable boundaries of one zone type: sorted by zone index, degenerate
- * values (zero, repeats, nulls) dropped, strictly increasing. */
-function zoneBoundaries(zones: TimeInZone[], zoneType: string): number[] {
-  const bounds: number[] = [];
-  for (const z of [...zones].sort((a, b) => a.zone_index - b.zone_index)) {
+/** Zone ranges from the device's own time_in_zone buckets, colored by ZONE
+ * INDEX: bucket k is zone k and wears palette[k − 1]. Garmin writes one
+ * bucket per index — 0 is "below zone 1" (its ceiling is the Z1 floor; for
+ * power it is 0 W and folds away), 1…N are the zones with their ceilings,
+ * and the top bucket is open-ended by definition: HR's "above max" bucket
+ * carries no boundary, power's zone 7 carries a SENTINEL ceiling (3393 /
+ * 5540 W). Reading that sentinel as a real boundary once made 8 ranges out
+ * of a 7-color palette and painted every bar one zone too cool; anchoring
+ * the palette to the top end did the same to HR (Z1 and Z2 both green, the
+ * "maximum" color reserved for HR above the configured max). So: below-Z1
+ * shares the coolest color, everything above the last bucket keeps the
+ * hottest, and the top INDEX's stored ceiling is ignored. Rows are keyed
+ * by index first — the parser keeps one copy per lap AND the session, so
+ * positional "last row" would let a lap's copy of the sentinel back in as
+ * a boundary. Degenerate middle boundaries (null, non-increasing) fold
+ * into the next zone. Null unless at least three ranges in two colors
+ * survive — two buckets carry a single boundary, not a zone system, and
+ * must not displace a proper fallback (Coggan-from-FTP, the fixed bands).
+ * `scale` converts recorded units to display units (speed: m/s → km/h). */
+function deviceZoneRanges(
+  zones: TimeInZone[],
+  zoneType: string,
+  palette: string[],
+  scale = 1,
+): ZoneRange[] | null {
+  // First usable boundary per zone index (lap copies repeat the session's).
+  const byIndex = new Map<number, number | null>();
+  for (const z of zones) {
     if (z.zone_type !== zoneType) continue;
     const b = z.zone_high_boundary;
-    if (b == null || !isFinite(b) || b <= 0) continue;
-    if (bounds.length === 0 || b > bounds[bounds.length - 1]) bounds.push(b);
+    const usable = b != null && isFinite(b);
+    if (!byIndex.has(z.zone_index) || (usable && byIndex.get(z.zone_index) == null)) {
+      byIndex.set(z.zone_index, usable ? b : null);
+    }
   }
-  return bounds;
+  const indices = [...byIndex.keys()].sort((a, b) => a - b);
+  const top = indices[indices.length - 1];
+  // Garmin's below-Z1 bucket makes MORE buckets than the palette has zones
+  // (HR 7 = 5 + below + above, power 8 = 7 + below) and puts zone k at
+  // index k. A writer with exactly one bucket per zone would put Z1 at
+  // index 0 — no such device in the vault, but a FIT can come from
+  // anything, and the same one-step shift the other way would be silent.
+  const offset = indices.length > palette.length ? 1 : 0;
+  const out: ZoneRange[] = [];
+  let from = 0;
+  for (const index of indices) {
+    const b = byIndex.get(index);
+    const to = index === top ? Infinity : b == null ? NaN : b * scale;
+    // A missing/non-increasing ceiling folds its span into the NEXT zone,
+    // which then wears its own (hotter) color over the merged span.
+    if (!(to > from)) continue;
+    const color = palette[Math.min(palette.length - 1, Math.max(0, index - offset))];
+    out.push({ from, to, color });
+    from = to;
+  }
+  // Note for future consumers: the range count is NOT the palette length
+  // (7 HR ranges over 5 colors) — index ranges by value (zoneColorFor),
+  // never by position.
+  const distinct = new Set(out.map((r) => r.color)).size;
+  return out.length >= 3 && distinct >= 2 ? out : null;
 }
 
 /** Contiguous ranges over [0, ∞) from strictly-increasing boundaries, the
- * palette anchored to the TOP end — the top range always gets the palette's
- * last color no matter how many zones the device reports, extra bottom
- * ranges reuse the first (Garmin's 5 HR boundaries make 6 ranges: below-Z1
- * and Z1 both read as recovery green; 6 power boundaries spread the same). */
+ * palette anchored to the TOP end — for the FIXED band lists (Coggan
+ * %-of-FTP, ride cadence/speed, run cadence), whose bound counts match
+ * their palettes. Device buckets go through deviceZoneRanges instead. */
 function rangesFromBoundaries(
   bounds: number[],
   palette: string[] = HR_ZONE_COLORS,
@@ -65,8 +113,7 @@ function rangesFromBoundaries(
 /** HR zone ranges for an activity — its FIT boundaries, else the design
  * defaults (HR thresholds are universal enough for a fallback). */
 export function hrZoneRanges(zones: TimeInZone[]): ZoneRange[] {
-  const bounds = zoneBoundaries(zones, "hr");
-  return bounds.length < 2 ? DEFAULT_HR_RANGES : rangesFromBoundaries(bounds);
+  return deviceZoneRanges(zones, "hr", HR_ZONE_COLORS) ?? DEFAULT_HR_RANGES;
 }
 
 /** Coggan power zone ceilings as fractions of FTP — the de-facto standard
@@ -104,8 +151,8 @@ export function powerZoneRanges(
   zones: TimeInZone[],
   ftpW?: number | null,
 ): ZoneRange[] | null {
-  const bounds = zoneBoundaries(zones, "power");
-  if (bounds.length >= 2) return rangesFromBoundaries(bounds, POWER_ZONE_COLORS);
+  const device = deviceZoneRanges(zones, "power", POWER_ZONE_COLORS);
+  if (device) return device;
   if (ftpW != null && isFinite(ftpW) && ftpW > 0) {
     // The sprint band rides ON TOP of the 7 Coggan zones — appended
     // explicitly (boundary + color) rather than folded into the palette,
@@ -153,8 +200,8 @@ export function cadenceZoneRanges(
   sport: string,
   values: number[],
 ): ZoneRange[] | null {
-  const bounds = zoneBoundaries(zones, "cadence");
-  if (bounds.length >= 2) return rangesFromBoundaries(bounds, CADENCE_ZONE_COLORS);
+  const device = deviceZoneRanges(zones, "cadence", CADENCE_ZONE_COLORS);
+  if (device) return device;
 
   if (sport === "ride") {
     return rangesFromBoundaries(RIDE_CADENCE_RPM_BOUNDS, CADENCE_ZONE_COLORS);
@@ -213,10 +260,8 @@ export function speedZoneRanges(
   sport: string,
   mpsToUnit: number,
 ): ZoneRange[] | null {
-  const bounds = zoneBoundaries(zones, "speed");
-  if (bounds.length >= 2) {
-    return rangesFromBoundaries(bounds.map((b) => b * mpsToUnit), SPEED_ZONE_COLORS);
-  }
+  const device = deviceZoneRanges(zones, "speed", SPEED_ZONE_COLORS, mpsToUnit);
+  if (device) return device;
   if (sport !== "ride") return null;
   return rangesFromBoundaries(
     RIDE_SPEED_BOUNDS_KMH.map((kmh) => (kmh / 3.6) * mpsToUnit),
