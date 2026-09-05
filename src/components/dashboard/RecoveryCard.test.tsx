@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecoveryCard as Card } from "../../lib/types";
 
@@ -168,6 +168,71 @@ describe("RecoveryCard", () => {
     await waitFor(() => third.getByText("No full night recorded yet"));
     third.getByText(/5 days of monitoring in the last 90/);
     expect(third.container.textContent).not.toContain("Monitor folder");
+  });
+
+  it("stretches the time axis to the width the row leaves it", async () => {
+    // happy-dom has no ResizeObserver; stand one in that reports on observe.
+    let callback: ResizeObserverCallback | undefined;
+    const disconnect = vi.fn();
+    class FakeRO {
+      constructor(cb: ResizeObserverCallback) {
+        callback = cb;
+      }
+      observe() {
+        callback?.([{ contentRect: { width: 420 } } as ResizeObserverEntry], this as never);
+      }
+      unobserve() {}
+      disconnect = disconnect;
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    try {
+      vi.mocked(api.getRecovery).mockResolvedValue(full);
+      const { container, getByTestId, unmount } = renderCard();
+      await waitFor(() => getByTestId("recovery-index"));
+      const svg = container.querySelector("svg")!;
+      expect(svg.getAttribute("width")).toBe("420");
+      // The last night sits at the right edge of whatever width it got.
+      const circles = container.querySelectorAll("circle");
+      expect(circles[1].getAttribute("cx")).toBe(String(420 - 5));
+      // A zero-width measurement (hidden container) keeps the last width.
+      act(() => callback?.([{ contentRect: { width: 0 } } as ResizeObserverEntry], {} as never));
+      expect(svg.getAttribute("width")).toBe("420");
+      unmount();
+      expect(disconnect).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("tolerates a night the backend would never send: index without band, hr or age", async () => {
+    vi.mocked(api.getRecovery).mockResolvedValue({
+      ...full,
+      band: null,
+      hr: null,
+      age_days: null,
+      days_recorded_90d: 1,
+      history: [{ date: "2026-06-10", index: 98, band: "intervals_ok" }],
+    });
+    const { getByTestId, queryByText, container } = renderCard();
+    await waitFor(() => getByTestId("recovery-index"));
+    expect(queryByText("Intervals OK")).toBeNull();
+    expect(queryByText("Last night")).toBeNull();
+    expect(queryByText(/base 53/)).toBeNull();
+    expect(container.querySelector("svg")?.getAttribute("aria-label")).toContain("1 night,");
+  });
+
+  it("counts a single monitoring day in the singular", async () => {
+    vi.mocked(api.getRecovery).mockResolvedValue({
+      ...full,
+      index: null,
+      band: null,
+      days_recorded_90d: 1,
+      nights_recorded_90d: 0,
+      nights_needed: 3,
+      history: [],
+    });
+    const { getByText } = renderCard();
+    await waitFor(() => getByText(/1 day of monitoring in the last 90/));
   });
 
   it("says so when the backend fails, without throwing", async () => {
