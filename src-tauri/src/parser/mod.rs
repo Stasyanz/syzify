@@ -1,5 +1,6 @@
 pub mod fit;
 pub mod gpx;
+pub mod monitoring;
 pub mod tcx;
 
 use crate::models::exercise_set::ExerciseSet;
