@@ -9,6 +9,7 @@ pub mod photo;
 pub mod plugin;
 pub mod power_curve;
 pub mod raw_file;
+pub mod recovery;
 pub mod segment;
 pub mod swim_length;
 pub mod tag;

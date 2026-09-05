@@ -11,6 +11,7 @@ mod models;
 // pub for dev tooling (examples/find_multisport); not a public API promise.
 pub mod parser;
 mod plugins;
+pub mod recovery;
 pub mod state;
 mod updates;
 mod util;
@@ -579,6 +580,7 @@ pub fn run() {
             commands::settings::enable_encryption,
             commands::settings::disable_encryption,
             commands::dashboard::get_dashboard_data,
+            commands::recovery::get_recovery,
             commands::photos::attach_photos,
             commands::photos::get_photos,
             commands::photos::delete_photo,

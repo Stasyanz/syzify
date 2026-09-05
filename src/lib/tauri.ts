@@ -12,6 +12,7 @@ import type {
   Tag,
   DaySummary,
   DashboardData,
+  RecoveryCard,
   CacheInfo,
   WatchFolder,
   ScanResult,
@@ -215,6 +216,7 @@ export const api = {
 
   // Dashboard
   getDashboardData: () => invoke<DashboardData>("get_dashboard_data"),
+  getRecovery: () => invoke<RecoveryCard>("get_recovery"),
 
   // Photos
   attachPhotos: (activityId: string, paths: string[]) =>
