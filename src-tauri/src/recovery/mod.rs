@@ -187,10 +187,18 @@ pub fn card(
     let (indices, valid) = night_indices(days, daily_tss, &ctl);
     let within = |d: NaiveDate, days: i64| (0..=days).contains(&(today - d).num_days());
     let recorded_90d = valid.iter().filter(|d| within(**d, BASELINE_WINDOW_DAYS)).count() as i64;
+    let days_90d = days
+        .iter()
+        .filter(|d| parse(&d.date).is_some_and(|x| within(x, BASELINE_WINDOW_DAYS)))
+        .count() as i64;
     let history: Vec<RecoveryPoint> = indices
         .iter()
         .filter(|n| within(n.date, HISTORY_DAYS))
-        .map(|n| RecoveryPoint { date: n.date.to_string(), index: n.index })
+        .map(|n| RecoveryPoint {
+            date: n.date.to_string(),
+            index: n.index,
+            band: band_of(n.index).0.to_string(),
+        })
         .collect();
     // Always from the nights inside the window: an old index does not mean
     // the NEXT night will get one — its baseline needs recent nights too.
@@ -207,6 +215,7 @@ pub fn card(
             stress: None,
             load: None,
             warning: None,
+            days_recorded_90d: days_90d,
             nights_recorded_90d: recorded_90d,
             nights_needed,
             history,
@@ -224,6 +233,7 @@ pub fn card(
         stress: last.stress.clone(),
         load: last.load.clone(),
         warning: (last.hr.delta >= WARN_DELTA).then(|| "hr_above_baseline".to_string()),
+        days_recorded_90d: days_90d,
         nights_recorded_90d: recorded_90d,
         nights_needed,
         history,
@@ -387,7 +397,24 @@ mod tests {
         assert_eq!(c.date.as_deref(), Some("2026-07-23"));
         assert_eq!(c.age_days, Some(110));
         assert_eq!(c.nights_recorded_90d, 1);
+        assert_eq!(c.days_recorded_90d, 1);
         assert_eq!(c.nights_needed, 2, "two more recent nights before the next index");
+    }
+
+    #[test]
+    fn days_without_a_valid_night_still_count_as_recorded_days() {
+        // The watch was worn by day only: monitoring rows exist, no night
+        // reaches 120 samples — the card must not ask for an import.
+        let days = vec![
+            day("2026-09-03", 40, Some(58.0), Some(20.0)),
+            day("2026-09-04", 0, None, Some(22.0)),
+        ];
+        let c = card(&days, &BTreeMap::new(), d("2026-09-05"));
+        assert_eq!(c.index, None);
+        assert_eq!(c.days_recorded_90d, 2);
+        assert_eq!(c.nights_recorded_90d, 0);
+        assert_eq!(c.nights_needed, 3);
+        assert_eq!(card(&[], &BTreeMap::new(), d("2026-09-05")).days_recorded_90d, 0);
     }
 
     #[test]
@@ -399,10 +426,13 @@ mod tests {
         assert_eq!(c.band.as_deref(), Some("rest"));
         assert_eq!(c.warning, None);
         assert_eq!(c.nights_recorded_90d, 7);
+        assert_eq!(c.days_recorded_90d, 7);
         assert!(c.history.is_empty(), "nothing in the last 28 days");
         let c = card(&days, &tss, d("2026-07-30"));
         assert_eq!(c.age_days, Some(1));
         assert_eq!(c.history.len(), 4);
+        assert_eq!(c.history[0].band, "intervals_ok");
+        assert_eq!(c.history[3].band, "rest");
         assert_eq!(c.band.as_deref(), Some("rest"));
     }
 

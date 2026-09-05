@@ -777,8 +777,10 @@ export interface RecoveryCard {
   stress: { night_avg: number; score: number } | null;
   load: { tss_yesterday: number; ctl: number; score: number } | null;
   warning: "hr_above_baseline" | null;
+  /** Monitoring days stored in the last 90 days — 0 = nothing imported. */
+  days_recorded_90d: number;
   /** Valid nights (≥120 samples, not awake) in the last 90 days. */
   nights_recorded_90d: number;
   nights_needed: number;
-  history: { date: string; index: number }[];
+  history: { date: string; index: number; band: "intervals_ok" | "easy_day" | "rest" }[];
 }

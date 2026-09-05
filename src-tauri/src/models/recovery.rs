@@ -19,6 +19,9 @@ pub struct RecoveryCard {
     pub load: Option<LoadComponent>,
     /// "hr_above_baseline" when the night ran ≥8 bpm over the baseline.
     pub warning: Option<String>,
+    /// Monitoring days stored in the last 90 days, whatever their night
+    /// holds — 0 means nothing was imported for the window at all.
+    pub days_recorded_90d: i64,
     /// VALID nights (≥120 samples, not awake) recorded in the last 90 days —
     /// what the baseline can draw on, not every night the watch was worn.
     pub nights_recorded_90d: i64,
@@ -55,4 +58,6 @@ pub struct LoadComponent {
 pub struct RecoveryPoint {
     pub date: String,
     pub index: i64,
+    /// The index's band, so the frontend never re-derives the edges.
+    pub band: String,
 }

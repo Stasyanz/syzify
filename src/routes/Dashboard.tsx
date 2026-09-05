@@ -5,6 +5,7 @@ import { VolumeChart } from "../components/dashboard/VolumeChart";
 import { SportDistribution } from "../components/dashboard/SportDistribution";
 import { PersonalRecords } from "../components/dashboard/PersonalRecords";
 import { MiniCalendar } from "../components/dashboard/MiniCalendar";
+import { RecoveryCard } from "../components/dashboard/RecoveryCard";
 import { PluginContributions } from "../components/plugins/PluginContributions";
 import { useInvalidateOnNewDay } from "../hooks/useToday";
 import "../lib/chartSetup";
@@ -22,26 +23,32 @@ export function DashboardPage() {
   return (
     <div className="flex flex-col h-full">
       <main className="flex-1 overflow-y-auto scroll-themed">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64">
-            <p className="text-sm text-faint">Loading dashboard...</p>
-          </div>
-        ) : data ? (
-          <div className="p-6 space-y-5">
-            <SummaryCards data={data} />
-            <div className="threecol">
-              <VolumeChart weekVolume={data.week_volume} />
-              <SportDistribution distribution={data.week_sport_distribution} />
-              <PersonalRecords recordsBySport={data.records_by_sport} />
+        <div className="p-6 space-y-5">
+          {/* Its own query, outside the dashboard-data branch: recovery
+              comes from monitoring files and must show (or say what it
+              needs) whether or not the activity dashboard has loaded. */}
+          <RecoveryCard />
+          {isLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <p className="text-sm text-faint">Loading dashboard...</p>
             </div>
-            <MiniCalendar />
-            <PluginContributions point="dashboard.widget" />
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-64">
-            <p className="text-sm text-faint">No data available</p>
-          </div>
-        )}
+          ) : data ? (
+            <>
+              <SummaryCards data={data} />
+              <div className="threecol">
+                <VolumeChart weekVolume={data.week_volume} />
+                <SportDistribution distribution={data.week_sport_distribution} />
+                <PersonalRecords recordsBySport={data.records_by_sport} />
+              </div>
+              <MiniCalendar />
+              <PluginContributions point="dashboard.widget" />
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-64">
+              <p className="text-sm text-faint">No data available</p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
