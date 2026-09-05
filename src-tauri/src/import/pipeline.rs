@@ -2091,4 +2091,16 @@ mod tests {
 
         std::fs::remove_dir_all(&vault_dir).ok();
     }
+
+    /// Smoke: import one real file into a throwaway vault and print the
+    /// outcome — `SYZIFY_IMPORT_FILE=/path/x.FIT cargo test --lib smoke_import_real -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn smoke_import_real_file() {
+        let Ok(path) = std::env::var("SYZIFY_IMPORT_FILE") else { return };
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_smoke_import_real");
+        let result = import_files(&conn, &vault_dir, &[path], None, |_, _, _| {});
+        eprintln!("{result:?}");
+    }
 }

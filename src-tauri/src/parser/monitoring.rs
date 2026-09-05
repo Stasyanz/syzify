@@ -1066,7 +1066,14 @@ mod tests {
             out.intensity.len(),
             out.active_minutes.len()
         );
-        assert!(!out.hr.is_empty());
+        // 87 of the user's 185 files carry no heart rate at all (a short
+        // sync file) — any series counts.
+        assert!(
+            !out.hr.is_empty()
+                || !out.stress.is_empty()
+                || !out.totals.is_empty()
+                || !out.rhr.is_empty()
+        );
         // The 2026-09-05 13:37 sync file, counted independently from a
         // message dump: a lost or duplicated reading shows up here.
         if path.ends_with("M95D3745.FIT") {
