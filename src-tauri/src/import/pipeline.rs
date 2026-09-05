@@ -101,6 +101,139 @@ pub struct FailedFile {
     pub reason: String,
 }
 
+/// Limits of a dropped folder's expansion: how deep to look and how many
+/// files one folder may yield. Garmin's `Monitor/` is flat with a few
+/// hundred files; `Activity/` the same; anything deeper or larger is not a
+/// device folder and is refused rather than crawled.
+pub const FOLDER_MAX_DEPTH: usize = 3;
+pub const FOLDER_MAX_FILES: usize = 2000;
+/// Directory entries a folder walk may visit before giving up — a dropped
+/// home folder or a `node_modules` tree is not a device folder either.
+pub const FOLDER_MAX_ENTRIES: usize = 20_000;
+
+/// The dropped paths with every folder replaced by the importable files
+/// under it (recursively, within [`FOLDER_MAX_DEPTH`], symlinks inside
+/// skipped, sorted for a stable order). Files are passed through
+/// untouched, so an unsupported file still fails with its own reason
+/// later. A folder is refused whole — as a failure naming it — when it is
+/// unreadable, holds no importable file at all, or exceeds
+/// [`FOLDER_MAX_FILES`] importable files / [`FOLDER_MAX_ENTRIES`] entries:
+/// silence would leave the user with "Nothing imported" and no clue.
+pub fn expand_paths(paths: &[String]) -> (Vec<String>, Vec<FailedFile>) {
+    expand_paths_with(paths, FOLDER_MAX_DEPTH, FOLDER_MAX_FILES, FOLDER_MAX_ENTRIES)
+}
+
+fn expand_paths_with(
+    paths: &[String],
+    max_depth: usize,
+    max_files: usize,
+    max_entries: usize,
+) -> (Vec<String>, Vec<FailedFile>) {
+    let mut files = Vec::new();
+    let mut failed = Vec::new();
+    for p in paths {
+        let path = Path::new(p);
+        // The root was chosen by the user: a symlinked folder is resolved
+        // (fs::metadata follows it). Loops are prevented below, where the
+        // symlinks INSIDE the walk are skipped.
+        let is_dir = fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false);
+        if !is_dir {
+            files.push(p.clone());
+            continue;
+        }
+        let mut walk = Walk { max_depth, max_files, max_entries, entries: 0, found: Vec::new() };
+        // max_depth counts the root as a level: 0 looks at nothing.
+        let outcome = if max_depth == 0 { Ok(()) } else { walk.run(path, 0) };
+        match outcome {
+            Err(reason) => failed.push(FailedFile { path: p.clone(), reason }),
+            Ok(()) if walk.found.is_empty() => failed.push(FailedFile {
+                path: p.clone(),
+                reason: "No workout or monitoring files in this folder".to_string(),
+            }),
+            Ok(()) => {
+                walk.found.sort();
+                files.extend(walk.found);
+            }
+        }
+    }
+    (files, failed)
+}
+
+struct Walk {
+    max_depth: usize,
+    max_files: usize,
+    max_entries: usize,
+    entries: usize,
+    found: Vec<String>,
+}
+
+impl Walk {
+    /// Collect importable files under `dir`. `depth` is the folder's level
+    /// below the dropped root (0 = the root itself); files are taken from
+    /// levels 0 … max_depth − 1, i.e. the root and two nested levels for the
+    /// default of 3.
+    fn run(&mut self, dir: &Path, depth: usize) -> Result<(), String> {
+        let entries = fs::read_dir(dir).map_err(|e| {
+            if depth == 0 {
+                format!("Failed to read folder: {}", e)
+            } else {
+                format!("Failed to read subfolder {}: {}", dir.display(), e)
+            }
+        })?;
+        for entry in entries.flatten() {
+            self.entries += 1;
+            if self.entries > self.max_entries {
+                return Err(format!(
+                    "Folder is too large ({}+ entries); drop the device's Monitor or Activity \
+                     folder itself",
+                    self.max_entries
+                ));
+            }
+            let path = entry.path();
+            let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                if depth + 1 < self.max_depth {
+                    self.run(&path, depth + 1)?;
+                }
+            } else if meta.is_file() && is_importable_file(&path) {
+                if self.found.len() >= self.max_files {
+                    return Err(format!(
+                        "Folder holds more than {} workout files; import it in smaller batches",
+                        self.max_files
+                    ));
+                }
+                match path.to_str() {
+                    Some(s) => self.found.push(s.to_string()),
+                    None => {
+                        return Err(format!(
+                            "A file name in the folder is not valid UTF-8: {}",
+                            path.display()
+                        ))
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A workout or monitoring file by extension: gpx / fit / tcx, optionally
+/// gzipped ("ride.fit.gz"); case-insensitive.
+fn is_importable_file(path: &Path) -> bool {
+    match gz_inner_ext(path) {
+        Ok(Some(inner)) => FileFormat::from_extension(&inner).is_some(),
+        Ok(None) => path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(FileFormat::from_extension)
+            .is_some(),
+        Err(_) => false,
+    }
+}
+
 pub fn import_files<F>(
     conn: &Connection,
     vault_path: &Path,
@@ -114,6 +247,8 @@ where
     let mut result = ImportResult::default();
     let mut batch = MonitoringBatch::default();
 
+    let (paths, refused) = expand_paths(paths);
+    result.failed.extend(refused);
     let total = paths.len();
     for (i, path_str) in paths.iter().enumerate() {
         let filename = Path::new(path_str)
@@ -1175,6 +1310,160 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn expand_paths_replaces_folders_with_their_importable_files() {
+        let root = fresh_vault("tv_test_expand_paths");
+        let deep = root.join("a").join("b").join("c").join("d");
+        std::fs::create_dir_all(&deep).unwrap();
+        for (rel, body) in [
+            ("ride.FIT", "x"),
+            ("run.gpx", "x"),
+            ("notes.txt", "x"),
+            ("swim.tcx.gz", "x"),
+            ("a/walk.fit", "x"),
+            ("a/b/hike.gpx", "x"),
+            ("a/b/c/too_deep.fit", "x"),
+            ("a/b/c/d/way_too_deep.fit", "x"),
+        ] {
+            std::fs::write(root.join(rel), body).unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("ride.FIT"), root.join("link.fit")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+
+        let (files, failed) =
+            expand_paths(&[root.to_str().unwrap().to_string(), "/some/file.gpx".to_string()]);
+        assert!(failed.is_empty());
+        let root_s = root.to_str().unwrap();
+        let rel: Vec<String> = files
+            .iter()
+            .map(|f| match f.strip_prefix(root_s) {
+                Some(inside) => inside.trim_start_matches('/').to_string(),
+                None => f.clone(),
+            })
+            .collect();
+        // Depth 0..2 only, extension-filtered, symlinks skipped, sorted; the
+        // plain file path passes through untouched at the end.
+        assert_eq!(
+            rel,
+            vec![
+                "a/b/hike.gpx",
+                "a/walk.fit",
+                "ride.FIT",
+                "run.gpx",
+                "swim.tcx.gz",
+                "/some/file.gpx"
+            ]
+        );
+    }
+
+    #[test]
+    fn expand_paths_refuses_a_folder_over_the_file_cap() {
+        let root = fresh_vault("tv_test_expand_cap");
+        for i in 0..4 {
+            std::fs::write(root.join(format!("{i}.fit")), "x").unwrap();
+        }
+        let (files, failed) =
+            expand_paths_with(&[root.to_str().unwrap().to_string()], 3, 3, 20_000);
+        assert!(files.is_empty());
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0].reason.contains("more than 3 workout files"));
+        assert_eq!(failed[0].path, root.to_str().unwrap());
+        // An entry cap too: a huge tree is refused, not crawled.
+        let (files, failed) =
+            expand_paths_with(&[root.to_str().unwrap().to_string()], 3, 3000, 2);
+        assert!(files.is_empty());
+        assert!(failed[0].reason.contains("too large"));
+        // Depth 0 looks at nothing, so the folder reads as empty.
+        let (files, failed) =
+            expand_paths_with(&[root.to_str().unwrap().to_string()], 0, 3000, 20_000);
+        assert!(files.is_empty());
+        assert!(failed[0].reason.contains("No workout"));
+        // The file cap fires in a subfolder as much as in the root, and the
+        // files collected before it are dropped with the folder.
+        let nested = fresh_vault("tv_test_expand_cap_nested");
+        std::fs::create_dir_all(nested.join("sub")).unwrap();
+        std::fs::write(nested.join("0.fit"), "x").unwrap();
+        for i in 0..4 {
+            std::fs::write(nested.join("sub").join(format!("{i}.fit")), "x").unwrap();
+        }
+        let (files, failed) =
+            expand_paths_with(&[nested.to_str().unwrap().to_string()], 3, 3, 20_000);
+        assert!(files.is_empty());
+        assert!(failed[0].reason.contains("more than 3 workout files"));
+    }
+
+    #[test]
+    fn expand_paths_names_empty_and_unreadable_folders_and_follows_a_root_symlink() {
+        let root = fresh_vault("tv_test_expand_empty");
+        std::fs::write(root.join("README.txt"), "x").unwrap();
+        let (files, failed) = expand_paths(&[root.to_str().unwrap().to_string()]);
+        assert!(files.is_empty());
+        assert_eq!(failed[0].reason, "No workout or monitoring files in this folder");
+        // A missing path is a file to the expander — it fails later with
+        // its own reason (Failed to read file), not here.
+        let (files, failed) = expand_paths(&["/nonexistent/folder".to_string()]);
+        assert_eq!((files.len(), failed.len()), (1, 0));
+        #[cfg(unix)]
+        {
+            // A symlink TO the dropped folder is the folder.
+            let real = fresh_vault("tv_test_expand_symlink_root");
+            std::fs::write(real.join("ride.fit"), "x").unwrap();
+            let link = std::env::temp_dir().join("tv_test_expand_symlink_link");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let (files, failed) = expand_paths(&[link.to_str().unwrap().to_string()]);
+            assert_eq!((files.len(), failed.len()), (1, 0));
+            assert!(files[0].ends_with("ride.fit"));
+            // An unreadable folder reports the OS error instead of silence.
+            use std::os::unix::fs::PermissionsExt;
+            let locked = fresh_vault("tv_test_expand_locked");
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // root reads anything — the check is meaningless there (a
+            // containerised runner), so only assert when the lock holds.
+            let lock_holds = std::fs::read_dir(&locked).is_err();
+            let (files, failed) = expand_paths(&[locked.to_str().unwrap().to_string()]);
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            if lock_holds {
+                assert!(files.is_empty());
+                assert!(
+                    failed[0].reason.starts_with("Failed to read folder"),
+                    "{}",
+                    failed[0].reason
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dropped_folder_of_monitor_files_imports_them_all() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_folder_drop");
+        pin_clock_plus3(&conn);
+        let folder = vault_dir.join("Monitor");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("M9400000.FIT"), monitoring_fixture(1, 1_788_469_200)).unwrap();
+        std::fs::write(folder.join("M9500000.FIT"), monitoring_fixture(2, 1_788_555_600)).unwrap();
+        std::fs::write(folder.join("README.txt"), "not a fit").unwrap();
+        let result = import_files(
+            &conn,
+            &vault_dir,
+            &[folder.to_str().unwrap().to_string()],
+            None,
+            |_, _, _| {},
+        );
+        assert_eq!(
+            (result.monitoring_files, result.monitoring_days, result.failed.len()),
+            (2, 2, 0)
+        );
+        assert_eq!(
+            result.monitoring_range,
+            Some(("2026-09-04".to_string(), "2026-09-05".to_string()))
+        );
     }
 
     #[test]

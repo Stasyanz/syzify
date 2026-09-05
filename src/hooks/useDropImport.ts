@@ -4,7 +4,7 @@ import { useLocation, matchPath } from "react-router";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { formatImportSummary } from "../lib/importSummary";
-import { isImagePath, isWorkoutPath } from "../lib/fileTypes";
+import { isImagePath, isImportablePath } from "../lib/fileTypes";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 
 export type DropKind = "workout" | "photo";
@@ -95,7 +95,7 @@ export function useDropImport() {
               const images = p.paths.filter(isImagePath);
               if (images.length > 0) {
                 refs.current.attach({ activityId, paths: images });
-              } else if (p.paths.some(isWorkoutPath)) {
+              } else if (p.paths.some(isImportablePath)) {
                 refs.current.addToast(
                   "warning",
                   "To import workouts, drop them outside the activity page"
@@ -108,7 +108,8 @@ export function useDropImport() {
               }
               return;
             }
-            const valid = p.paths.filter(isWorkoutPath);
+            // Folders go through as well — the backend expands them.
+            const valid = p.paths.filter(isImportablePath);
             if (valid.length === 0) {
               refs.current.addToast(
                 "warning",

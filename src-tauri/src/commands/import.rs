@@ -61,9 +61,15 @@ pub async fn import_files(
     app: AppHandle,
 ) -> Result<ImportResult, String> {
     ensure_vault_unlocked(&app.state::<AppState>())?;
-    let total = paths.len();
     let mut result = ImportResult::default();
     let mut batch = pipeline::MonitoringBatch::default();
+    // A dropped folder becomes its importable files (a bounded walk, off
+    // the async runtime like every other filesystem step here).
+    let (paths, refused) = tokio::task::spawn_blocking(move || pipeline::expand_paths(&paths))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?;
+    result.failed.extend(refused);
+    let total = paths.len();
 
     for (i, path_str) in paths.iter().enumerate() {
         let filename = Path::new(path_str)

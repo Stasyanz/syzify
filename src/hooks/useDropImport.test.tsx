@@ -91,6 +91,14 @@ describe("useDropImport outside an activity page", () => {
     await waitFor(() => expect(importFiles).toHaveBeenCalledWith(["/a/ride.fit"]));
   });
 
+  it("passes a dropped folder through for the backend to expand", async () => {
+    const { fire } = await renderDropImport("/library");
+    fire({ type: "drop", paths: ["/Users/me/garmin/Monitor", "/a/notes.txt"], position: pos });
+    await waitFor(() =>
+      expect(importFiles).toHaveBeenCalledWith(["/Users/me/garmin/Monitor"]),
+    );
+  });
+
   it("points an images-only drop at an activity page", async () => {
     const { fire } = await renderDropImport("/library");
     fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });

@@ -11,6 +11,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   `MYMD….FIT` files next to the activities) to import heart rate, stress,
   respiration, SpO2, steps and active minutes; the import summary reports
   the days covered. First half of the Recovery card (#77).
+- Import: dropping a folder imports the workout and monitoring files in it
+  (up to three levels deep, symlinks skipped).
 - Settings: "Open another…" next to the vault location switches to a
   different existing vault without moving anything — the current vault stays
   on disk. The old "Change" button is now "Move…" and does what it always did.
