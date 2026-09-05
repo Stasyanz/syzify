@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::import::datasource;
-use crate::import::pipeline::{self, FailedFile, ImportOutcome, ImportResult};
+use crate::import::pipeline::{self, FailedFile, ImportResult};
 use crate::state::AppState;
 
 /// List the available first-party import data sources (the `import.datasource`
@@ -62,11 +62,8 @@ pub async fn import_files(
 ) -> Result<ImportResult, String> {
     ensure_vault_unlocked(&app.state::<AppState>())?;
     let total = paths.len();
-    let mut result = ImportResult {
-        imported: 0,
-        skipped: 0,
-        failed: Vec::new(),
-    };
+    let mut result = ImportResult::default();
+    let mut batch = pipeline::MonitoringBatch::default();
 
     for (i, path_str) in paths.iter().enumerate() {
         let filename = Path::new(path_str)
@@ -102,14 +99,29 @@ pub async fn import_files(
         .await
         .map_err(|e| format!("Task join error: {}", e))?;
 
-        match outcome {
-            Ok(ImportOutcome::Imported) => result.imported += 1,
-            Ok(ImportOutcome::Skipped) => result.skipped += 1,
+        result.record(path_str, outcome, &mut batch);
+    }
+
+    // One recompute per touched day for the whole batch (a folder drop of
+    // 185 Monitor files touches each day a few times).
+    if !batch.days.is_empty() {
+        let app_clone = app.clone();
+        let finished = tokio::task::spawn_blocking(move || {
+            let state = app_clone.state::<AppState>();
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            let mut partial = ImportResult::default();
+            batch.finish(&conn, &mut partial)?;
+            Ok::<ImportResult, String>(partial)
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?;
+        match finished {
+            Ok(partial) => {
+                result.monitoring_days = partial.monitoring_days;
+                result.monitoring_range = partial.monitoring_range;
+            }
             Err(reason) => {
-                result.failed.push(FailedFile {
-                    path: path_str.clone(),
-                    reason,
-                });
+                result.failed.push(FailedFile { path: "(monitoring recompute)".to_string(), reason });
             }
         }
     }

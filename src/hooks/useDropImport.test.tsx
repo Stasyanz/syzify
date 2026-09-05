@@ -18,7 +18,14 @@ const { onDragDropEvent, importFiles, attachPhotos, addToast, captured } =
       }),
       importFiles: vi
         .fn()
-        .mockResolvedValue({ imported: 1, skipped: 0, failed: [] }),
+        .mockResolvedValue({
+          imported: 1,
+          skipped: 0,
+          failed: [],
+          monitoring_files: 0,
+          monitoring_days: 0,
+          monitoring_range: null,
+        }),
       attachPhotos: vi
         .fn()
         .mockResolvedValue({ attached: ["p1"], skipped: [], failed: [] }),

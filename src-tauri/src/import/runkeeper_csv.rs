@@ -40,7 +40,7 @@ pub fn import_runkeeper_csv(conn: &Connection, csv_path: &str) -> Result<ImportR
         col("GPX File"),
     );
 
-    let mut result = ImportResult { imported: 0, skipped: 0, failed: Vec::new() };
+    let mut result = ImportResult::default();
 
     for row in records {
         if row.iter().all(|f| f.trim().is_empty()) {

@@ -3,6 +3,7 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { useLocation, matchPath } from "react-router";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
+import { formatImportSummary } from "../lib/importSummary";
 import { isImagePath, isWorkoutPath } from "../lib/fileTypes";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 
@@ -26,12 +27,8 @@ export function useDropImport() {
     mutationFn: (paths: string[]) => api.importFiles(paths),
     onSuccess: (data) => {
       invalidateActivityData(queryClient);
-      const parts = [
-        `Imported ${data.imported} activit${data.imported === 1 ? "y" : "ies"}`,
-      ];
-      if (data.skipped > 0) parts.push(`skipped ${data.skipped} (duplicates)`);
-      if (data.failed.length > 0) parts.push(`${data.failed.length} failed`);
-      addToast(data.failed.length > 0 ? "warning" : "success", parts.join(", "));
+      const { level, text } = formatImportSummary(data);
+      addToast(level, text);
     },
     onError: (error: Error) => {
       addToast("error", `Import failed: ${error.message ?? "Unknown error"}`);

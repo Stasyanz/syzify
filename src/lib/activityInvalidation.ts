@@ -14,6 +14,8 @@ const ACTIVITY_DATA_PREFIXES: readonly string[] = [
   "recordBadges", // a new best effort can displace another activity's badge
   "adjacent", // prev/next navigation between activities
   "segment-efforts", // sport change / delete rematches segment passes
+  "monitoring", // Garmin monitoring days (an import batch may carry both)
+  "recovery", // the recovery index reads monitoring days AND daily hrTSS
 ];
 
 /**

@@ -118,7 +118,16 @@ pub fn fit_has_barometer(data: &[u8]) -> bool {
 pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity, String> {
     let messages =
         fitparser::from_bytes(data).map_err(|e| format!("Failed to parse FIT: {}", e))?;
+    parse_fit_records(&messages, activity_id)
+}
 
+/// Build the activity from already-decoded FIT messages — the import
+/// pipeline decodes a file once to route it by `file_id` (activity vs
+/// Garmin monitoring, ADR 0002) and hands the records on from there.
+pub fn parse_fit_records(
+    messages: &[fitparser::FitDataRecord],
+    activity_id: &str,
+) -> Result<ParsedActivity, String> {
     let mut trackpoints: Vec<TrackPoint> = Vec::new();
     let mut start_time: Option<String> = None;
     // From MesgNum::Sport — the fallback when the file carries no sessions.
@@ -137,7 +146,7 @@ pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity,
     let mut time_in_zone_groups: Vec<(Option<String>, Vec<TimeInZone>)> = Vec::new();
     let mut hrv_samples: Vec<HrvSample> = Vec::new();
 
-    for msg in &messages {
+    for msg in messages {
         match msg.kind() {
             MesgNum::Record => {
                 let mut tp = TrackPoint {

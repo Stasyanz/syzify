@@ -54,6 +54,15 @@ pub fn update_path(conn: &Connection, old_path: &str, new_path: &str) -> Result<
     Ok(())
 }
 
+/// Remove one raw_file row — the import path's compensation when a later
+/// step fails after the row was written (a stranded row would keep its hash
+/// blocking a re-import forever). The monitoring tables reference it with
+/// ON DELETE SET NULL / CASCADE, so nothing else needs touching.
+pub fn delete_by_id(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM raw_file WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 /// Delete the raw_file rows tied to an activity. Called by delete_activity
 /// BEFORE the activity row goes away: the FK is ON DELETE SET NULL, which
 /// would orphan the rows — their hash stays in the dedup index forever, so

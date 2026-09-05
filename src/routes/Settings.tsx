@@ -27,6 +27,15 @@ import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
+/** What each encryption scope covers. Raw files include Garmin monitoring
+ * (night heart rate, stress, SpO2) — the same `raw/` machinery, so the
+ * same scope (ADR 0002). */
+const SCOPE_LABELS = {
+  activities: "Raw files (activities & monitoring)",
+  database: "Database",
+  photos: "Photos",
+} as const;
+
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 
 export function SettingsPage() {
@@ -493,7 +502,7 @@ export function SettingsPage() {
               <div className="sd">
                 Encrypt selected data at rest with AES-256-GCM
               </div>
-              <div className="flex gap-4 mt-2.5">
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5">
                 {(["activities", "database", "photos"] as const).map((scope) => {
                   const enabled = !!encryptionStatus?.enabled;
                   const checked = enabled
@@ -502,7 +511,7 @@ export function SettingsPage() {
                   return (
                     <label
                       key={scope}
-                      className={`flex items-center gap-1.5 text-[13px] capitalize ${
+                      className={`flex items-center gap-1.5 text-[13px] ${
                         enabled ? "cursor-default text-muted" : "cursor-pointer text-ink"
                       }`}
                     >
@@ -513,7 +522,7 @@ export function SettingsPage() {
                           setEncScopes((s) => ({ ...s, [scope]: !s[scope] }))
                         }
                       />
-                      {scope}
+                      {SCOPE_LABELS[scope]}
                     </label>
                   );
                 })}

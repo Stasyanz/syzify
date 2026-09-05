@@ -5,6 +5,7 @@ import { Upload } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
+import { formatImportSummary } from "../../lib/importSummary";
 
 /** "icon" → compact navbar button; "button" → full accent CTA (empty state). */
 export function ImportDialog({ variant = "button" }: { variant?: "icon" | "button" }) {
@@ -15,10 +16,8 @@ export function ImportDialog({ variant = "button" }: { variant?: "icon" | "butto
     mutationFn: (paths: string[]) => api.importFiles(paths),
     onSuccess: (data) => {
       invalidateActivityData(queryClient);
-      const parts = [`Imported ${data.imported} activit${data.imported === 1 ? "y" : "ies"}`];
-      if (data.skipped > 0) parts.push(`skipped ${data.skipped} (duplicates)`);
-      if (data.failed.length > 0) parts.push(`${data.failed.length} failed`);
-      addToast(data.failed.length > 0 ? "warning" : "success", parts.join(", "));
+      const { level, text } = formatImportSummary(data);
+      addToast(level, text);
     },
     onError: (error) => {
       addToast("error", `Import failed: ${error.message ?? "Unknown error"}`);

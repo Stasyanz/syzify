@@ -37,11 +37,62 @@ fn ensure_import_size(size: u64) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ImportResult {
     pub imported: usize,
     pub skipped: usize,
     pub failed: Vec<FailedFile>,
+    /// Garmin Monitor files stored (ADR 0002) — separate from activities.
+    pub monitoring_files: usize,
+    /// Local days whose monitoring aggregates were (re)computed.
+    pub monitoring_days: usize,
+    /// First and last of those days, "YYYY-MM-DD".
+    pub monitoring_range: Option<(String, String)>,
+}
+
+impl ImportResult {
+    /// Tally one file's outcome; monitoring days accumulate in `batch` so
+    /// each day is recomputed once at the end of the batch, not per file.
+    pub fn record(
+        &mut self,
+        path: &str,
+        outcome: Result<ImportOutcome, String>,
+        batch: &mut MonitoringBatch,
+    ) {
+        match outcome {
+            Ok(ImportOutcome::Imported) => self.imported += 1,
+            Ok(ImportOutcome::Skipped) => self.skipped += 1,
+            Ok(ImportOutcome::Monitoring { days }) => {
+                self.monitoring_files += 1;
+                batch.days.extend(days);
+            }
+            Err(reason) => self.failed.push(FailedFile { path: path.to_string(), reason }),
+        }
+    }
+}
+
+/// The local days a batch of Monitor files touched — recomputed together
+/// by [`MonitoringBatch::finish`].
+#[derive(Debug, Default)]
+pub struct MonitoringBatch {
+    pub days: std::collections::BTreeSet<i64>,
+}
+
+impl MonitoringBatch {
+    /// Recompute the touched days' aggregates and fill the result's
+    /// monitoring counts.
+    pub fn finish(self, conn: &Connection, result: &mut ImportResult) -> Result<(), String> {
+        if self.days.is_empty() {
+            return Ok(());
+        }
+        let days: Vec<i64> = self.days.iter().copied().collect();
+        result.monitoring_days =
+            db::monitoring::recompute_days(conn, &days).map_err(|e| e.to_string())?;
+        let first = self.days.iter().next().and_then(|d| db::monitoring::date_of(*d));
+        let last = self.days.iter().next_back().and_then(|d| db::monitoring::date_of(*d));
+        result.monitoring_range = first.zip(last);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -60,11 +111,8 @@ pub fn import_files<F>(
 where
     F: Fn(usize, usize, &str),
 {
-    let mut result = ImportResult {
-        imported: 0,
-        skipped: 0,
-        failed: Vec::new(),
-    };
+    let mut result = ImportResult::default();
+    let mut batch = MonitoringBatch::default();
 
     let total = paths.len();
     for (i, path_str) in paths.iter().enumerate() {
@@ -74,24 +122,22 @@ where
             .unwrap_or(path_str);
         on_progress(i + 1, total, filename);
 
-        match import_single_file(conn, vault_path, path_str, encryption_key) {
-            Ok(ImportOutcome::Imported) => result.imported += 1,
-            Ok(ImportOutcome::Skipped) => result.skipped += 1,
-            Err(reason) => {
-                result.failed.push(FailedFile {
-                    path: path_str.clone(),
-                    reason,
-                });
-            }
-        }
+        let outcome = import_single_file(conn, vault_path, path_str, encryption_key);
+        result.record(path_str, outcome, &mut batch);
+    }
+    if let Err(reason) = batch.finish(conn, &mut result) {
+        result.failed.push(FailedFile { path: "(monitoring recompute)".to_string(), reason });
     }
 
     result
 }
 
+#[derive(Debug)]
 pub enum ImportOutcome {
     Imported,
     Skipped,
+    /// A Garmin Monitor file was stored; these local days need a recompute.
+    Monitoring { days: std::collections::BTreeSet<i64> },
 }
 
 /// Inner extension of a `.gz` path: "activity.fit.gz" → "fit".
@@ -178,10 +224,36 @@ pub fn import_single_file(
     let activity_id = Uuid::new_v4().to_string();
     let raw_file_id = Uuid::new_v4().to_string();
 
-    // 6. Parse (the decompressed bytes if .gz)
+    // 6. Parse (the decompressed bytes if .gz). A FIT file is decoded once
+    // and routed on its file_id: Garmin's all-day Monitor files (ADR 0002)
+    // take their own path, anything that is neither an activity nor
+    // monitoring is refused, and an activity's records go straight on.
     let parsed = match format {
         FileFormat::Gpx => parser::gpx::parse_gpx_bytes(effective_bytes, &activity_id)?,
-        FileFormat::Fit => parser::fit::parse_fit_bytes(effective_bytes, &activity_id)?,
+        FileFormat::Fit => {
+            let messages = parser::monitoring::parse_fit_messages(effective_bytes)?;
+            match parser::monitoring::file_type_of(&messages)? {
+                parser::monitoring::FitFileType::Activity => {
+                    parser::fit::parse_fit_records(&messages, &activity_id)?
+                }
+                parser::monitoring::FitFileType::MonitoringB => {
+                    return import_monitoring_file(
+                        conn,
+                        vault_path,
+                        path_str,
+                        effective_bytes,
+                        &hash,
+                        effective_ext,
+                        &raw_file_id,
+                        &messages,
+                        encryption_key,
+                    );
+                }
+                parser::monitoring::FitFileType::Other(kind) => {
+                    return Err(format!("Not an activity file (FIT type: {})", kind));
+                }
+            }
+        }
         FileFormat::Tcx => parser::tcx::parse_tcx_bytes(effective_bytes, &activity_id)?,
     };
 
@@ -225,16 +297,13 @@ pub fn import_single_file(
         // Still store the raw file, LINKED to the existing activity — an
         // unlinked (NULL) row would survive delete_activity forever: its GPS
         // bytes stay in raw/ and its hash blocks any reimport.
-        let mut dest = store_raw_file(vault_path, effective_bytes, &raw_file_id, effective_ext)?;
-        if let Some(key) = encryption_key {
-            let abs_path = vault_path.join(&dest);
-            let enc_path = crate::crypto::encrypt_file(key, &abs_path)?;
-            dest = enc_path
-                .strip_prefix(vault_path)
-                .unwrap_or(&enc_path)
-                .to_string_lossy()
-                .to_string();
-        }
+        let dest = store_raw_file_encrypted(
+            vault_path,
+            effective_bytes,
+            &raw_file_id,
+            effective_ext,
+            encryption_key,
+        )?;
         let raw = RawFile {
             id: raw_file_id,
             activity_id: Some(existing_id),
@@ -251,16 +320,13 @@ pub fn import_single_file(
     }
 
     // 7. Store raw file in vault (encrypt if encryption is active)
-    let mut dest = store_raw_file(vault_path, effective_bytes, &raw_file_id, effective_ext)?;
-    if let Some(key) = encryption_key {
-        let abs_path = vault_path.join(&dest);
-        let enc_path = crate::crypto::encrypt_file(key, &abs_path)?;
-        dest = enc_path
-            .strip_prefix(vault_path)
-            .unwrap_or(&enc_path)
-            .to_string_lossy()
-            .to_string();
-    }
+    let dest = store_raw_file_encrypted(
+        vault_path,
+        effective_bytes,
+        &raw_file_id,
+        effective_ext,
+        encryption_key,
+    )?;
 
     // 8. Location name — deferred to background geocoding thread (avoids blocking import)
     let location_name: Option<String> = None;
@@ -465,6 +531,98 @@ pub(crate) fn analyze_stored_track(
             let _ = db::power_curve::set_power_curve(conn, activity_id, &curve);
         }
     }
+}
+
+/// The Garmin Monitor path (ADR 0002): the raw file goes to `raw/` like an
+/// activity's (hash-deduplicated above, encrypted under the same scope),
+/// its readings into the monitoring tables, and the touched days come
+/// back for the batch recompute. The device's clock is the explicit
+/// offset of the nearest activity in the vault, else the machine's — the
+/// file itself can only confirm it. A file without a single reading is
+/// skipped, not failed: Garmin writes such files after a day the watch
+/// stayed in the drawer.
+#[allow(clippy::too_many_arguments)]
+fn import_monitoring_file(
+    conn: &Connection,
+    vault_path: &Path,
+    path_str: &str,
+    bytes: &[u8],
+    hash: &str,
+    ext: &str,
+    raw_file_id: &str,
+    messages: &[fitparser::FitDataRecord],
+    encryption_key: Option<&[u8; 32]>,
+) -> Result<ImportOutcome, String> {
+    use crate::models::raw_file::RawFileKind;
+    use parser::monitoring as mon;
+
+    let tz_offset_s = mon::first_timestamp(messages)
+        .and_then(|ts| db::activities::start_time_nearest(conn, ts).ok().flatten())
+        .and_then(|st| chrono::DateTime::parse_from_rfc3339(&st).ok())
+        .map(|dt| dt.offset().local_minus_utc())
+        .unwrap_or_else(|| chrono::Local::now().offset().local_minus_utc());
+    let parsed = mon::parse_monitoring_messages(messages, tz_offset_s);
+    let empty = parsed.hr.is_empty()
+        && parsed.stress.is_empty()
+        && parsed.respiration.is_empty()
+        && parsed.spo2.is_empty()
+        && parsed.totals.is_empty()
+        && parsed.active_minutes.is_empty()
+        && parsed.rhr.is_empty();
+    if empty {
+        return Ok(ImportOutcome::Skipped);
+    }
+
+    let dest = store_raw_file_encrypted(vault_path, bytes, raw_file_id, ext, encryption_key)?;
+    let raw = RawFile {
+        id: raw_file_id.to_string(),
+        activity_id: None,
+        path_in_vault: dest,
+        original_path: Some(path_str.to_string()),
+        format: FileFormat::Fit.as_str().to_string(),
+        hash_sha256: hash.to_string(),
+        imported_at: String::new(),
+        parse_status: ParseStatus::Ok.as_str().to_string(),
+        failure_reason: None,
+    };
+    let dest_for_cleanup = raw.path_in_vault.clone();
+    db::raw_files::insert_raw_file_of_kind(conn, &raw, RawFileKind::Monitoring)
+        .map_err(|e| e.to_string())?;
+    // The raw_file row must exist before the samples reference it, so it
+    // cannot be the last step the way it is for activities. If storing the
+    // readings fails, undo the row and the file by hand — a stranded row
+    // would keep the hash blocking a re-import of this very file forever.
+    match db::monitoring::store(conn, &parsed, Some(raw_file_id)) {
+        Ok(stored) => Ok(ImportOutcome::Monitoring { days: stored.days }),
+        Err(e) => {
+            let _ = db::raw_files::delete_by_id(conn, raw_file_id);
+            let _ = fs::remove_file(vault_path.join(&dest_for_cleanup));
+            Err(format!("Failed to store monitoring data: {}", e))
+        }
+    }
+}
+
+/// Store a raw file under `raw/` and, with a key, encrypt it in place;
+/// returns the vault-relative path of what ended up on disk (the `.enc`
+/// sibling when encrypted).
+fn store_raw_file_encrypted(
+    vault_path: &Path,
+    contents: &[u8],
+    file_id: &str,
+    ext: &str,
+    encryption_key: Option<&[u8; 32]>,
+) -> Result<String, String> {
+    let dest = store_raw_file(vault_path, contents, file_id, ext)?;
+    let Some(key) = encryption_key else {
+        return Ok(dest);
+    };
+    let abs_path = vault_path.join(&dest);
+    let enc_path = crate::crypto::encrypt_file(key, &abs_path)?;
+    Ok(enc_path
+        .strip_prefix(vault_path)
+        .unwrap_or(&enc_path)
+        .to_string_lossy()
+        .to_string())
 }
 
 fn store_raw_file(
@@ -949,6 +1107,223 @@ mod tests {
 
         let m = compute_metrics(&[tp1, tp2]);
         assert_eq!(m.avg_cadence, Some(175.0));
+    }
+
+    fn fresh_vault(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn import_monitoring_file_stores_samples_and_recomputes_its_day() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring");
+        // An activity pins the device's clock to +03:00 — without one the
+        // machine's zone would decide, and under UTC (the CI runner) the
+        // fixture's RHR row lands on a second day.
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type)
+             VALUES ('a1', '2026-09-03T07:35:00+03:00', 'ride')",
+            [],
+        )
+        .unwrap();
+        let midnight = 1_788_555_600; // 2026-09-05 00:00 +03:00
+        let path = vault_dir.join("M9500000.FIT");
+        std::fs::write(&path, monitoring_fixture(424242, midnight)).unwrap();
+        let paths = [path.to_str().unwrap().to_string()];
+
+        let result = import_files(&conn, &vault_dir, &paths, None, |_, _, _| {});
+        assert_eq!((result.imported, result.skipped, result.failed.len()), (0, 0, 0));
+        assert_eq!(result.monitoring_files, 1);
+        assert_eq!(result.monitoring_days, 1);
+        assert_eq!(
+            result.monitoring_range,
+            Some(("2026-09-05".to_string(), "2026-09-05".to_string()))
+        );
+
+        let (kind, activity_id): (String, Option<String>) = conn
+            .query_row("SELECT kind, activity_id FROM raw_file", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((kind.as_str(), activity_id), ("monitoring", None));
+        let hr: i64 = conn
+            .query_row("SELECT COUNT(*) FROM monitoring_sample WHERE kind = 'hr'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hr, 3);
+        let computed: Option<String> = conn
+            .query_row("SELECT computed_at FROM monitoring_day", [], |r| r.get(0))
+            .unwrap();
+        assert!(computed.is_some(), "the batch recompute ran");
+        let span: i64 = conn
+            .query_row("SELECT COUNT(*) FROM monitoring_raw_file", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(span, 1);
+        assert!(vault_dir.join("raw").read_dir().unwrap().next().is_some(), "raw file stored");
+
+        // The same file again is a duplicate by hash.
+        let again = import_files(&conn, &vault_dir, &paths, None, |_, _, _| {});
+        assert_eq!((again.monitoring_files, again.skipped), (0, 1));
+        assert_eq!(again.monitoring_range, None);
+    }
+
+    fn pin_clock_plus3(conn: &rusqlite::Connection) {
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type)
+             VALUES ('a1', '2026-09-03T07:35:00+03:00', 'ride')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn two_monitor_files_of_one_day_recompute_that_day_once() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_batch");
+        pin_clock_plus3(&conn);
+        let midnight = 1_788_555_600;
+        // Two files of the same day from two serials (different hashes).
+        let a = vault_dir.join("M9500000.FIT");
+        let b = vault_dir.join("M95D3745.FIT");
+        std::fs::write(&a, monitoring_fixture(1, midnight)).unwrap();
+        std::fs::write(&b, monitoring_fixture(2, midnight)).unwrap();
+        let paths = [a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()];
+        let result = import_files(&conn, &vault_dir, &paths, None, |_, _, _| {});
+        assert_eq!((result.monitoring_files, result.monitoring_days), (2, 1));
+        let computed: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT computed_at FROM monitoring_day").unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(computed.len(), 1, "one day row, aggregated once at the end of the batch");
+    }
+
+    #[test]
+    fn monitor_files_are_encrypted_under_the_activities_key() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_enc");
+        pin_clock_plus3(&conn);
+        let path = vault_dir.join("M9500000.FIT");
+        std::fs::write(&path, monitoring_fixture(424242, 1_788_555_600)).unwrap();
+        let key = crate::crypto::derive_key("test-monitoring-enc", &[42u8; 32]);
+        let result = import_files(
+            &conn,
+            &vault_dir,
+            &[path.to_str().unwrap().to_string()],
+            Some(&key),
+            |_, _, _| {},
+        );
+        assert_eq!(result.monitoring_files, 1);
+        let stored: String = conn
+            .query_row("SELECT path_in_vault FROM raw_file", [], |r| r.get(0))
+            .unwrap();
+        assert!(stored.ends_with(".enc"), "{stored}");
+        assert!(vault_dir.join(&stored).exists());
+        let hr: i64 = conn
+            .query_row("SELECT COUNT(*) FROM monitoring_sample WHERE kind = 'hr'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hr, 3, "readings come from the plaintext bytes before encryption");
+    }
+
+    #[test]
+    fn a_gzipped_monitor_file_takes_the_monitoring_path() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_gz");
+        pin_clock_plus3(&conn);
+        let path = vault_dir.join("M9500000.FIT.gz");
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&monitoring_fixture(424242, 1_788_555_600)).unwrap();
+        std::fs::write(&path, enc.finish().unwrap()).unwrap();
+        let result = import_files(
+            &conn,
+            &vault_dir,
+            &[path.to_str().unwrap().to_string()],
+            None,
+            |_, _, _| {},
+        );
+        assert_eq!((result.monitoring_files, result.failed.len()), (1, 0));
+    }
+
+    #[test]
+    fn a_failed_store_leaves_no_raw_file_row_or_file_behind() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_store_fail");
+        // Make the readings unstorable; the raw_file row and the file must
+        // not survive, or the hash would block a re-import forever.
+        conn.execute_batch("DROP TABLE monitoring_sample").unwrap();
+        let path = vault_dir.join("M9500000.FIT");
+        std::fs::write(&path, monitoring_fixture(424242, 1_788_555_600)).unwrap();
+        let result =
+            import_files(
+                &conn,
+                &vault_dir,
+                &[path.to_str().unwrap().to_string()],
+                None,
+                |_, _, _| {},
+            );
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0].reason.contains("Failed to store monitoring data"));
+        let raw: i64 = conn.query_row("SELECT COUNT(*) FROM raw_file", [], |r| r.get(0)).unwrap();
+        assert_eq!(raw, 0);
+        assert!(vault_dir.join("raw").read_dir().map(|mut d| d.next().is_none()).unwrap_or(true));
+    }
+
+    #[test]
+    fn empty_monitoring_file_is_skipped_not_failed_and_leaves_nothing_behind() {
+        use crate::parser::fit_builder::empty_monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_empty");
+        let path = vault_dir.join("M9400000.FIT");
+        std::fs::write(&path, empty_monitoring_fixture(1, 1_788_469_200)).unwrap();
+        let result =
+            import_files(&conn, &vault_dir, &[path.to_str().unwrap().to_string()], None, |_, _, _| {});
+        assert_eq!((result.skipped, result.monitoring_files, result.failed.len()), (1, 0, 0));
+        let raw: i64 = conn.query_row("SELECT COUNT(*) FROM raw_file", [], |r| r.get(0)).unwrap();
+        assert_eq!(raw, 0, "nothing stored, so a later non-empty copy is not blocked");
+    }
+
+    #[test]
+    fn a_fit_file_of_another_type_is_refused_with_its_type() {
+        use crate::parser::fit_builder::settings_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_settings_fit");
+        let path = vault_dir.join("SETTINGS.FIT");
+        std::fs::write(&path, settings_fixture(1, 1_788_469_200)).unwrap();
+        let result =
+            import_files(&conn, &vault_dir, &[path.to_str().unwrap().to_string()], None, |_, _, _| {});
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0].reason.contains("FIT type: settings"), "{}", result.failed[0].reason);
+    }
+
+    #[test]
+    fn monitoring_takes_the_nearest_activitys_offset() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault_dir = fresh_vault("tv_test_vault_monitoring_tz");
+        // An activity two days earlier at +03:00 pins the device's clock.
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type) VALUES ('a1', '2026-09-03T07:35:00+03:00', 'ride')",
+            [],
+        )
+        .unwrap();
+        let midnight = 1_788_555_600; // 2026-09-05 00:00 +03:00
+        let path = vault_dir.join("M9500000.FIT");
+        std::fs::write(&path, monitoring_fixture(424242, midnight)).unwrap();
+        let result =
+            import_files(&conn, &vault_dir, &[path.to_str().unwrap().to_string()], None, |_, _, _| {});
+        assert_eq!(result.monitoring_range, Some(("2026-09-05".to_string(), "2026-09-05".to_string())));
+        let (tz, confirmed): (i32, i64) = conn
+            .query_row("SELECT tz_offset_s, tz_confirmed FROM monitoring_day", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((tz, confirmed), (3 * 3600, 1));
     }
 
     #[test]

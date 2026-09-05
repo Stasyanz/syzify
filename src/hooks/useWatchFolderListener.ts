@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { invalidateActivityData } from "../lib/activityInvalidation";
+import { formatImportSummary } from "../lib/importSummary";
 
 export function useWatchFolderListener() {
   const [pendingFiles, setPendingFiles] = useState<string[]>([]);
@@ -40,16 +41,10 @@ export function useWatchFolderListener() {
               try {
                 const result = await api.importFiles(files);
                 invalidateActivityData(queryClient);
-                const parts = [
-                  `Auto-imported ${result.imported} activit${result.imported === 1 ? "y" : "ies"}`,
-                ];
-                if (result.skipped > 0)
-                  parts.push(`skipped ${result.skipped}`);
-                if (result.failed.length > 0)
-                  parts.push(`${result.failed.length} failed`);
+                const summary = formatImportSummary(result, { auto: true });
                 addToastRef.current(
-                  result.failed.length > 0 ? "warning" : "success",
-                  parts.join(", ")
+                  summary.level,
+                  summary.text
                 );
               } catch (e) {
                 addToastRef.current(
@@ -85,16 +80,8 @@ export function useWatchFolderListener() {
     try {
       const result = await api.importFiles(pendingFiles);
       invalidateActivityData(queryClient);
-      const parts = [
-        `Imported ${result.imported} activit${result.imported === 1 ? "y" : "ies"}`,
-      ];
-      if (result.skipped > 0) parts.push(`skipped ${result.skipped}`);
-      if (result.failed.length > 0)
-        parts.push(`${result.failed.length} failed`);
-      addToast(
-        result.failed.length > 0 ? "warning" : "success",
-        parts.join(", ")
-      );
+      const summary = formatImportSummary(result);
+      addToast(summary.level, summary.text);
       setPendingFiles([]);
     } catch (e) {
       addToast("error", `Import failed: ${e}`);

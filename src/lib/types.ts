@@ -263,6 +263,12 @@ export interface ImportResult {
   imported: number;
   skipped: number;
   failed: FailedFile[];
+  /** Garmin Monitor files stored (ADR 0002) — separate from activities. */
+  monitoring_files: number;
+  /** Local days whose monitoring aggregates were (re)computed. */
+  monitoring_days: number;
+  /** First and last of those days, "YYYY-MM-DD". */
+  monitoring_range: [string, string] | null;
 }
 
 export interface ImportDatasource {

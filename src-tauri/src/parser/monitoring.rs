@@ -240,6 +240,25 @@ pub fn file_type_of(messages: &[FitDataRecord]) -> Result<FitFileType, String> {
     })
 }
 
+/// The earliest full timestamp in the file (unix seconds) — what the
+/// importer needs to pick the device's clock BEFORE assembling anything.
+pub fn first_timestamp(messages: &[FitDataRecord]) -> Option<i64> {
+    decode(messages)
+        .into_iter()
+        .filter_map(|ev| match ev {
+            Event::FullTimestamp(ts)
+            | Event::Stress { ts, .. }
+            | Event::Rhr { ts, .. }
+            | Event::Respiration { ts, .. }
+            | Event::Spo2 { ts, .. } => Some(ts),
+            Event::Hr { at: Stamp::Full(ts), .. } | Event::Total { at: Stamp::Full(ts), .. } => {
+                Some(ts)
+            }
+            _ => None,
+        })
+        .min()
+}
+
 /// Convenience over [`parse_fit_messages`] + [`file_type_of`].
 pub fn detect_fit_file_type(data: &[u8]) -> Result<FitFileType, String> {
     file_type_of(&parse_fit_messages(data)?)
@@ -656,6 +675,14 @@ mod tests {
     }
 
     #[test]
+    fn first_timestamp_is_the_earliest_full_stamp() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let messages = parse_fit_messages(&monitoring_fixture(1, MIDNIGHT_PLUS3)).unwrap();
+        assert_eq!(first_timestamp(&messages), Some(MIDNIGHT_PLUS3 - 6720));
+        assert_eq!(first_timestamp(&[]), None);
+    }
+
+    #[test]
     fn detect_rejects_garbage() {
         assert!(detect_fit_file_type(b"not a fit file").is_err());
         assert!(detect_fit_file_type(&[]).is_err());
@@ -928,6 +955,62 @@ mod tests {
             vec![RhrReading { ts: t + 300, current_day: Some(49), seven_day: Some(62) }]
         );
         assert_eq!((out.first_ts, out.last_ts), (Some(t + 300), Some(t + 300)));
+    }
+
+    #[test]
+    fn decodes_the_synthetic_monitor_file_end_to_end() {
+        use crate::parser::fit_builder::{monitoring_fixture, settings_fixture};
+        let m = MIDNIGHT_PLUS3;
+        let bytes = monitoring_fixture(424242, m);
+        let messages = parse_fit_messages(&bytes).unwrap();
+        assert_eq!(file_type_of(&messages).unwrap(), FitFileType::MonitoringB);
+        let out = parse_monitoring_messages(&messages, PLUS3);
+        assert_eq!(out.device_serial.as_deref(), Some("424242"));
+        assert!(out.tz_confirmed, "the anchor row sits at local midnight");
+        assert_eq!(readings(&out), vec![(m, 52.0), (m + 120, 58.0), (m + 360, 55.0)]);
+        assert_eq!(out.stress, vec![Sample { ts: m + 360, value: 23.0, confidence: None }]);
+        assert_eq!(out.respiration, vec![Sample { ts: m + 300, value: 15.5, confidence: None }]);
+        assert_eq!(out.spo2, vec![Sample { ts: m + 300, value: 96.0, confidence: Some(12) }]);
+        assert_eq!(
+            out.rhr,
+            vec![RhrReading { ts: m + 36_000, current_day: Some(49), seven_day: Some(62) }]
+        );
+        assert_eq!(
+            out.totals,
+            vec![ActivityTotal {
+                ts: m + 600,
+                activity_type: Some("walking".into()),
+                steps: Some(290.0),
+                distance_m: None,
+                active_calories: Some(15.0),
+                active_time_s: Some(780.0),
+            }]
+        );
+        assert_eq!(
+            out.active_minutes,
+            vec![ActiveMinutes {
+                ts: m + 900,
+                moderate_total: Some(2.0),
+                vigorous_total: Some(4.0),
+                moderate_inc: Some(1.0),
+                vigorous_inc: Some(3.0),
+            }]
+        );
+        assert_eq!(
+            out.intensity,
+            vec![IntensityMark {
+                ts: m + 60,
+                activity_type: Some("sedentary".into()),
+                intensity: 0
+            }]
+        );
+        // The head rows are stamped with the last sync, the span starts there.
+        assert_eq!(out.first_ts, Some(m - 6720));
+        // A settings file is neither an activity nor monitoring.
+        assert_eq!(
+            detect_fit_file_type(&settings_fixture(1, m)).unwrap(),
+            FitFileType::Other("settings".into())
+        );
     }
 
     /// Smoke test on a real Monitor file — run by hand:

@@ -903,6 +903,22 @@ pub fn search_activities(conn: &Connection, query: &str) -> Result<Vec<ActivityS
     Ok(activities)
 }
 
+/// The start_time of the activity closest in time to `unix_ts` — its
+/// explicit UTC offset is the best guess for the device's clock at that
+/// moment (Monitor files carry no usable offset of their own, ADR 0002).
+pub fn start_time_nearest(conn: &Connection, unix_ts: i64) -> Result<Option<String>> {
+    // A start_time SQLite cannot read would sort FIRST under ORDER BY (NULL
+    // < everything) and hand every Monitor file garbage — skip such rows.
+    conn.query_row(
+        "SELECT start_time FROM activity
+         WHERE strftime('%s', start_time) IS NOT NULL
+         ORDER BY ABS(CAST(strftime('%s', start_time) AS INTEGER) - ?1) LIMIT 1",
+        params![unix_ts],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1878,5 +1894,34 @@ mod tests {
 
         // …and drops everything when no activity matches.
         assert_eq!(get_activity_start_locations(&conn, &with_sport("swim")).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn start_time_nearest_skips_unreadable_rows_and_reads_naive_ones() {
+        let conn = crate::db::test_db();
+        assert_eq!(start_time_nearest(&conn, 1_788_555_600).unwrap(), None);
+        for (id, st) in [
+            ("bad", "not a date"),
+            ("naive", "2026-09-01T07:00:00"),
+            ("plus3", "2026-09-04T07:35:00+03:00"),
+        ] {
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES (?1, ?2, 'ride')",
+                rusqlite::params![id, st],
+            )
+            .unwrap();
+        }
+        // 2026-09-05 00:00 +03:00 → the +03:00 ride the day before, not the
+        // unreadable row (which would sort first as NULL) and not the naive one.
+        assert_eq!(
+            start_time_nearest(&conn, 1_788_555_600).unwrap().as_deref(),
+            Some("2026-09-04T07:35:00+03:00")
+        );
+        // Close to the naive row, SQLite reads it (as UTC) and returns it —
+        // the caller's rfc3339 parse then falls back to the machine's zone.
+        assert_eq!(
+            start_time_nearest(&conn, 1_788_246_000).unwrap().as_deref(),
+            Some("2026-09-01T07:00:00")
+        );
     }
 }
