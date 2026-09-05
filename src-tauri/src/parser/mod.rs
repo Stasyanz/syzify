@@ -1,4 +1,6 @@
 pub mod fit;
+#[cfg(test)]
+pub mod fit_builder;
 pub mod gpx;
 pub mod monitoring;
 pub mod tcx;
