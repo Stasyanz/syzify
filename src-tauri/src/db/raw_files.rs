@@ -1,12 +1,18 @@
 use rusqlite::{params, Connection, Result};
 
-use crate::models::raw_file::RawFile;
+use crate::models::raw_file::{RawFile, RawFileKind};
 
 pub fn insert_raw_file(conn: &Connection, raw: &RawFile) -> Result<()> {
+    insert_raw_file_of_kind(conn, raw, RawFileKind::Activity)
+}
+
+/// Monitor files share the table (hash dedup, encryption, backups) with
+/// `activity_id` NULL and `kind = 'monitoring'`.
+pub fn insert_raw_file_of_kind(conn: &Connection, raw: &RawFile, kind: RawFileKind) -> Result<()> {
     conn.execute(
         "INSERT INTO raw_file (id, activity_id, path_in_vault, original_path, format,
-         hash_sha256, parse_status, failure_reason)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         hash_sha256, parse_status, failure_reason, kind)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             raw.id,
             raw.activity_id,
@@ -16,6 +22,7 @@ pub fn insert_raw_file(conn: &Connection, raw: &RawFile) -> Result<()> {
             raw.hash_sha256,
             raw.parse_status,
             raw.failure_reason,
+            kind.as_str(),
         ],
     )?;
     Ok(())

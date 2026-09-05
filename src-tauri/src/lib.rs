@@ -161,6 +161,63 @@ fn run_power_curve_backfill(state: &AppState) {
     }
 }
 
+/// Recompute the monitoring day aggregates (ADR 0002): every launch picks
+/// up the days stored but never aggregated (an import interrupted before
+/// its batch recompute), and once per formula version every day is
+/// rebuilt — the flag's suffix is the version, bump it with the formula.
+/// The lock is taken per chunk of days so UI commands are not starved.
+/// Best-effort like the power-curve backfill: a failure leaves the flag
+/// unset to retry next time.
+fn run_monitoring_recompute(state: &AppState) {
+    const MONITORING_FLAG: &str = "monitoring_days_computed_v1";
+    const CHUNK: usize = 30;
+
+    let (days, mark_done) = {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let versioned = match db::settings::get_setting(&conn, MONITORING_FLAG) {
+            Ok(v) => v.is_some(),
+            Err(e) => {
+                eprintln!("Failed to read settings for monitoring recompute: {}", e);
+                return;
+            }
+        };
+        let list = if versioned {
+            db::monitoring::pending_days(&conn)
+        } else {
+            db::monitoring::all_days(&conn)
+        };
+        match list {
+            Ok(days) => (days, !versioned),
+            Err(e) => {
+                eprintln!("Monitoring recompute failed to list days: {}", e);
+                return;
+            }
+        }
+    };
+
+    for chunk in days.chunks(CHUNK) {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if let Err(e) = db::monitoring::recompute_days(&conn, chunk) {
+            eprintln!("Monitoring recompute failed (will retry next launch): {}", e);
+            return;
+        }
+    }
+
+    if mark_done {
+        if let Ok(conn) = state.db.lock() {
+            if let Err(e) = db::settings::set_setting(&conn, MONITORING_FLAG, "1") {
+                eprintln!("Failed to mark monitoring recompute done: {}", e);
+            }
+        }
+    }
+}
+
 /// Open the plaintext vault database (database scope off). A root without a
 /// vault.db becomes a fresh vault here — unless it sits inside another vault
 /// (a marker from an older build could still point there).
@@ -257,6 +314,7 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         // Heavy per-activity work first, with per-chunk locking — the block
         // below holds the lock for its whole run, so it must come after.
         run_power_curve_backfill(&state);
+        run_monitoring_recompute(&state);
         let conn = match state.db.lock() {
             Ok(c) => c,
             Err(_) => return,

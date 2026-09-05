@@ -27,6 +27,24 @@ impl FileFormat {
     }
 }
 
+/// What a stored raw file is: a workout, or an all-day Garmin Monitor
+/// file (ADR 0002) — the latter has no activity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RawFileKind {
+    Activity,
+    Monitoring,
+}
+
+impl RawFileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RawFileKind::Activity => "activity",
+            RawFileKind::Monitoring => "monitoring",
+        }
+    }
+}
+
 /// Failed imports are rejected outright (nothing is stored), so `Ok` is the
 /// only status ever written; the DB column keeps accepting other values in
 /// case a failed-import quarantine is ever built.

@@ -6,6 +6,7 @@ pub mod exercise_sets;
 pub mod hrv_samples;
 pub mod laps;
 pub mod migrations;
+pub mod monitoring;
 pub mod multisport_legs;
 pub mod photos;
 pub mod plugins;

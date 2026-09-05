@@ -3,6 +3,7 @@ pub mod dashboard;
 pub mod exercise_set;
 pub mod hrv_sample;
 pub mod lap;
+pub mod monitoring;
 pub mod multisport_leg;
 pub mod photo;
 pub mod plugin;
