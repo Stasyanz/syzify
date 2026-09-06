@@ -788,6 +788,17 @@ export interface RecoveryCard {
   history: { date: string; index: number; band: "intervals_ok" | "easy_day" | "rest" }[];
 }
 
+/** One night's recovery index for the calendar (#97) — the card's numbers per date. */
+export interface RecoveryNight {
+  date: string;
+  index: number;
+  band: "intervals_ok" | "easy_day" | "rest";
+  hr: { night_median: number; baseline: number; delta: number; score: number };
+  stress: { night_avg: number; score: number } | null;
+  load: { tss_yesterday: number; ctl: number; score: number } | null;
+  warning: "hr_above_baseline" | null;
+}
+
 /** Settings → Vault: how much Garmin monitoring the vault holds. */
 export interface MonitoringSummary {
   days: number;

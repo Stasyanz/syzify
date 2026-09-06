@@ -61,3 +61,18 @@ pub struct RecoveryPoint {
     /// The index's band, so the frontend never re-derives the edges.
     pub band: String,
 }
+
+/// One night's index for the calendar (ADR 0002, #97): the same numbers
+/// the card shows, for every indexed night — the frontend cuts a month.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RecoveryNight {
+    /// The morning's date, "YYYY-MM-DD".
+    pub date: String,
+    pub index: i64,
+    pub band: String,
+    pub hr: HrComponent,
+    pub stress: Option<StressComponent>,
+    pub load: Option<LoadComponent>,
+    /// "hr_above_baseline" when the night ran ≥8 bpm over the baseline.
+    pub warning: Option<String>,
+}

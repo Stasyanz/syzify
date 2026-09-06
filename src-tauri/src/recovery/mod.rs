@@ -22,7 +22,7 @@ use chrono::{Duration, NaiveDate};
 
 use crate::models::monitoring::MonitoringDay;
 use crate::models::recovery::{
-    HrComponent, LoadComponent, RecoveryCard, RecoveryPoint, StressComponent,
+    HrComponent, LoadComponent, RecoveryCard, RecoveryNight, RecoveryPoint, StressComponent,
 };
 
 pub const MIN_NIGHT_SAMPLES: i64 = 120;
@@ -238,6 +238,31 @@ pub fn card(
         nights_needed,
         history,
     }
+}
+
+/// Every indexed night, oldest first — for the calendar's cells and day
+/// popups, which cut the month they show. One row per valid night, so the
+/// whole history is a few hundred rows at most, computed once per fetch
+/// rather than per month flipped. Same inputs and CTL as the card.
+pub fn nights(
+    days: &[MonitoringDay],
+    daily_tss: &BTreeMap<String, f64>,
+    today: NaiveDate,
+) -> Vec<RecoveryNight> {
+    let ctl = ctl_series(daily_tss, today);
+    let (indices, _) = night_indices(days, daily_tss, &ctl);
+    indices
+        .into_iter()
+        .map(|n| RecoveryNight {
+            date: n.date.to_string(),
+            index: n.index,
+            band: band_of(n.index).0.to_string(),
+            warning: (n.hr.delta >= WARN_DELTA).then(|| "hr_above_baseline".to_string()),
+            hr: n.hr,
+            stress: n.stress,
+            load: n.load,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -458,6 +483,30 @@ mod tests {
         assert!((ctl["2026-07-02"] - 2.0 * (1.0 - 1.0 / 42.0)).abs() < 1e-9);
         assert_eq!(ctl.len(), 3);
         assert!(ctl_series(&BTreeMap::new(), d("2026-07-03")).is_empty());
+    }
+
+    #[test]
+    fn nights_lists_every_indexed_night_with_its_band_and_warning() {
+        let (mut days, tss, _ctl) = july();
+        days[6].night_hr_median = Some(62.0); // 29.07 → +9 over the baseline
+        days.push(day("2026-08-01", 300, Some(53.0), Some(10.0)));
+        let all = nights(&days, &tss, d("2026-09-05"));
+        assert_eq!(
+            all.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(),
+            ["2026-07-23", "2026-07-24", "2026-07-25", "2026-07-29", "2026-08-01"]
+        );
+        assert_eq!(all[0].index, 90);
+        assert_eq!(all[0].band, "intervals_ok");
+        assert_eq!(all[0].warning, None);
+        let rest = &all[3];
+        assert_eq!(rest.band, "rest");
+        assert_eq!(rest.warning.as_deref(), Some("hr_above_baseline"));
+        assert_eq!(rest.hr.delta, 9.0);
+        // The same numbers the card shows for its last night.
+        let c = card(&days, &tss, d("2026-09-05"));
+        assert_eq!(c.index, Some(all[4].index));
+        assert_eq!(c.hr.as_ref(), Some(&all[4].hr));
+        assert!(nights(&[], &tss, d("2026-09-05")).is_empty());
     }
 
     /// The whole chain on a real database: SQL → daily hrTSS → CTL →

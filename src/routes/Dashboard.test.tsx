@@ -6,7 +6,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DashboardData } from "../lib/types";
 
 vi.mock("../lib/tauri", () => ({
-  api: { getDashboardData: vi.fn(), getCalendarData: vi.fn(), getRecovery: vi.fn() },
+  api: {
+    getDashboardData: vi.fn(),
+    getCalendarData: vi.fn(),
+    getRecovery: vi.fn(),
+    getRecoveryNights: vi.fn(),
+  },
 }));
 // The page's other widgets pull in chart.js and the plugin host — not what
 // this test is about. The mini calendar stays real: its month state is the

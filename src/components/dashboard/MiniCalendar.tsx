@@ -7,11 +7,14 @@ import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
 import { formatDistance, formatDuration } from "../../lib/format";
 import { toDistance, distanceUnit, toElevation, elevationUnit, useUnits } from "../../lib/units";
-import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
+import { SPORT_LABELS, type SportType, type DaySummary, type RecoveryNight } from "../../lib/types";
 import { WEEKDAYS, buildMonthGrid, monthSports } from "../../lib/calendar";
-import { useMonthView, useToday } from "../../hooks/useToday";
+import { useInvalidateOnNewDay, useMonthView, useToday } from "../../hooks/useToday";
+import { BAND_LABEL, BAND_TOKEN, formatDelta } from "../../lib/recovery";
 
-/** Compact month calendar with activity dots + per-activity hover popups. */
+/** Compact month calendar with activity dots + per-activity hover popups.
+ * A day with a recovery index (ADR 0002, #97) wears its band's color on
+ * the cell border, and its popup opens with the night's numbers. */
 export function MiniCalendar() {
   useUnits();
   // Live day: the "today" ring moves at midnight and the view follows a
@@ -27,6 +30,20 @@ export function MiniCalendar() {
 
   const dayMap = new Map<string, DaySummary>();
   for (const d of days) dayMap.set(d.date, d);
+
+  // Every indexed night at once (one row per valid night, a few hundred
+  // at most), cut to the shown month here — flipping months never asks
+  // the backend again. Under the "recovery" prefix: an import or a delete
+  // invalidates it with the card; midnight refetches it so last night's
+  // index appears without a reload.
+  const { data: nights = [] } = useQuery({
+    queryKey: ["recovery", "nights"],
+    queryFn: () => api.getRecoveryNights(),
+  });
+  useInvalidateOnNewDay(["recovery", "nights"]);
+  const monthKey = `${year}-${String(month).padStart(2, "0")}-`;
+  const nightMap = new Map<string, RecoveryNight>();
+  for (const n of nights) if (n.date.startsWith(monthKey)) nightMap.set(n.date, n);
 
   // 6 weeks always, so the dashboard card keeps one height while the user
   // flips between 5- and 6-week months.
@@ -94,6 +111,8 @@ export function MiniCalendar() {
               if (d === null) return <div className="cal-cell out" key={`e${i}`} />;
               const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
               const summary = dayMap.get(dateStr);
+              const night = nightMap.get(dateStr);
+              const tint = night ? `var(${BAND_TOKEN[night.band]})` : undefined;
               const isToday =
                 d === today.getDate() &&
                 month === today.getMonth() + 1 &&
@@ -102,7 +121,11 @@ export function MiniCalendar() {
               const popCls = col <= 1 ? " pop-l" : col >= 5 ? " pop-r" : "";
               return (
                 <div
-                  className={`cal-cell${summary ? " has" : ""}${isToday ? " today" : ""}`}
+                  className={`cal-cell${summary ? " has" : ""}${night ? " rec" : ""}${
+                    isToday ? " today" : ""
+                  }`}
+                  style={tint ? { borderColor: tint } : undefined}
+                  data-band={night?.band}
                   key={i}
                 >
                   <span className="cal-num">{d}</span>
@@ -112,11 +135,13 @@ export function MiniCalendar() {
                     ))}
                   </div>
 
-                  {/* Hover popup — each row links straight to the activity */}
-                  {summary && (
+                  {/* Hover popup — the night's recovery first, then each
+                      activity as a row linking straight to it */}
+                  {(summary || night) && (
                     <div className={`cal-pop${popCls}`}>
                       <div className="cal-pop-card">
-                        {summary.activities.map((a) => (
+                        {night && <RecoveryRow night={night} />}
+                        {summary?.activities.map((a) => (
                           <button
                             key={a.id}
                             className="cal-pop-row"
@@ -197,6 +222,42 @@ export function MiniCalendar() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The night's index with its band and the three components — the same
+ * numbers as the dashboard card, one line each. */
+function RecoveryRow({ night }: { night: RecoveryNight }) {
+  const tint = `var(${BAND_TOKEN[night.band]})`;
+  return (
+    <div className="cal-pop-rec" data-testid="cal-pop-rec">
+      <div className="cal-pop-rec-head">
+        <span className="cal-pop-rec-index" style={{ color: tint }}>
+          {night.index}
+        </span>
+        <span
+          className="cal-pop-rec-band"
+          style={{ color: tint, background: `var(${BAND_TOKEN[night.band]}-soft)` }}
+        >
+          {BAND_LABEL[night.band]}
+        </span>
+      </div>
+      <div className="cal-pop-rec-line">
+        Night HR {Math.round(night.hr.night_median)} · base {Math.round(night.hr.baseline)} (
+        {formatDelta(night.hr.delta)})
+      </div>
+      <div className="cal-pop-rec-line">
+        {night.stress ? `Stress ${Math.round(night.stress.night_avg)}` : "No stress data"}
+        {night.load
+          ? ` · Load yesterday ${Math.round(night.load.tss_yesterday)} TSS, CTL ${Math.round(
+              night.load.ctl,
+            )}`
+          : " · no training history"}
+      </div>
+      {night.warning === "hr_above_baseline" && (
+        <div className="cal-pop-rec-warn">Night HR well above baseline</div>
+      )}
     </div>
   );
 }
