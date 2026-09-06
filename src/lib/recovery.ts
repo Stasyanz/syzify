@@ -1,13 +1,18 @@
-// The dashboard's Recovery card, pure part (ADR 0002): what the backend's
-// RecoveryCard says in words, and the geometry of its 28-day sparkline.
-// Everything is keyed on the card's own `computed_for` day, never on the
-// frontend clock — the query is invalidated at midnight and the backend
-// answers for its "today".
+// Recovery index, pure frontend part (ADR 0002): band labels and tokens
+// shared by the calendar and the sparkline, and the sparkline's geometry.
+// Dates are "YYYY-MM-DD" keys from the backend, never the frontend clock.
 
-import type { RecoveryCard } from "./types";
+import type { RecoveryNight } from "./types";
 import { dateOfDayKey } from "./calendar";
 
-export type Band = NonNullable<RecoveryCard["band"]>;
+export type Band = RecoveryNight["band"];
+
+/** What the sparkline needs of a night. */
+export interface SparkHistoryPoint {
+  date: string;
+  index: number;
+  band: Band;
+}
 
 export const BAND_LABEL: Record<Band, string> = {
   intervals_ok: "Intervals OK",
@@ -31,42 +36,6 @@ export function daysBetween(from: string, to: string): number {
 /** "Sep 5" — the short local date of a "YYYY-MM-DD" key. */
 export function shortDate(key: string): string {
   return dateOfDayKey(key).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-/** When the shown index was measured, relative to the card's day: the
- * night before `computed_for` is "Last night"; anything older names the
- * morning's date and how far back it is. */
-export function describeAge(date: string, ageDays: number): string {
-  if (ageDays <= 0) return "Last night";
-  const ago = ageDays === 1 ? "1 day ago" : `${ageDays} days ago`;
-  return `${shortDate(date)} · ${ago}`;
-}
-
-export type EmptyState =
-  /** No monitoring day stored in the last 90 days and no index ever — the
-   * watch's Monitor files have not been imported. */
-  | { kind: "no_data" }
-  /** Monitoring days exist but no night reached a full record: the watch
-   * was worn by day only. */
-  | { kind: "no_nights" }
-  /** Valid nights exist but the baseline has not formed yet. */
-  | { kind: "building"; nightsNeeded: number };
-
-/** The card's empty state, or null when there is an index to show. */
-export function emptyState(card: RecoveryCard): EmptyState | null {
-  if (card.index != null) return null;
-  if (card.days_recorded_90d === 0) return { kind: "no_data" };
-  if (card.nights_recorded_90d === 0) return { kind: "no_nights" };
-  return { kind: "building", nightsNeeded: card.nights_needed };
-}
-
-/** The baseline needs 3 valid nights and the index lands on the night
- * AFTER it forms — so the count is about the baseline, never a promise
- * of an index: "2 more nights to build the baseline" / "Baseline ready —
- * the next recorded night gets an index". */
-export function buildingText(nightsNeeded: number): string {
-  if (nightsNeeded <= 0) return "Baseline ready — the next recorded night gets an index";
-  return `${nightsNeeded} more night${nightsNeeded === 1 ? "" : "s"} to build the baseline`;
 }
 
 /** "+3" / "−2" / "0" for the night HR's distance from the baseline. */
@@ -107,7 +76,7 @@ export interface SparkBox {
  * card's day. Points sit on their day's x, so gaps in the record are
  * visible as gaps; points outside the window are dropped. */
 export function sparkline(
-  history: RecoveryCard["history"],
+  history: SparkHistoryPoint[],
   computedFor: string,
   box: SparkBox,
 ): Sparkline {

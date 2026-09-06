@@ -12,7 +12,6 @@ import type {
   Tag,
   DaySummary,
   DashboardData,
-  RecoveryCard,
   CacheInfo,
   WatchFolder,
   ScanResult,
@@ -219,7 +218,6 @@ export const api = {
 
   // Dashboard
   getDashboardData: () => invoke<DashboardData>("get_dashboard_data"),
-  getRecovery: () => invoke<RecoveryCard>("get_recovery"),
   /** Every indexed night, for the calendar cells and popups. */
   getRecoveryNights: () => invoke<RecoveryNight[]>("get_recovery_nights"),
   getMonitoringSummary: () => invoke<MonitoringSummary>("get_monitoring_summary"),

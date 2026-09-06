@@ -580,7 +580,6 @@ pub fn run() {
             commands::settings::enable_encryption,
             commands::settings::disable_encryption,
             commands::dashboard::get_dashboard_data,
-            commands::recovery::get_recovery,
             commands::recovery::get_recovery_nights,
             commands::monitoring::get_monitoring_summary,
             commands::monitoring::delete_monitoring_range,

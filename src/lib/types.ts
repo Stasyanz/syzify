@@ -768,26 +768,6 @@ export interface UpdateCheck {
   release_url: string;
 }
 
-/** The dashboard's Recovery card (ADR 0002). */
-export interface RecoveryCard {
-  computed_for: string;
-  date: string | null;
-  age_days: number | null;
-  index: number | null;
-  band: "intervals_ok" | "easy_day" | "rest" | null;
-  advice: string | null;
-  hr: { night_median: number; baseline: number; delta: number; score: number } | null;
-  stress: { night_avg: number; score: number } | null;
-  load: { tss_yesterday: number; ctl: number; score: number } | null;
-  warning: "hr_above_baseline" | null;
-  /** Monitoring days stored in the last 90 days — 0 = nothing imported. */
-  days_recorded_90d: number;
-  /** Valid nights (≥120 samples, not awake) in the last 90 days. */
-  nights_recorded_90d: number;
-  nights_needed: number;
-  history: { date: string; index: number; band: "intervals_ok" | "easy_day" | "rest" }[];
-}
-
 /** One night's recovery index for the calendar (#97) — the card's numbers per date. */
 export interface RecoveryNight {
   date: string;

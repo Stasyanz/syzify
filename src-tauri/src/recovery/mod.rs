@@ -21,9 +21,7 @@ use std::collections::BTreeMap;
 use chrono::{Duration, NaiveDate};
 
 use crate::models::monitoring::MonitoringDay;
-use crate::models::recovery::{
-    HrComponent, LoadComponent, RecoveryCard, RecoveryNight, RecoveryPoint, StressComponent,
-};
+use crate::models::recovery::{HrComponent, LoadComponent, RecoveryNight, StressComponent};
 
 pub const MIN_NIGHT_SAMPLES: i64 = 120;
 pub const BASELINE_WINDOW_DAYS: i64 = 90;
@@ -31,7 +29,6 @@ pub const BASELINE_NIGHTS: usize = 7;
 pub const BASELINE_MIN_NIGHTS: usize = 3;
 pub const AWAKE_OVER_BASELINE: f64 = 25.0;
 pub const AWAKE_ABSOLUTE: f64 = 90.0;
-pub const HISTORY_DAYS: i64 = 28;
 const WARN_DELTA: f64 = 8.0;
 const W_HR: f64 = 0.5;
 const W_STRESS: f64 = 0.3;
@@ -176,70 +173,6 @@ pub fn band_of(index: i64) -> (&'static str, &'static str) {
     }
 }
 
-/// The card for `today`: the last computed night with its age, and the
-/// sparse 28-day history.
-pub fn card(
-    days: &[MonitoringDay],
-    daily_tss: &BTreeMap<String, f64>,
-    today: NaiveDate,
-) -> RecoveryCard {
-    let ctl = ctl_series(daily_tss, today);
-    let (indices, valid) = night_indices(days, daily_tss, &ctl);
-    let within = |d: NaiveDate, days: i64| (0..=days).contains(&(today - d).num_days());
-    let recorded_90d = valid.iter().filter(|d| within(**d, BASELINE_WINDOW_DAYS)).count() as i64;
-    let days_90d = days
-        .iter()
-        .filter(|d| parse(&d.date).is_some_and(|x| within(x, BASELINE_WINDOW_DAYS)))
-        .count() as i64;
-    let history: Vec<RecoveryPoint> = indices
-        .iter()
-        .filter(|n| within(n.date, HISTORY_DAYS))
-        .map(|n| RecoveryPoint {
-            date: n.date.to_string(),
-            index: n.index,
-            band: band_of(n.index).0.to_string(),
-        })
-        .collect();
-    // Always from the nights inside the window: an old index does not mean
-    // the NEXT night will get one — its baseline needs recent nights too.
-    let nights_needed = (BASELINE_MIN_NIGHTS as i64 - recorded_90d).max(0);
-    let Some(last) = indices.last() else {
-        return RecoveryCard {
-            computed_for: today.to_string(),
-            date: None,
-            age_days: None,
-            index: None,
-            band: None,
-            advice: None,
-            hr: None,
-            stress: None,
-            load: None,
-            warning: None,
-            days_recorded_90d: days_90d,
-            nights_recorded_90d: recorded_90d,
-            nights_needed,
-            history,
-        };
-    };
-    let (band, advice) = band_of(last.index);
-    RecoveryCard {
-        computed_for: today.to_string(),
-        date: Some(last.date.to_string()),
-        age_days: Some((today - last.date).num_days()),
-        index: Some(last.index),
-        band: Some(band.to_string()),
-        advice: Some(advice.to_string()),
-        hr: Some(last.hr.clone()),
-        stress: last.stress.clone(),
-        load: last.load.clone(),
-        warning: (last.hr.delta >= WARN_DELTA).then(|| "hr_above_baseline".to_string()),
-        days_recorded_90d: days_90d,
-        nights_recorded_90d: recorded_90d,
-        nights_needed,
-        history,
-    }
-}
-
 /// Every indexed night, oldest first — for the calendar's cells and day
 /// popups, which cut the month they show. One row per valid night, so the
 /// whole history is a few hundred rows at most, computed once per fetch
@@ -353,14 +286,12 @@ mod tests {
     #[test]
     fn the_first_three_nights_only_build_the_baseline() {
         let (days, tss, ctl) = july();
-        let (idx, _) = night_indices(&days[..3], &tss, &ctl);
+        let (idx, valid) = night_indices(&days[..3], &tss, &ctl);
         assert!(idx.is_empty());
-        let c = card(&days[..3], &tss, d("2026-07-23"));
-        assert_eq!(c.index, None);
-        assert_eq!(c.nights_recorded_90d, 3);
-        assert_eq!(c.nights_needed, 0, "three nights: the next one gets an index");
-        let c = card(&days[..2], &tss, d("2026-07-22"));
-        assert_eq!(c.nights_needed, 1);
+        assert_eq!(valid.len(), 3);
+        let (idx, _) = night_indices(&days[..4], &tss, &ctl);
+        assert_eq!(idx.len(), 1, "the fourth night is the first with an index");
+        assert_eq!(idx[0].date, d("2026-07-23"));
     }
 
     #[test]
@@ -411,64 +342,14 @@ mod tests {
     }
 
     #[test]
-    fn an_old_index_still_shows_but_nights_needed_counts_the_window_only() {
-        // Four nights ~110 days ago (the 4th gets an index) and one fresh
-        // night whose baseline cannot form: the July nights are out of its
-        // 90-day window.
-        let (mut days, tss, _ctl) = july();
-        days.truncate(4);
-        days.push(day("2026-11-05", 300, Some(53.0), Some(10.0)));
-        let c = card(&days, &tss, d("2026-11-10"));
-        assert_eq!(c.date.as_deref(), Some("2026-07-23"));
-        assert_eq!(c.age_days, Some(110));
-        assert_eq!(c.nights_recorded_90d, 1);
-        assert_eq!(c.days_recorded_90d, 1);
-        assert_eq!(c.nights_needed, 2, "two more recent nights before the next index");
-    }
-
-    #[test]
-    fn days_without_a_valid_night_still_count_as_recorded_days() {
-        // The watch was worn by day only: monitoring rows exist, no night
-        // reaches 120 samples — the card must not ask for an import.
-        let days = vec![
-            day("2026-09-03", 40, Some(58.0), Some(20.0)),
-            day("2026-09-04", 0, None, Some(22.0)),
-        ];
-        let c = card(&days, &BTreeMap::new(), d("2026-09-05"));
-        assert_eq!(c.index, None);
-        assert_eq!(c.days_recorded_90d, 2);
-        assert_eq!(c.nights_recorded_90d, 0);
-        assert_eq!(c.nights_needed, 3);
-        assert_eq!(card(&[], &BTreeMap::new(), d("2026-09-05")).days_recorded_90d, 0);
-    }
-
-    #[test]
-    fn card_reports_the_last_night_with_its_age_and_a_sparse_history() {
-        let (days, tss, _ctl) = july();
-        let c = card(&days, &tss, d("2026-09-05"));
-        assert_eq!(c.date.as_deref(), Some("2026-07-29"));
-        assert_eq!(c.age_days, Some(38));
-        assert_eq!(c.band.as_deref(), Some("rest"));
-        assert_eq!(c.warning, None);
-        assert_eq!(c.nights_recorded_90d, 7);
-        assert_eq!(c.days_recorded_90d, 7);
-        assert!(c.history.is_empty(), "nothing in the last 28 days");
-        let c = card(&days, &tss, d("2026-07-30"));
-        assert_eq!(c.age_days, Some(1));
-        assert_eq!(c.history.len(), 4);
-        assert_eq!(c.history[0].band, "intervals_ok");
-        assert_eq!(c.history[3].band, "rest");
-        assert_eq!(c.band.as_deref(), Some("rest"));
-    }
-
-    #[test]
     fn warns_when_the_night_ran_well_over_the_baseline() {
         let (mut days, tss, ctl) = july();
         days[6].night_hr_median = Some(62.0); // +9 over 53
         let (idx, _) = night_indices(&days, &tss, &ctl);
         assert_eq!(idx.last().unwrap().hr.delta, 9.0);
-        let c = card(&days, &tss, d("2026-07-30"));
-        assert_eq!(c.warning.as_deref(), Some("hr_above_baseline"));
+        let all = nights(&days, &tss, d("2026-07-30"));
+        assert_eq!(all.last().unwrap().warning.as_deref(), Some("hr_above_baseline"));
+        assert_eq!(all[0].warning, None);
         assert_eq!(band_of(80).0, "intervals_ok");
         assert_eq!(band_of(79).0, "easy_day");
         assert_eq!(band_of(59).0, "rest");
@@ -502,15 +383,15 @@ mod tests {
         assert_eq!(rest.band, "rest");
         assert_eq!(rest.warning.as_deref(), Some("hr_above_baseline"));
         assert_eq!(rest.hr.delta, 9.0);
-        // The same numbers the card shows for its last night.
-        let c = card(&days, &tss, d("2026-09-05"));
-        assert_eq!(c.index, Some(all[4].index));
-        assert_eq!(c.hr.as_ref(), Some(&all[4].hr));
+        // The same numbers night_indices computes, in the same order.
+        let (idx, _) = night_indices(&days, &tss, &ctl_series(&tss, d("2026-09-05")));
+        assert_eq!(idx[4].index, all[4].index);
+        assert_eq!(idx[4].hr, all[4].hr);
         assert!(nights(&[], &tss, d("2026-09-05")).is_empty());
     }
 
     /// The whole chain on a real database: SQL → daily hrTSS → CTL →
-    /// card. This is where the pure module meets its input; a corrupt
+    /// nights. This is where the pure module meets its input; a corrupt
     /// zone row (days' worth of seconds, as pre-dedup imports left) must
     /// not reach the load component.
     #[test]
@@ -536,8 +417,8 @@ mod tests {
         let (mut days, _, _) = july();
         days.retain(|d| d.date.as_str() < "2026-07-26");
         days.push(day("2026-07-29", 255, Some(53.0), Some(10.0)));
-        let c = card(&days, &daily, d("2026-07-29"));
-        let load = c.load.expect("CTL exists for the 28th");
+        let all = nights(&days, &daily, d("2026-07-29"));
+        let load = all.last().unwrap().load.clone().expect("CTL exists for the 28th");
         assert!((load.tss_yesterday - tss).abs() < 0.01);
         assert!((load.ctl - tss / CTL_DAYS).abs() < 1e-9, "first day of history");
         // 34.7 / max(0.83, 30) → 1.157 over → 93.7; with the corrupt row
@@ -579,7 +460,7 @@ mod tests {
                 n.load.as_ref().map(|l| (l.tss_yesterday.round(), l.ctl.round(), l.score.round()))
             );
         }
-        let c = card(&days, &daily, today);
-        eprintln!("card: {c:?}");
+        let all = nights(&days, &daily, today);
+        eprintln!("nights: {}, last: {:?}", all.len(), all.last());
     }
 }
