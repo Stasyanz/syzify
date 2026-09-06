@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Result};
 
-use crate::models::monitoring::MonitoringDay;
+use crate::models::monitoring::{MonitoringDay, MonitoringSummary};
 use crate::parser::monitoring::{
     local_day_of_sample, local_day_of_total, ParsedMonitoring, Sample,
 };
@@ -438,6 +438,30 @@ fn row_to_day(row: &rusqlite::Row) -> Result<MonitoringDay> {
     })
 }
 
+/// Days, their date span and the Monitor files kept — the Settings line.
+pub fn summary(conn: &Connection) -> Result<MonitoringSummary> {
+    let (days, first_date, last_date) = conn.query_row(
+        "SELECT COUNT(*), MIN(date), MAX(date) FROM monitoring_day",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    let files = conn.query_row(
+        "SELECT COUNT(*) FROM raw_file WHERE kind = 'monitoring'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(MonitoringSummary { days, first_date, last_date, files })
+}
+
+/// Stored days inside an inclusive date range — what a delete will remove.
+pub fn count_days(conn: &Connection, from: &str, to: &str) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM monitoring_day WHERE date >= ?1 AND date <= ?2",
+        params![from, to],
+        |r| r.get(0),
+    )
+}
+
 /// Delete every stored reading whose local day falls in the date range
 /// (inclusive) and the day rows themselves. Returns the ids of the
 /// monitoring raw files that touched the deleted window and now overlap NO
@@ -458,6 +482,16 @@ pub fn delete_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<Strin
     }
     let tx = conn.unchecked_transaction()?;
     let mut raw_ids: BTreeSet<String> = BTreeSet::new();
+    // The STORED days of the range, not a calendar walk: a typo'd year
+    // costs nothing, and only rows that exist can own readings.
+    let stored: Vec<(String, i32)> = {
+        let mut stmt = tx.prepare(
+            "SELECT date, tz_offset_s FROM monitoring_day
+             WHERE date >= ?1 AND date <= ?2 ORDER BY date",
+        )?;
+        let rows = stmt.query_map(params![from, to], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<Result<_>>()?
+    };
     let mut tz_of = tx.prepare("SELECT tz_offset_s FROM monitoring_day WHERE date = ?1")?;
     // Files that touched the window, minus those a remaining day still
     // overlaps. A day (local midnight … next midnight, from its own offset)
@@ -480,12 +514,17 @@ pub fn delete_range(conn: &Connection, from: &str, to: &str) -> Result<Vec<Strin
     let mut del_rhr = tx.prepare("DELETE FROM monitoring_rhr WHERE ts >= ?1 AND ts < ?2")?;
     let mut del_day = tx.prepare("DELETE FROM monitoring_day WHERE date = ?1")?;
     let mut range: Option<(i64, i64)> = None;
-    for day in from_day..=to_day {
-        let Some(date) = date_of(day) else { continue };
-        let tz: Option<i32> = tz_of.query_row(params![date], |r| r.get(0)).optional()?;
-        let Some(tz) = tz else { continue };
-        let midnight = day * DAY - i64::from(tz);
-        let next = midnight + DAY;
+    for (date, tz) in &stored {
+        let Some(day) = day_of(date) else { continue };
+        let midnight = day * DAY - i64::from(*tz);
+        // The day ends where the NEXT stored day begins by ITS offset —
+        // the same tiling recompute uses — so a clock change between two
+        // days leaves no hour owned by neither (nor by both).
+        let next_tz: Option<i32> = match date_of(day + 1) {
+            Some(d) => tz_of.query_row(params![d], |r| r.get(0)).optional()?,
+            None => None,
+        };
+        let next = (day + 1) * DAY - i64::from(next_tz.unwrap_or(*tz));
         range = Some(range.map_or((midnight, next), |(a, b)| (a.min(midnight), b.max(next))));
         del_sample.execute(params![midnight, next])?;
         del_total.execute(params![midnight + 181, next + 181])?;
@@ -856,6 +895,54 @@ mod tests {
         // A range with no day rows is a no-op, and so is an inverted one.
         assert!(delete_range(&conn, "2020-01-01", "2020-01-02").unwrap().is_empty());
         assert!(delete_range(&conn, "2026-09-06", "2026-09-05").unwrap().is_empty());
+    }
+
+    /// A clock change between two stored days: the first day's window ends
+    /// where the second begins BY THE SECOND'S offset, so no reading is
+    /// left unowned (+03 → +02 opens an hour) or taken twice (+03 → +04).
+    #[test]
+    fn delete_range_tiles_the_windows_across_a_clock_change() {
+        for (next_tz, extra) in [(7200, 600), (14_400, -1800)] {
+            let conn = db::test_db();
+            for id in ["rf-a", "rf-b"] {
+                conn.execute(
+                    "INSERT INTO raw_file (id, path_in_vault, format, hash_sha256, kind)
+                     VALUES (?1, ?1, 'fit', ?1, 'monitoring')",
+                    params![id],
+                )
+                .unwrap();
+            }
+            store(&conn, &parsed(), Some("rf-a")).unwrap();
+            // The next day read under another offset; `extra` is a reading
+            // in the disputed hour around the calendar midnight.
+            let mut next = parsed();
+            next.tz_offset_s = next_tz;
+            let next_midnight = MIDNIGHT + DAY + (PLUS3 - next_tz) as i64;
+            next.hr = vec![
+                sample(MIDNIGHT + DAY + extra, 57.0),
+                sample(next_midnight + 3600, 58.0),
+            ];
+            next.stress.clear();
+            next.respiration.clear();
+            next.spo2.clear();
+            next.rhr.clear();
+            next.totals.clear();
+            next.active_minutes.clear();
+            next.first_ts = Some(MIDNIGHT + DAY + extra);
+            next.last_ts = Some(next_midnight + DAY);
+            store(&conn, &next, Some("rf-b")).unwrap();
+            let before = count(&conn, "SELECT COUNT(*) FROM monitoring_sample");
+
+            // Deleting only 05.09: the disputed reading goes with the day
+            // whose window owns it — 05 at +03→+02, 06 at +03→+04.
+            delete_range(&conn, "2026-09-05", "2026-09-05").unwrap();
+            let left = count(&conn, "SELECT COUNT(*) FROM monitoring_sample");
+            let expected = if extra > 0 { 1 } else { 2 };
+            assert_eq!(left, expected, "next_tz {next_tz}: {before} → {left}");
+            delete_range(&conn, "2026-09-06", "2026-09-06").unwrap();
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM monitoring_sample"), 0);
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM monitoring_day"), 0);
+        }
     }
 
     #[test]

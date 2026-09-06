@@ -25,6 +25,7 @@ import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
+import { MonitoringData } from "../components/settings/MonitoringData";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 /** What each encryption scope covers. Raw files include Garmin monitoring
@@ -653,6 +654,7 @@ export function SettingsPage() {
               </button>
             </div>
           </div>
+          <MonitoringData />
           <div className="set-row">
             <div>
               <div className="sl">Map tile cache</div>

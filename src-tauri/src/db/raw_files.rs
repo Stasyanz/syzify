@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
 
 use crate::models::raw_file::{RawFile, RawFileKind};
 
@@ -61,6 +61,64 @@ pub fn update_path(conn: &Connection, old_path: &str, new_path: &str) -> Result<
 pub fn delete_by_id(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM raw_file WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+/// `(id, path_in_vault)` of the given Monitor files — the delete-range
+/// path removes the files from disk before dropping their rows. Filtered
+/// by kind so an activity's file can never be named by mistake.
+pub fn monitoring_paths_by_ids(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, path_in_vault FROM raw_file WHERE id = ?1 AND kind = 'monitoring'",
+    )?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let row = stmt
+            .query_row(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .optional()?;
+        if let Some(row) = row {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// Monitor files nothing points at any more: no reading of any kind, and
+/// either no span row (a corrupt timestamp keeps `store` from writing one)
+/// or a span no remaining day overlaps (the same test `delete_range`
+/// applies, for a file whose days are gone but whose removal the OS
+/// refused last time). Their readings were deleted — or never stored — so
+/// the file is data the user asked to be rid of, and its hash blocks a
+/// re-import for nothing. Also what an interrupted delete leaves behind
+/// (rows committed, files not yet removed), so the next delete finishes
+/// the job.
+pub fn orphan_monitoring_files(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.path_in_vault FROM raw_file r
+         WHERE r.kind = 'monitoring'
+           AND NOT EXISTS
+             (SELECT 1 FROM monitoring_raw_file s
+              WHERE s.raw_file_id = r.id
+                AND EXISTS (
+                  SELECT 1 FROM monitoring_day d
+                  WHERE ((julianday(d.date) - 2440587.5) * 86400 - d.tz_offset_s)
+                        < s.last_ts - 181
+                    AND ((julianday(d.date) - 2440587.5) * 86400 - d.tz_offset_s + 86400)
+                        > s.first_ts))
+           AND NOT EXISTS
+             (SELECT 1 FROM monitoring_sample m WHERE m.raw_file_id = r.id)
+           AND NOT EXISTS
+             (SELECT 1 FROM monitoring_total t WHERE t.raw_file_id = r.id)
+           AND NOT EXISTS
+             (SELECT 1 FROM monitoring_active_minutes a WHERE a.raw_file_id = r.id)
+         ORDER BY r.id",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
 }
 
 /// Delete the raw_file rows tied to an activity. Called by delete_activity

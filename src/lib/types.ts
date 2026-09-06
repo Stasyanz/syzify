@@ -784,3 +784,21 @@ export interface RecoveryCard {
   nights_needed: number;
   history: { date: string; index: number; band: "intervals_ok" | "easy_day" | "rest" }[];
 }
+
+/** Settings → Vault: how much Garmin monitoring the vault holds. */
+export interface MonitoringSummary {
+  days: number;
+  first_date: string | null;
+  last_date: string | null;
+  files: number;
+}
+
+/** Outcome of delete_monitoring_range. */
+export interface MonitoringDeleted {
+  days: number;
+  /** Files actually removed. */
+  files: number;
+  /** Files the OS refused to remove (their rows stay; retry later). */
+  failed: number;
+  error: string | null;
+}

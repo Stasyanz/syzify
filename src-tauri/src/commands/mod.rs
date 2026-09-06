@@ -2,6 +2,7 @@ pub mod activities;
 pub mod dashboard;
 pub mod export;
 pub mod import;
+pub mod monitoring;
 pub mod photos;
 pub mod plugins;
 pub mod recovery;

@@ -581,6 +581,8 @@ pub fn run() {
             commands::settings::disable_encryption,
             commands::dashboard::get_dashboard_data,
             commands::recovery::get_recovery,
+            commands::monitoring::get_monitoring_summary,
+            commands::monitoring::delete_monitoring_range,
             commands::photos::attach_photos,
             commands::photos::get_photos,
             commands::photos::delete_photo,

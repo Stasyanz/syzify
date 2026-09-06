@@ -35,6 +35,8 @@ import type {
   PluginEndpoint,
   PluginContribution,
   ViewSpec,
+  MonitoringSummary,
+  MonitoringDeleted,
 } from "./types";
 
 /**
@@ -217,6 +219,10 @@ export const api = {
   // Dashboard
   getDashboardData: () => invoke<DashboardData>("get_dashboard_data"),
   getRecovery: () => invoke<RecoveryCard>("get_recovery"),
+  getMonitoringSummary: () => invoke<MonitoringSummary>("get_monitoring_summary"),
+  /** Delete the monitoring data of an inclusive local-date range. */
+  deleteMonitoringRange: (from: string, to: string) =>
+    invoke<MonitoringDeleted>("delete_monitoring_range", { from, to }),
 
   // Photos
   attachPhotos: (activityId: string, paths: string[]) =>

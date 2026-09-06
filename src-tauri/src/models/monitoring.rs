@@ -31,3 +31,28 @@ pub struct MonitoringDay {
     pub vigorous_min: Option<f64>,
     pub computed_at: Option<String>,
 }
+
+/// What Settings → Vault shows above the delete-range control.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct MonitoringSummary {
+    /// Stored days (one row per local day).
+    pub days: i64,
+    pub first_date: Option<String>,
+    pub last_date: Option<String>,
+    /// Monitor raw files kept in the vault.
+    pub files: i64,
+}
+
+/// Outcome of `delete_monitoring_range`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct MonitoringDeleted {
+    pub days: i64,
+    /// Raw files actually removed from the vault (their hashes freed for
+    /// re-import) — counted per successful removal, not per row found.
+    pub files: i64,
+    /// Files the OS refused to remove; their rows (and hashes) stay and the
+    /// next delete of any range tries them again. `error` carries the first
+    /// reason.
+    pub failed: i64,
+    pub error: Option<String>,
+}

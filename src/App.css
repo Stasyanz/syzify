@@ -41,6 +41,8 @@
 }
 
 :root {
+  /* Native widgets (the date inputs in Settings) follow the app theme, not the OS. */
+  color-scheme: light;
   /* surfaces & text — light */
   --bg: #f3efe7;          /* app background (warm off-white) */
   --surface: #faf7f1;     /* panel backgrounds */
@@ -85,6 +87,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --bg: #16130e;
   --surface: #1c1813;
   --card: #241f18;

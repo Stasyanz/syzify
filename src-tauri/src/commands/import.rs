@@ -18,7 +18,7 @@ pub fn get_import_datasources() -> Vec<datasource::DatasourceInfo> {
 /// command itself must not rely on that: an import accepted while locked
 /// would write its raw file in PLAINTEXT into an encrypted vault (no key to
 /// encrypt with) until the next unlock's resume pass happens to heal it.
-fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
+pub(crate) fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
     if crate::crypto::read_vault_lock(&state.vault_path)?.is_none() {
         return Ok(()); // plaintext vault
     }
@@ -30,7 +30,7 @@ fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
     if has_key {
         Ok(())
     } else {
-        Err("The vault is locked — unlock it before importing".to_string())
+        Err("The vault is locked — unlock it first".to_string())
     }
 }
 
