@@ -31,6 +31,16 @@ describe("RecoverySparkline", () => {
     expect(container.textContent).toContain("Today");
   });
 
+  it("counts a single night in the singular", () => {
+    const { container } = render(
+      <RecoverySparkline history={[history[1]]} computedFor="2026-06-10" />,
+    );
+    expect(container.querySelector("svg")?.getAttribute("aria-label")).toBe(
+      "Recovery index, last 28 days: 1 night, latest 55 on Jun 10",
+    );
+    expect(container.querySelectorAll("svg line")).toHaveLength(2);
+  });
+
   it("labels a hovered point with its night and index", () => {
     const { container, queryByTestId, getByTestId } = render(
       <RecoverySparkline history={history} computedFor="2026-06-10" />,
