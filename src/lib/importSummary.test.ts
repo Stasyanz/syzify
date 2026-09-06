@@ -9,6 +9,7 @@ const base: ImportResult = {
   monitoring_files: 0,
   monitoring_days: 0,
   monitoring_range: null,
+  monitoring_night: false,
 };
 
 describe("formatImportSummary", () => {
@@ -23,10 +24,17 @@ describe("formatImportSummary", () => {
   });
 
   it("reports monitoring by the days it covered", () => {
-    const r = { ...base, monitoring_files: 30, monitoring_days: 12, monitoring_range: ["2026-08-20", "2026-09-05"] as [string, string] };
-    expect(formatImportSummary(r).text).toBe("Imported monitoring for 12 days (Aug 20 – Sep 5)");
+    const r = { ...base, monitoring_files: 30, monitoring_days: 12, monitoring_range: ["2026-08-20", "2026-09-05"] as [string, string], monitoring_night: true };
+    expect(formatImportSummary(r).text).toBe("Imported monitoring for 12 days (Aug 20 – Sep 5, night of Sep 5 included)");
+    // A file closed at midnight: the evening before only, the card cannot change.
     const one = { ...base, monitoring_files: 2, monitoring_days: 1, monitoring_range: ["2026-09-05", "2026-09-05"] as [string, string] };
-    expect(formatImportSummary(one).text).toBe("Imported monitoring for 1 day (Sep 5)");
+    expect(formatImportSummary(one).text).toBe(
+      "Imported monitoring for 1 day (Sep 5, no night for Sep 5 yet — sync the watch after waking)",
+    );
+    // A watch folder: the watch is already connected, no advice.
+    expect(formatImportSummary(one, { auto: true }).text).toBe(
+      "Auto-imported monitoring for 1 day (Sep 5, no night for Sep 5 yet)",
+    );
   });
 
   it("phrases monitoring duplicates as files already imported", () => {
@@ -35,10 +43,11 @@ describe("formatImportSummary", () => {
       monitoring_files: 9,
       monitoring_days: 12,
       monitoring_range: ["2026-08-20", "2026-09-05"] as [string, string],
+      monitoring_night: true,
       skipped: 3,
     };
     expect(formatImportSummary(r).text).toBe(
-      "Imported monitoring for 12 days (Aug 20 – Sep 5), skipped 3 files (already imported)",
+      "Imported monitoring for 12 days (Aug 20 – Sep 5, night of Sep 5 included), skipped 3 files (already imported)",
     );
   });
 
@@ -51,7 +60,7 @@ describe("formatImportSummary", () => {
       monitoring_range: ["2026-09-01", "2026-09-05"] as [string, string],
     };
     expect(formatImportSummary(r).text).toBe(
-      "Imported 2 activities and monitoring for 5 days (Sep 1 – Sep 5)",
+      "Imported 2 activities and monitoring for 5 days (Sep 1 – Sep 5, no night for Sep 5 yet — sync the watch after waking)",
     );
   });
 

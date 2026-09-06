@@ -25,6 +25,7 @@ const { onDragDropEvent, importFiles, attachPhotos, addToast, captured } =
           monitoring_files: 0,
           monitoring_days: 0,
           monitoring_range: null,
+          monitoring_night: false,
         }),
       attachPhotos: vi
         .fn()

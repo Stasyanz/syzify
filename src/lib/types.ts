@@ -267,6 +267,9 @@ export interface ImportResult {
   monitoring_files: number;
   /** Local days whose monitoring aggregates were (re)computed. */
   monitoring_days: number;
+  /** Whether the batch carried a night's worth of heart rate — a file
+   * closed at local midnight holds only the evening before. */
+  monitoring_night: boolean;
   /** First and last of those days, "YYYY-MM-DD". */
   monitoring_range: [string, string] | null;
 }

@@ -122,10 +122,7 @@ pub async fn import_files(
         .await
         .map_err(|e| format!("Task join error: {}", e))?;
         match finished {
-            Ok(partial) => {
-                result.monitoring_days = partial.monitoring_days;
-                result.monitoring_range = partial.monitoring_range;
-            }
+            Ok(partial) => result.merge_monitoring(partial),
             Err(reason) => {
                 result.failed.push(FailedFile { path: "(monitoring recompute)".to_string(), reason });
             }

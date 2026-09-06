@@ -37,7 +37,15 @@ export function formatImportSummary(
   const what: string[] = [];
   if (activities > 0) what.push(plural(activities, "activity", "activities"));
   if (monitoringDays > 0 && range) {
-    what.push(`monitoring for ${plural(monitoringDays, "day", "days")} (${rangeLabel(range)})`);
+    // Monitor files closed at local midnight carry only the evening before,
+    // so a successful import can leave the Recovery card exactly as it was:
+    // say whether the newest day's night is in, and what to do if not.
+    const night = result.monitoring_night
+      ? `night of ${dayLabel(range[1])} included`
+      : `no night for ${dayLabel(range[1])} yet${opts.auto ? "" : " — sync the watch after waking"}`;
+    what.push(
+      `monitoring for ${plural(monitoringDays, "day", "days")} (${rangeLabel(range)}, ${night})`,
+    );
   } else if (result.monitoring_files > 0) {
     what.push(plural(result.monitoring_files, "monitoring file", "monitoring files"));
   }

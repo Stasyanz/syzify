@@ -48,6 +48,13 @@ pub struct ImportResult {
     pub monitoring_days: usize,
     /// First and last of those days, "YYYY-MM-DD".
     pub monitoring_range: Option<(String, String)>,
+    /// Whether the NEWEST day the batch touched holds a valid night (≥120
+    /// heart-rate readings 00:00–07:00 — the Recovery card's own test,
+    /// read back from the recomputed day row, so earlier files, overlaps
+    /// and the day's confirmed offset all count). A file closed at local
+    /// midnight holds only the evening before, and the toast should say so
+    /// rather than let a successful import look like nothing happened.
+    pub monitoring_night: bool,
 }
 
 impl ImportResult {
@@ -91,7 +98,25 @@ impl MonitoringBatch {
         let first = self.days.iter().next().and_then(|d| db::monitoring::date_of(*d));
         let last = self.days.iter().next_back().and_then(|d| db::monitoring::date_of(*d));
         result.monitoring_range = first.zip(last);
+        result.monitoring_night = match &result.monitoring_range {
+            Some((_, newest)) => db::monitoring::get_days(conn, newest, newest)
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|d| d.night_samples >= crate::recovery::MIN_NIGHT_SAMPLES),
+            None => false,
+        };
         Ok(())
+    }
+}
+
+impl ImportResult {
+    /// Take over what a batch's [`MonitoringBatch::finish`] computed into a
+    /// separate result (the command runs it on a blocking thread) — every
+    /// monitoring field, so none is forgotten on the main import path.
+    pub fn merge_monitoring(&mut self, finished: ImportResult) {
+        self.monitoring_days = finished.monitoring_days;
+        self.monitoring_range = finished.monitoring_range;
+        self.monitoring_night = finished.monitoring_night;
     }
 }
 
@@ -951,7 +976,95 @@ pub(crate) fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::models::trackpoint::TrackPoint;
+
+    /// The toast's "night included / no night yet" is read back from the
+    /// NEWEST day the batch touched, after the recompute — the Recovery
+    /// card's own validity test, not a count of what the files carried.
+    #[test]
+    fn a_batch_reports_whether_its_newest_day_holds_a_night() {
+        use crate::parser::monitoring::{ParsedMonitoring, Sample};
+        const MIDNIGHT: i64 = 1_788_555_600; // 2026-09-05 00:00 +03:00
+        const DAY: i64 = 86_400;
+        let hr = |from: i64, to: i64| -> Vec<Sample> {
+            (from..to)
+                .step_by(60)
+                .map(|ts| Sample { ts, value: 55.0, confidence: None })
+                .collect()
+        };
+        let file = |first: i64, last: i64| ParsedMonitoring {
+            device_serial: Some("dev1".into()),
+            device_product: Some("fenix6x".into()),
+            tz_offset_s: 3 * 3600,
+            tz_confirmed: true,
+            first_ts: Some(first),
+            last_ts: Some(last),
+            hr: hr(first, last),
+            stress: vec![],
+            respiration: vec![],
+            spo2: vec![],
+            rhr: vec![],
+            totals: vec![],
+            intensity: vec![],
+            active_minutes: vec![],
+        };
+        let run = |conn: &Connection, parsed: &[ParsedMonitoring]| -> ImportResult {
+            let mut result = ImportResult::default();
+            let mut batch = MonitoringBatch::default();
+            for p in parsed {
+                let stored = db::monitoring::store(conn, p, None).unwrap();
+                let outcome = Ok(ImportOutcome::Monitoring { days: stored.days });
+                result.record("m.fit", outcome, &mut batch);
+            }
+            batch.finish(conn, &mut result).unwrap();
+            result
+        };
+
+        // The morning file: the night of 05.09 in full → night included.
+        let conn = db::test_db();
+        let morning = run(&conn, &[file(MIDNIGHT, MIDNIGHT + 11 * 3600)]);
+        assert_eq!(morning.monitoring_range.as_ref().map(|r| r.0.as_str()), Some("2026-09-05"));
+        assert!(morning.monitoring_night);
+
+        // The file closed at midnight: the evening of 05.09 plus the closing
+        // rows of 06.09 — the newest day (06) has no night, even though the
+        // batch also touched a day (05) whose night is already stored.
+        let evening = run(&conn, &[file(MIDNIGHT + 13 * 3600, MIDNIGHT + DAY + 180)]);
+        assert_eq!(evening.monitoring_days, 2);
+        assert_eq!(
+            evening.monitoring_range,
+            Some(("2026-09-05".to_string(), "2026-09-06".to_string()))
+        );
+        assert!(!evening.monitoring_night, "no night for the newest day yet");
+
+        // A night split by a 03:00 sync: the first half alone is a valid
+        // night (180 readings ≥ 120) — and the second drop, which adds
+        // nothing to the night, still reports the stored night.
+        let conn = db::test_db();
+        assert!(run(&conn, &[file(MIDNIGHT + DAY, MIDNIGHT + DAY + 3 * 3600)]).monitoring_night);
+        let second_half = file(MIDNIGHT + DAY + 3 * 3600, MIDNIGHT + DAY + 12 * 3600);
+        assert!(run(&conn, &[second_half]).monitoring_night);
+
+        // An empty batch says nothing.
+        assert!(!ImportResult::default().monitoring_night);
+    }
+
+    #[test]
+    fn merge_monitoring_carries_every_monitoring_field() {
+        let mut result = ImportResult { imported: 2, ..ImportResult::default() };
+        let finished = ImportResult {
+            monitoring_days: 3,
+            monitoring_range: Some(("2026-09-04".into(), "2026-09-06".into())),
+            monitoring_night: true,
+            ..ImportResult::default()
+        };
+        result.merge_monitoring(finished);
+        assert_eq!(result.imported, 2, "the batch result never touches the activity tally");
+        assert_eq!(result.monitoring_days, 3);
+        assert_eq!(result.monitoring_range.as_ref().map(|r| r.1.as_str()), Some("2026-09-06"));
+        assert!(result.monitoring_night);
+    }
 
     fn full_tp(activity_id: &str, t: &str, lat: f64, power_w: Option<i32>) -> TrackPoint {
         TrackPoint {
