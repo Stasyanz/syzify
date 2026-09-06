@@ -6,11 +6,25 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-06
+
 ### Added
 - Garmin monitoring: drop the watch's Monitor files (the all-day
   `MYMD….FIT` files next to the activities) to import heart rate, stress,
   respiration, SpO2, steps and active minutes; the import summary reports
-  the days covered. First half of the Recovery card (#77).
+  the days covered and whether the newest day's night came along — a file
+  the watch closed at midnight holds only the evening before, so the
+  summary says "no night for Sep 6 yet, sync the watch after waking".
+- Recovery index (#77): every night with a full heart-rate record gets a
+  0–100 score from the night's heart rate against its 90-day baseline, the
+  night's stress and yesterday's training load against the chronic load;
+  three bands — Intervals OK (80+), Easy day (60–79), Rest (below 60). The
+  dashboard calendar wears the band on the day's cell border, and the
+  day's popup opens with the night's numbers above the workouts. Needs
+  three recorded nights before the first score.
+- Settings → Vault: "Monitoring data" shows what the watch's files cover
+  and deletes a date range — the readings, the days and the Monitor files
+  nothing else needs, whose hashes are freed so they can be imported again.
 - Import: dropping a folder imports the workout and monitoring files in it
   (up to three levels deep, symlinks skipped).
 - Settings: "Open another…" next to the vault location switches to a
@@ -19,6 +33,11 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Activity charts: every metric chart (heart rate, power, cadence, speed or
   pace) draws its average as a dashed reference line with an `avg …` label,
   the same number the summary tiles show.
+
+### Changed
+- Settings → Encryption: the "Raw files" scope is labelled "Raw files
+  (activities & monitoring)" — Monitor files are encrypted with the
+  activities' files.
 
 ### Fixed
 - Zone-colored bars (heart rate, power) painted every bar one zone too cool

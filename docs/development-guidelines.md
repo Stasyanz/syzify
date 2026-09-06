@@ -32,6 +32,21 @@ pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
 }
 ```
 
+### Monitoring & recovery (ADR 0002)
+
+- Garmin Monitor files go through the same import pipeline as workouts:
+  `parser/monitoring` decodes, `db/monitoring::store` writes samples and
+  marks the days, `MonitoringBatch::finish` recomputes each touched day once
+  per batch. Never compute a day's aggregates per file.
+- The recovery index is pure: `recovery::night_indices` / `nights()` take the
+  stored days and the daily hrTSS (`db/training_load`) and never touch SQL or
+  the clock — commands load, the module folds. Add a new consumer as another
+  reader of `nights()`, not another computation.
+- Frontend queries live under the `"recovery"` / `"monitoring"` prefixes so an
+  import or a delete invalidates them through `invalidateActivityData`; date
+  keys are `"YYYY-MM-DD"` from the backend, the frontend clock only decides
+  when to refetch (`useInvalidateOnNewDay`).
+
 ### Frontend
 
 - **Bridge:** every backend call goes through the single `api` object in
