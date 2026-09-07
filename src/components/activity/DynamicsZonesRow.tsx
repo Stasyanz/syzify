@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Activity, TimeInZone } from "../../lib/types";
 import { CyclingDynamicsPanel, hasCyclingDynamics } from "./CyclingDynamicsPanel";
 import { TimeInZonesPanel } from "./TimeInZonesPanel";
@@ -9,6 +10,24 @@ interface Props {
   /** Zones are stored per whole activity — a focused triathlon leg shows
    * only the dynamics half. */
   hideZones?: boolean;
+}
+
+/** The Time in Zones card for the chart grid's spare slot (ChartPanel
+ * `filler`), or undefined when there is nothing to draw or a triathlon leg
+ * is focused. Keyed by activity so a new activity opens on power again. */
+export function zonesFiller(
+  activity: Activity,
+  timeInZones: TimeInZone[],
+  hideZones: boolean,
+): ReactNode | undefined {
+  if (hideZones || !hasTimeInZones(timeInZones, activity.duration_s)) return undefined;
+  return (
+    <TimeInZonesPanel
+      key={activity.id}
+      timeInZones={timeInZones}
+      durationS={activity.duration_s}
+    />
+  );
 }
 
 /**

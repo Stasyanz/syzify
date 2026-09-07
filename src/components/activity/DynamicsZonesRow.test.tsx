@@ -2,7 +2,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import type { Activity, TimeInZone } from "../../lib/types";
-import { DynamicsZonesRow } from "./DynamicsZonesRow";
+import type { ReactElement } from "react";
+import { DynamicsZonesRow, zonesFiller } from "./DynamicsZonesRow";
+import { TimeInZonesPanel } from "./TimeInZonesPanel";
 
 afterEach(cleanup);
 
@@ -81,6 +83,16 @@ describe("DynamicsZonesRow", () => {
     // Another activity: power again.
     rerender(<DynamicsZonesRow activity={{ ...pedalRide, id: "c" }} timeInZones={both} />);
     expect(pressed()).toBe("Power");
+  });
+
+  it("hands the chart grid a keyed zones card, or nothing", () => {
+    expect(zonesFiller(run, [], false)).toBeUndefined();
+    expect(zonesFiller(run, HR, true)).toBeUndefined();
+    const card = zonesFiller(run, HR, false) as ReactElement;
+    expect(card.type).toBe(TimeInZonesPanel);
+    expect(card.key).toBe("a");
+    render(card);
+    expect(screen.getByText("Time in Zones")).toBeTruthy();
   });
 
   it("renders no row with neither", () => {

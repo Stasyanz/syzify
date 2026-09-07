@@ -20,9 +20,7 @@ import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
 import { SegmentEffortsPanel } from "../components/activity/SegmentEffortsPanel";
 import { PowerCurvePanel } from "../components/activity/PowerCurvePanel";
-import { DynamicsZonesRow } from "../components/activity/DynamicsZonesRow";
-import { TimeInZonesPanel } from "../components/activity/TimeInZonesPanel";
-import { hasTimeInZones } from "../components/activity/timeInZones";
+import { DynamicsZonesRow, zonesFiller } from "../components/activity/DynamicsZonesRow";
 import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
 import {
@@ -513,15 +511,7 @@ export function ActivityDetailPage() {
                 sport={focusedLeg?.sport_type ?? activity.sport_type}
                 timeInZones={data.time_in_zones}
                 ftpW={activity.threshold_power_w}
-                filler={
-                  !focusedLeg && hasTimeInZones(data.time_in_zones, activity.duration_s) ? (
-                    <TimeInZonesPanel
-                      key={activity.id}
-                      timeInZones={data.time_in_zones}
-                      durationS={activity.duration_s}
-                    />
-                  ) : undefined
-                }
+                filler={zonesFiller(activity, data.time_in_zones, focusedLeg != null)}
                 onFillerPlaced={setZonesInCharts}
                 segmentSource={segmentSourceFor(focusedLeg, activity.id)}
                 summaryAverages={
