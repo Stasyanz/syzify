@@ -20,7 +20,9 @@ import { RouteMap } from "../components/activity/RouteMap";
 import { ChartPanel } from "../components/activity/ChartPanel";
 import { SegmentEffortsPanel } from "../components/activity/SegmentEffortsPanel";
 import { PowerCurvePanel } from "../components/activity/PowerCurvePanel";
-import { CyclingDynamicsPanel } from "../components/activity/CyclingDynamicsPanel";
+import { DynamicsZonesRow } from "../components/activity/DynamicsZonesRow";
+import { TimeInZonesPanel } from "../components/activity/TimeInZonesPanel";
+import { hasTimeInZones } from "../components/activity/timeInZones";
 import { InlineTitle } from "../components/activity/InlineTitle";
 import { MultisportLegs } from "../components/activity/MultisportLegs";
 import {
@@ -123,6 +125,9 @@ export function ActivityDetailPage() {
   // FIT-native leg focused in place (leg_number) — windows the map/charts/laps
   // to that leg's time range. Merged legs navigate away instead.
   const [focusedLegNo, setFocusedLegNo] = useState<number | null>(null);
+  // Whether the chart grid took the Time in Zones card into its empty last
+  // slot (#101) — then the dynamics row below must not show it again.
+  const [zonesInCharts, setZonesInCharts] = useState(false);
 
   // Reset state and scroll when navigating between activities
   useEffect(() => {
@@ -508,6 +513,16 @@ export function ActivityDetailPage() {
                 sport={focusedLeg?.sport_type ?? activity.sport_type}
                 timeInZones={data.time_in_zones}
                 ftpW={activity.threshold_power_w}
+                filler={
+                  !focusedLeg && hasTimeInZones(data.time_in_zones, activity.duration_s) ? (
+                    <TimeInZonesPanel
+                      key={activity.id}
+                      timeInZones={data.time_in_zones}
+                      durationS={activity.duration_s}
+                    />
+                  ) : undefined
+                }
+                onFillerPlaced={setZonesInCharts}
                 segmentSource={segmentSourceFor(focusedLeg, activity.id)}
                 summaryAverages={
                   focusedLeg
@@ -536,7 +551,14 @@ export function ActivityDetailPage() {
                   focus either. Renders nothing without power data. */}
               {!focusedLeg && <PowerCurvePanel activityId={activity.id} />}
 
-              <CyclingDynamicsPanel activity={activity} />
+              {/* Cycling Dynamics + Time in Zones (#101). Zones are stored per
+                  whole activity, so a focused leg keeps only the dynamics; and
+                  when the chart grid had a slot to spare, the zones live there. */}
+              <DynamicsZonesRow
+                activity={activity}
+                timeInZones={data.time_in_zones}
+                hideZones={focusedLeg != null || zonesInCharts}
+              />
 
               {/* Laps */}
               <LapsTable

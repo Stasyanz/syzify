@@ -6,6 +6,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Time in Zones card on the activity page (#101), next to Cycling Dynamics:
+  the device's heart-rate and power zones as Garmin Connect shows them —
+  Z1–Z5 / Z1–Z7 with their ranges, time and share of the timer, a Heart
+  rate / Power switch when a ride carries both. Time below zone 1 and above
+  the maximum is left out, so the shares may add up to less than 100 %.
+
 ## [0.5.0] - 2026-09-06
 
 ### Added

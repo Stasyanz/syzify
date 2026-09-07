@@ -87,6 +87,13 @@ export function speedSeries(tp: TrackPointColumns): (number | null)[] {
 /** A metric is worth a chart only if it carries a real signal — at least one
  * non-null AND non-zero sample. An all-zero series (e.g. speed/distance on an
  * indoor strength session) is a flat line at 0, not data worth a card. */
+/** Whether the chart grid ends with a lone half-width card: the first
+ * chart spans both columns and the rest pair up, so an even count leaves
+ * the last one alone — the slot another card (Time in Zones) can fill. */
+export function chartGridHasHole(count: number): boolean {
+  return count > 0 && count % 2 === 0;
+}
+
 export function hasData(values: (number | null)[]): boolean {
   return values.some((v) => v != null && v !== 0);
 }

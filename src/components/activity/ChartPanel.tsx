@@ -1,4 +1,12 @@
-import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import {
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useMemo,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GripVertical } from "lucide-react";
 import uPlot from "uplot";
@@ -33,6 +41,7 @@ import {
   POWER,
   SPEED,
   SWIM_PACE,
+  chartGridHasHole,
   hasData,
   resolveAverages,
   type ChartConfig,
@@ -72,6 +81,12 @@ interface Props {
    * a focused leg's) — the "avg" lines show THESE where present so they
    * match the summary tiles; a missing one falls back to the samples. */
   summaryAverages?: SummaryAverages;
+  /** A card to drop into the grid's last slot when the charts leave one
+   * empty (first chart full width, the rest paired — see
+   * `chartGridHasHole`). Rendered only then; `onFillerPlaced` tells the
+   * caller whether it was, so the card is not shown twice. */
+  filler?: ReactNode;
+  onFillerPlaced?: (placed: boolean) => void;
 }
 
 // The metric catalogue (ChartConfig, the per-metric configs, speedSeries,
@@ -584,6 +599,8 @@ export function ChartPanel({
   ftpW,
   segmentSource,
   summaryAverages,
+  filler,
+  onFillerPlaced,
 }: Props) {
   const showPace = isPaceSport(sport);
   // Right-click on the elevation selection → "Save segment" form at the
@@ -878,6 +895,15 @@ export function ChartPanel({
     return out;
   }, [chartData, hrRanges, powerRanges, timeInZones, sport, firstKey, halfCount, fullCount]);
 
+  // Before paint, so the caller never shows the filler in both places for
+  // a frame; a remount (leg focus keys the panel) reports false on the way
+  // out and the new value on the way in.
+  const fillerPlaced = filler != null && chartData != null && chartGridHasHole(ordered.length);
+  useLayoutEffect(() => {
+    onFillerPlaced?.(fillerPlaced);
+    return () => onFillerPlaced?.(false);
+  }, [fillerPlaced, onFillerPlaced]);
+
   if (!chartData) return null;
 
   const { xValues, indexMap, reverseMap, chartValues, gradeValues } = chartData;
@@ -969,6 +995,8 @@ export function ChartPanel({
             />
           </div>
         ))}
+        {/* The lone half-width slot at the end takes the caller's card. */}
+        {fillerPlaced && filler}
       </div>
 
       {segMenu && segmentSource && (

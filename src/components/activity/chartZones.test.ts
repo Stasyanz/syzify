@@ -28,6 +28,7 @@ import {
   speedZoneRanges,
   zoneBarCount,
   zoneColorFor,
+  zoneIndexOffset,
 } from "./chartZones";
 import type { TimeInZone } from "../../lib/types";
 
@@ -746,5 +747,16 @@ describe("externalSelectionCols", () => {
   it("rejects ranges that collapse to a single column or find nothing", () => {
     expect(externalSelectionCols([3, 3], rm, 6)).toBeNull();
     expect(externalSelectionCols([1, 3], new Map(), 6)).toBeNull();
+  });
+});
+
+describe("zoneIndexOffset", () => {
+  it("is 1 when the top index reaches the zone count (Garmin's below-Z1 bucket), else 0", () => {
+    expect(zoneIndexOffset([0, 1, 2, 3, 4, 5, 6], 5)).toBe(1); // HR: below + 5 + above
+    expect(zoneIndexOffset([0, 1, 2, 3, 4, 5, 6, 7], 7)).toBe(1); // power: below + 7
+    expect(zoneIndexOffset([0, 1, 2, 3, 4], 5)).toBe(0); // one bucket per zone
+    // Judged by the top index, so a sparse set does not shift.
+    expect(zoneIndexOffset([0, 1, 6], 5)).toBe(1);
+    expect(zoneIndexOffset([], 5)).toBe(0);
   });
 });

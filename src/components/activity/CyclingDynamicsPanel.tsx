@@ -3,6 +3,7 @@ import { formatDuration } from "../../lib/format";
 
 interface Props {
   activity: Activity;
+  className?: string;
 }
 
 /** Whether the activity carries anything this panel can show. */
@@ -98,7 +99,7 @@ const fmtAvgMax = (avg: number | null, max: number | null, unit: string) =>
  * split. Renders nothing when the activity has no such data (non-rides,
  * single-sided meters, GPX imports).
  */
-export function CyclingDynamicsPanel({ activity: a }: Props) {
+export function CyclingDynamicsPanel({ activity: a, className = "" }: Props) {
   if (!hasCyclingDynamics(a)) return null;
 
   const rightPct = a.avg_left_right_balance;
@@ -117,7 +118,7 @@ export function CyclingDynamicsPanel({ activity: a }: Props) {
     a.time_standing_s != null || a.avg_power_seated_w != null || a.avg_cadence_seated != null;
 
   return (
-    <div className="dash-card" style={{ padding: "12px 14px" }}>
+    <div className={`dash-card ${className}`} style={{ padding: "12px 14px" }}>
       <h3 className="!m-0 mb-3">Cycling Dynamics</h3>
 
       {leftPct != null && rightPct != null && (

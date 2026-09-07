@@ -30,6 +30,22 @@ export const DEFAULT_HR_RANGES: ZoneRange[] = [
   { from: 175, to: Infinity, color: HR_ZONE_COLORS[4] },
 ];
 
+/** Which stored bucket index is zone 1 — 1 when the writer has Garmin's
+ * below-Z1 bucket at index 0, 0 when it starts at Z1. Garmin's below-Z1
+ * bucket makes MORE buckets than there are zones (HR 7 = 5 + below +
+ * above, power 8 = 7 + below) and puts zone k at index k, so a top index
+ * at or beyond the zone count is the tell; a writer with exactly one
+ * bucket per zone tops out at N − 1. No such device in the vault, but a
+ * FIT can come from anything, and a one-step shift either way is silent.
+ * Judged by the top INDEX, not the bucket count, so a set with a missing
+ * bucket does not shift. One function for the chart bands and the Time
+ * in Zones card: the bar and the band of one range must agree. */
+export function zoneIndexOffset(indices: Iterable<number>, zoneCount: number): 0 | 1 {
+  let top = -1;
+  for (const i of indices) if (i > top) top = i;
+  return top >= zoneCount ? 1 : 0;
+}
+
 /** Zone ranges from the device's own time_in_zone buckets, colored by ZONE
  * INDEX: bucket k is zone k and wears palette[k − 1]. Garmin writes one
  * bucket per index — 0 is "below zone 1" (its ceiling is the Z1 floor; for
@@ -67,12 +83,7 @@ function deviceZoneRanges(
   }
   const indices = [...byIndex.keys()].sort((a, b) => a - b);
   const top = indices[indices.length - 1];
-  // Garmin's below-Z1 bucket makes MORE buckets than the palette has zones
-  // (HR 7 = 5 + below + above, power 8 = 7 + below) and puts zone k at
-  // index k. A writer with exactly one bucket per zone would put Z1 at
-  // index 0 — no such device in the vault, but a FIT can come from
-  // anything, and the same one-step shift the other way would be silent.
-  const offset = indices.length > palette.length ? 1 : 0;
+  const offset = zoneIndexOffset(indices, palette.length);
   const out: ZoneRange[] = [];
   let from = 0;
   for (const index of indices) {

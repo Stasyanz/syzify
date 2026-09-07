@@ -10,6 +10,7 @@ import {
   SPEED,
   SWIM_PACE,
   RUN_STOP_MPS,
+  chartGridHasHole,
   SWIM_STOP_MPS,
   fmtPace,
   hasData,
@@ -201,5 +202,20 @@ describe("resolveAverages", () => {
     expect(avg.get("hr")).toBeNull();
     // A config whose series was never materialized is null too, not a crash.
     expect(resolveAverages([HR], new Map(), tp, {}).get("hr")).toBeNull();
+  });
+});
+
+describe("chartGridHasHole", () => {
+  it("is true when the half-width charts after the full-width first one are odd", () => {
+    // 1 chart: full width only. 2: one half alone. 3: a pair. 4: a pair + one.
+    expect([0, 1, 2, 3, 4, 5, 6].map(chartGridHasHole)).toEqual([
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
   });
 });
