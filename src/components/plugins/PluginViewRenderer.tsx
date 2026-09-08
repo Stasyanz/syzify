@@ -8,19 +8,22 @@ interface RenderProps {
   values?: Record<string, string>;
   onChange?: (id: string, value: string) => void;
   onAction?: (action: string) => void;
+  /** Controls are inert while the host runs an action (or a loop of them):
+   * an edit mid-loop would change the input of the rounds still to come. */
+  disabled?: boolean;
 }
 
 // Renders a plugin's declarative ViewSpec using a fixed set of safe primitives.
 // Every value is rendered as text (React escapes it) — no raw HTML, so a plugin
 // cannot inject markup or scripts. Inputs/buttons are controlled by the host.
-export function PluginViewRenderer({ spec, values, onChange, onAction }: RenderProps) {
+export function PluginViewRenderer({ spec, values, onChange, onAction, disabled }: RenderProps) {
   return (
     <div className="space-y-2">
       {spec.title && (
         <h3 className="text-sm font-semibold text-ink">{spec.title}</h3>
       )}
       {spec.elements.map((el, i) => (
-        <Element key={i} el={el} values={values} onChange={onChange} onAction={onAction} />
+        <Element key={i} el={el} values={values} onChange={onChange} onAction={onAction} disabled={disabled} />
       ))}
     </div>
   );
@@ -31,11 +34,13 @@ function Element({
   values,
   onChange,
   onAction,
+  disabled,
 }: {
   el: ViewElement;
   values?: Record<string, string>;
   onChange?: (id: string, value: string) => void;
   onAction?: (action: string) => void;
+  disabled?: boolean;
 }) {
   switch (el.type) {
     case "heading":
@@ -91,7 +96,8 @@ function Element({
             type={el.input_type === "number" ? "number" : "text"}
             value={values?.[el.id] ?? el.value}
             onChange={(e) => onChange?.(el.id, e.target.value)}
-            className="mt-0.5 w-full rounded border border-border px-2 py-1 text-sm"
+            disabled={disabled}
+            className="mt-0.5 w-full rounded border border-border px-2 py-1 text-sm disabled:opacity-50"
           />
         </label>
       );
@@ -104,6 +110,7 @@ function Element({
             className="mt-0.5 w-full"
             value={values?.[el.id] ?? el.value}
             onChange={(v) => onChange?.(el.id, v)}
+            disabled={disabled}
             options={el.options.map((o) => ({ value: o, label: o }))}
           />
         </label>
@@ -112,7 +119,8 @@ function Element({
       return (
         <button
           onClick={() => onAction?.(el.action)}
-          className="px-3 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent-2"
+          disabled={disabled}
+          className="px-3 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent-2 disabled:opacity-50"
         >
           {el.label}
         </button>

@@ -43,55 +43,99 @@ pub fn run_background_geocoding<R: tauri::Runtime>(app: &AppHandle<R>) {
         return;
     };
 
-    let missing = {
-        let conn = match state.db.lock() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+    let snapshot = || {
+        let Ok(conn) = state.db.lock() else { return Vec::new() };
         if !geocoding_enabled(&conn) {
-            return;
+            return Vec::new();
         }
-        match db::activities::get_activities_without_location(&conn) {
-            Ok(m) => m,
-            Err(_) => return,
-        }
-    }; // Lock released here
+        db::activities::get_activities_without_location(&conn).unwrap_or_default()
+    }; // Lock released per snapshot
 
-    let mut named_any = false;
-    for (id, lat, lon) in &missing {
-        // Re-check per item, BEFORE the network call: flipping the toggle off
-        // mid-batch stops the remaining lookups, not just the writes.
-        match state.db.lock() {
-            Ok(conn) if geocoding_enabled(&conn) => {}
-            _ => break,
-        }
-        // A definitive "Nominatim knows no name here" (open water, wilderness)
-        // is recorded as an empty string so the same coordinates aren't
-        // re-sent on every launch; a transient network error stays NULL and
-        // retries next run.
-        let name = match geocoding::reverse_geocode(*lat, *lon) {
-            Ok(Some(name)) => name,
-            Ok(None) => String::new(),
-            Err(_) => {
-                thread::sleep(NOMINATIM_INTERVAL);
-                continue;
+    // Snapshot after snapshot: activities that land while a batch runs (a
+    // sync's next rounds) are picked up by the next one. The UI hears about
+    // every batch that named something, not only the first.
+    drain(snapshot, |missing| {
+        let mut progressed = false;
+        let mut named_any = false;
+        for (id, lat, lon) in missing {
+            // Re-check per item, BEFORE the network call: flipping the toggle
+            // off mid-batch stops the remaining lookups, not just the writes.
+            match state.db.lock() {
+                Ok(conn) if geocoding_enabled(&conn) => {}
+                _ => break,
             }
-        };
-        if let Ok(conn) = state.db.lock() {
-            let _ = db::activities::set_location_name(&conn, id, &name);
-            named_any = named_any || !name.is_empty();
+            // A definitive "Nominatim knows no name here" (open water,
+            // wilderness) is recorded as an empty string so the same
+            // coordinates aren't re-sent on every launch; a transient network
+            // error stays NULL and retries next run.
+            let name = match geocoding::reverse_geocode(*lat, *lon) {
+                Ok(Some(name)) => name,
+                Ok(None) => String::new(),
+                Err(_) => {
+                    thread::sleep(NOMINATIM_INTERVAL);
+                    continue;
+                }
+            };
+            // Progress is a row that actually changed: a write that keeps
+            // failing (a busy or swapped DB) would otherwise hand the next
+            // snapshot the same list forever.
+            if let Ok(conn) = state.db.lock() {
+                if db::activities::set_location_name(&conn, id, &name).is_ok() {
+                    progressed = true;
+                    named_any = named_any || !name.is_empty();
+                }
+            }
+            thread::sleep(NOMINATIM_INTERVAL);
         }
-        thread::sleep(NOMINATIM_INTERVAL);
-    }
+        if named_any {
+            let _ = app.emit("activities:updated", ());
+        }
+        progressed
+    });
+}
 
-    if named_any {
-        let _ = app.emit("activities:updated", ());
+/// Run `process` on batch after batch of `snapshot` until a snapshot is
+/// empty or a batch wrote nothing (every lookup failed, or the toggle went
+/// off mid-batch): the next snapshot would be the same list, and a dead
+/// network must not be hammered in a loop.
+fn drain<T>(mut snapshot: impl FnMut() -> Vec<T>, mut process: impl FnMut(&[T]) -> bool) {
+    loop {
+        let batch = snapshot();
+        if batch.is_empty() || !process(&batch) {
+            break;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Batches follow one another until nothing is left, and a batch that
+    /// wrote nothing ends the run even with work still listed.
+    #[test]
+    fn drain_takes_snapshot_after_snapshot_and_stops_on_a_dead_batch() {
+        let mut snapshots = vec![vec![1, 2, 3], vec![4], vec![]].into_iter();
+        let mut seen = Vec::new();
+        drain(
+            || snapshots.next().unwrap_or_default(),
+            |batch| {
+                seen.push(batch.to_vec());
+                true
+            },
+        );
+        assert_eq!(seen, vec![vec![1, 2, 3], vec![4]]);
+
+        let mut calls = 0;
+        drain(
+            || vec![1],
+            |_| {
+                calls += 1;
+                false
+            },
+        );
+        assert_eq!(calls, 1, "a batch that made no progress ends the run");
+    }
 
     /// Off by default (no setting row), on only for the explicit "true".
     #[test]

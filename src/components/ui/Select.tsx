@@ -10,6 +10,8 @@ export interface SelectOption {
 }
 
 interface BaseProps {
+  /** Inert: the trigger is disabled and the menu never opens. */
+  disabled?: boolean;
   options: SelectOption[];
   /** Extra classes for the trigger button (e.g. width). */
   className?: string;
@@ -106,6 +108,7 @@ export function Select(props: Props) {
       <button
         ref={btnRef}
         type="button"
+        disabled={props.disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}

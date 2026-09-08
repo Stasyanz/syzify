@@ -233,6 +233,7 @@ function AppContent() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/plugins" element={<PluginsPage />} />
             <Route path="/plugin/:pluginId" element={<PluginPage />} />
+            <Route path="/plugin/:pluginId/sync" element={<PluginPage point="sync.source" />} />
           </Routes>
         </div>
         <ToastContainer />

@@ -21,20 +21,23 @@ const PLUGIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// The budget of a network plugin's interactive page: a login is five or
 /// six round trips, a sync page a few more, and the epoch deadline would
 /// otherwise fire the moment the host call returned. The user pressed the
-/// button and waits; 30 s off the main thread is the cost of it
-/// (`render_plugin_view` runs on a blocking thread).
+/// button and waits; 30 s off the main thread is the cost of one round
+/// (`render_plugin_view` runs on a blocking thread), and the sync page's
+/// continue loop bounds the rounds one press may run.
 const PLUGIN_NET_TIMEOUT: Duration = Duration::from_secs(30);
 const PLUGIN_MAX_PAGES: u32 = 1024; // 1024 × 64 KiB = 64 MiB
 
-/// The one contribution point where the user pressed a button and waits
-/// for the answer. Widgets and panels render on their own (a remount, a
-/// cache refresh) and every invocation queues behind `RUN`: a widget that
-/// could hold the lock for 30 s would stall every other plugin's render.
-const INTERACTIVE_EXPORT: &str = "route_planner";
+/// The contribution points where the user pressed a button and waits for
+/// the answer: the planner page and the sync page (each round of its
+/// continue loop is one such invocation). Widgets and panels render on
+/// their own (a remount, a cache refresh) and every invocation queues
+/// behind `RUN`: a widget that could hold the lock for 30 s would stall
+/// every other plugin's render.
+const INTERACTIVE_EXPORTS: [&str; 2] = ["route_planner", "sync_source"];
 
 /// How long one invocation may run before the sandbox traps it.
 fn invocation_budget(talks_to_the_network: bool, export: &str) -> Duration {
-    if talks_to_the_network && export == INTERACTIVE_EXPORT { PLUGIN_NET_TIMEOUT } else { PLUGIN_TIMEOUT }
+    if talks_to_the_network && INTERACTIVE_EXPORTS.contains(&export) { PLUGIN_NET_TIMEOUT } else { PLUGIN_TIMEOUT }
 }
 
 /// The live `AppState` behind an `AppHandle`, for `host_import_file`. Every
@@ -580,7 +583,108 @@ mod tests {
         assert_eq!(super::invocation_budget(false, "route_planner"), super::PLUGIN_TIMEOUT);
         assert_eq!(super::invocation_budget(true, "dashboard_widget"), super::PLUGIN_TIMEOUT);
         assert_eq!(super::invocation_budget(true, "route_planner"), super::PLUGIN_NET_TIMEOUT);
+        assert_eq!(super::invocation_budget(true, "sync_source"), super::PLUGIN_NET_TIMEOUT);
+        assert_eq!(super::invocation_budget(false, "sync_source"), super::PLUGIN_TIMEOUT);
         assert!(super::PLUGIN_NET_TIMEOUT >= crate::plugins::net::HTTP_REQUEST_TIMEOUT, "one hop may use the whole budget");
+    }
+
+    fn sync_demo_wasm() -> &'static str {
+        let wasm = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/plugins/sync-demo/plugin.wasm"
+        );
+        assert!(
+            std::path::Path::new(wasm).exists(),
+            "missing {wasm}; build it: cargo build --release --target wasm32-unknown-unknown in examples/plugins/sync-demo"
+        );
+        wasm
+    }
+
+    /// The continue loop end to end on the live app: the status render asks
+    /// for nothing, a button starts rounds that each carry `continue` until
+    /// the last, the cursor lives in the plugin's kv between them.
+    #[test]
+    fn sync_source_rounds_carry_continue_until_done_through_the_live_app() {
+        use super::run_contribution;
+        use crate::models::plugin::Plugin;
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+        use tauri::Manager;
+
+        let plugin_id = "com.syzify.example.sync-demo";
+        let vault = std::env::temp_dir().join(format!("syz_runtime_sync_{}", uuid::Uuid::new_v4()));
+        let plugin_dir = vault.join("plugins").join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::copy(sync_demo_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
+        let state = AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        };
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &Plugin {
+                    id: plugin_id.to_string(),
+                    name: "Sync Demo".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: format!(
+                        r#"{{"id":"{plugin_id}","name":"Sync Demo","version":"0.1.0","entry":"plugin.wasm","contributes":["sync.source"],"permissions":["data:own"]}}"#
+                    ),
+                    source: format!("plugins/{plugin_id}"),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+            crate::db::plugins::set_enabled(&conn, plugin_id, true).unwrap();
+        }
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let handle = app.handle().clone();
+        let render = |input: &str| -> ViewSpec {
+            serde_json::from_str(&run_contribution(&handle, plugin_id, "sync_source", input).unwrap()).unwrap()
+        };
+        let text = |spec: &ViewSpec| serde_json::to_string(&spec.elements).unwrap();
+        let cursor = || {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::kv_get(&conn, plugin_id, "cursor").unwrap()
+        };
+
+        let status = render("{}");
+        assert!(status.continue_action.is_none(), "the status never starts a loop");
+        assert!(text(&status).contains("0 of 3 steps synced"));
+        assert_eq!(cursor(), None);
+
+        // The button: two rounds asking for more, the third the plain status.
+        let round = render(r#"{"action":"sync","values":{}}"#);
+        assert_eq!(round.continue_action.as_deref(), Some("sync"));
+        assert!(text(&round).contains("Syncing step 1 of 3"));
+        assert_eq!(cursor().as_deref(), Some("1"));
+        let round = render(r#"{"action":"sync","values":{}}"#);
+        assert_eq!(round.continue_action.as_deref(), Some("sync"));
+        let last = render(r#"{"action":"sync","values":{}}"#);
+        assert!(last.continue_action.is_none());
+        assert!(text(&last).contains("Everything is synced"));
+        assert_eq!(cursor().as_deref(), Some("3"));
+        // Nothing left to sync: the same action is a no-op status.
+        assert!(render(r#"{"action":"sync","values":{}}"#).continue_action.is_none());
+        assert!(text(&render(r#"{"action":"reset","values":{}}"#)).contains("0 of 3"));
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The runtime's wiring on a real (windowless) app: the stored

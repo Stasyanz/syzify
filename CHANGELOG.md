@@ -34,6 +34,11 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   on or off, and the Plugins screen says "stores secrets" on such a plugin
   — with a note while the vault is not encrypted, because then they are
   stored in the clear.
+- A place to run a sync (#112): plugins can contribute a `sync.source` page,
+  opened from Settings → Plugins → Sync, and a view may ask the host to call
+  the plugin again right away (`continue`) — so a sync runs as rounds of
+  ordinary invocations, one activity or one day each, with a Stop button
+  and progress between them. `examples/plugins/sync-demo` shows the shape.
 
 ## [0.5.0] - 2026-09-06
 

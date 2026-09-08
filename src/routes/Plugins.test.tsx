@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, screen, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
 import type { PluginInfo } from "../lib/types";
 import { PluginsPage, secretsDisclosure, secretsSealed } from "./Plugins";
@@ -66,6 +66,34 @@ describe("secretsDisclosure", () => {
 });
 
 describe("PluginsPage", () => {
+  it("opens the sync page of an enabled plugin contributing sync.source", async () => {
+    mocked.getPlugins.mockResolvedValue([
+      plugin({ id: "com.test.sync", contributes: ["sync.source"] }),
+      plugin({ id: "com.test.off", name: "Off", contributes: ["sync.source"], enabled: false }),
+      plugin({ id: "com.test.widget", name: "Widget", contributes: ["dashboard.widget"] }),
+    ]);
+    mocked.getEncryptionStatus.mockResolvedValue({
+      enabled: true,
+      locked: false,
+      scopes: { activities: true, database: false, photos: false },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/plugins"]}>
+          <Routes>
+            <Route path="/plugins" element={<PluginsPage />} />
+            <Route path="/plugin/:pluginId/sync" element={<div>SYNC PAGE</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const sync = await screen.findAllByRole("button", { name: "Sync" });
+    expect(sync).toHaveLength(1);
+    fireEvent.click(sync[0]);
+    await waitFor(() => expect(screen.getByText("SYNC PAGE")).toBeTruthy());
+  });
+
   it("labels the permission and discloses plain secrets until encryption is on", async () => {
     mocked.getPlugins.mockResolvedValue([plugin()]);
     mocked.getEncryptionStatus.mockResolvedValue({

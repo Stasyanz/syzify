@@ -204,6 +204,14 @@ export function PluginsPage() {
                         Open
                       </button>
                     )}
+                    {p.enabled && p.contributes.includes("sync.source") && (
+                      <button
+                        onClick={() => navigate(`/plugin/${p.id}/sync`)}
+                        className="px-3 py-1 rounded text-xs font-medium border border-border-2 text-ink hover:bg-card-2"
+                      >
+                        Sync
+                      </button>
+                    )}
                     <button
                       onClick={() => handleToggle(p)}
                       className={`px-3 py-1 rounded text-xs font-medium ${

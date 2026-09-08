@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::db;
 use crate::models::plugin::{Plugin, PluginInfo, PluginManifest};
@@ -147,14 +147,30 @@ pub fn get_plugin_contributions(
         .collect())
 }
 
+/// Whether the plugin's stored manifest contributes `point` — the same test
+/// `get_plugin_contributions` applies, so a render cannot reach an export
+/// the manifest never declared (the interactive budget and the continue
+/// loop hang on the export name).
+fn plugin_contributes(conn: &rusqlite::Connection, plugin_id: &str, point: &str) -> Result<bool, String> {
+    let Some(plugin) = db::plugins::get_plugin(conn, plugin_id).map_err(|e| e.to_string())? else {
+        return Ok(false);
+    };
+    // A corrupt manifest contributes nothing, as the list and the info say.
+    let Ok(manifest) = serde_json::from_str::<PluginManifest>(&plugin.manifest) else {
+        return Ok(false);
+    };
+    Ok(manifest.entry.is_some() && manifest.contributes.iter().any(|c| c == point))
+}
+
 /// Render a plugin's UI contribution. The contribution point maps to the WASM
 /// export by replacing dots with underscores (`dashboard.widget` ->
-/// `dashboard_widget`). `context` is an opaque JSON string passed to the plugin
+/// `dashboard_widget`); a point the manifest does not contribute is refused. `context` is an opaque JSON string passed to the plugin
 /// (e.g. the current activity id for a detail panel).
 ///
 /// Off the main thread: a call may fetch over the network or import files
 /// (up to the sandbox's budget — 5 s, 30 s for a network plugin's
-/// `route.planner` action), which would freeze the window from a sync command.
+/// `route.planner` / `sync.source` action), which would freeze the window
+/// from a sync command.
 #[tauri::command]
 pub async fn render_plugin_view(
     plugin_id: String,
@@ -165,16 +181,63 @@ pub async fn render_plugin_view(
     let export = point.replace('.', "_");
     let output = tauri::async_runtime::spawn_blocking({
         let plugin_id = plugin_id.clone();
-        move || runtime::run_contribution(&app, &plugin_id, &export, &context)
+        move || {
+            // The DB lock waits behind a host call in flight: not on an
+            // async worker.
+            {
+                let state = app.state::<AppState>();
+                let conn = state.db.lock().map_err(|e| e.to_string())?;
+                if !plugin_contributes(&conn, &plugin_id, &point)? {
+                    return Err(format!("plugin {plugin_id} does not contribute {point}"));
+                }
+            }
+            runtime::run_contribution(&app, &plugin_id, &export, &context)
+        }
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
-    serde_json::from_str::<ViewSpec>(&output)
-        .map_err(|e| format!("plugin {plugin_id} returned an invalid view: {e}"))
+    let spec = serde_json::from_str::<ViewSpec>(&output)
+        .map_err(|e| format!("plugin {plugin_id} returned an invalid view: {e}"))?;
+    spec.validate().map_err(|e| format!("plugin {plugin_id} returned an invalid view: {e}"))?;
+    Ok(spec)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_render_is_refused_for_a_point_the_manifest_does_not_contribute() {
+        let conn = crate::db::test_db();
+        let plugin = |id: &str, manifest: &str| crate::models::plugin::Plugin {
+            id: id.to_string(),
+            name: "P".to_string(),
+            version: "0.1.0".to_string(),
+            author: None,
+            description: None,
+            enabled: true,
+            signed: false,
+            manifest: manifest.to_string(),
+            source: format!("plugins/{id}"),
+            installed_at: String::new(),
+            updated_at: String::new(),
+        };
+        crate::db::plugins::upsert_plugin(
+            &conn,
+            &plugin("com.w", r#"{"id":"com.w","name":"W","version":"0.1.0","entry":"plugin.wasm","contributes":["dashboard.widget"]}"#),
+        )
+        .unwrap();
+        crate::db::plugins::upsert_plugin(
+            &conn,
+            &plugin("com.noentry", r#"{"id":"com.noentry","name":"N","version":"0.1.0","contributes":["sync.source"]}"#),
+        )
+        .unwrap();
+        assert!(super::plugin_contributes(&conn, "com.w", "dashboard.widget").unwrap());
+        assert!(!super::plugin_contributes(&conn, "com.w", "sync.source").unwrap(), "an export is not a contribution");
+        assert!(!super::plugin_contributes(&conn, "com.noentry", "sync.source").unwrap(), "nothing to run");
+        assert!(!super::plugin_contributes(&conn, "com.missing", "sync.source").unwrap());
+        crate::db::plugins::upsert_plugin(&conn, &plugin("com.bad", "{not json")).unwrap();
+        assert!(!super::plugin_contributes(&conn, "com.bad", "sync.source").unwrap(), "a corrupt manifest contributes nothing");
+    }
+
     use super::*;
 
     fn record(manifest: &str) -> Plugin {

@@ -67,6 +67,9 @@ The manifest uses **camelCase** (familiar to JS authors); the app's own IPC stay
 - `dashboard.widget` — a card on the dashboard
 - `import.datasource` — a new data source / parser (e.g. sleep)
 - `route.planner` — a standalone planning page
+- `sync.source` — a sync page (**Settings → Plugins → Sync**): status, login, a
+  **Sync now** button; its rounds run through the continue loop (below). See the
+  `sync-demo` example
 - `map.overlay` — a layer over the existing map
 - `activity.derived_metric` — compute & store extra metrics
 - `settings.section`, `command`, `menu.item`
@@ -108,6 +111,20 @@ primitives — no raw HTML:
 **Action loop:** when the user presses a `button`, the host re-invokes the export with
 `{ "action": <button action>, "values": { <input id>: <value> }, …context }` and swaps
 in the returned ViewSpec. So an export is just `context → ViewSpec`, called repeatedly.
+
+**Continue loop:** a ViewSpec may carry `"continue": "<action>"` (a short plain
+token, ≤ 64 characters of letters, digits, `_`, `-`, `.`, `:`) — "show this, then
+call me again with that action". The host does, round after round, until a view
+without it, an error, the host's **Stop** button, 200 rounds (the user presses the
+button again to go on), or the page going away. Only the **sync page**
+(`sync.source`) honours it, and only after the user pressed a button: a widget's,
+a planner page's and the initial render's `continue` are ignored, so no page
+opens into a running loop and a page approved for planning gains no rounds of
+network time. One chain at a time: buttons and inputs are inert while a loop
+runs, Stop is there from the first round. The budget (30 s for a network
+plugin) bounds one round, not the loop: the loop is bounded by the round cap and
+the user. Do one activity, one day of wellness per round and keep the cursor in
+`data:own`, so a stopped loop resumes where it was. See [`sync-demo/`](sync-demo/).
 
 Host functions (call only what your permissions allow):
 
@@ -175,7 +192,8 @@ the trust of the build: a signed upgrade from the same key keeps them, an
 unsigned reinstall (anyone can sideload under the same id) or an upgrade whose
 manifest no longer asks for `data:secret` drops them.
 
-`route.planner` contributions are opened full-page from **Settings → Plugins → Open**.
+`route.planner` contributions are opened full-page from **Settings → Plugins → Open**,
+`sync.source` ones from **Settings → Plugins → Sync**.
 
 See [`consistency-widget/`](consistency-widget/) for a complete Rust example.
 Compiled `plugin.wasm` binaries are **not committed** (CI only checks that the
@@ -189,8 +207,9 @@ cp target/wasm32-unknown-unknown/release/consistency_widget.wasm plugin.wasm
 ```
 
 Then sideload its `plugin.json`, enable it, and open the Dashboard.
-(`smart-route`, `paste-import` and `net-probe` build the same way; their
-artifacts are `smart_route.wasm`, `paste_import.wasm` and `net_probe.wasm`.)
+(`smart-route`, `paste-import`, `net-probe` and `sync-demo` build the same way;
+their artifacts are `smart_route.wasm`, `paste_import.wasm`, `net_probe.wasm`
+and `sync_demo.wasm`.)
 
 
 ## Licensing: Interface Material

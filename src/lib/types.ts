@@ -666,6 +666,10 @@ export type ViewElement =
 export interface ViewSpec {
   title: string | null;
   elements: ViewElement[];
+  /** The action the host fires next on its own, right after showing this
+   * view (a sync plugin's progress rounds). Honoured only by a full-page
+   * host and only after a user action. */
+  continue?: string | null;
 }
 
 // A user-saved route segment: an independent copy of a selected track slice.

@@ -1,0 +1,11 @@
+{
+  "id": "com.syzify.example.sync-demo",
+  "name": "Sync Demo (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.6.0",
+  "author": "Syzify",
+  "description": "Reference WASM plugin: a sync.source page that syncs three steps one invocation at a time through the continue loop — the shape of a sync plugin, without a network.",
+  "entry": "plugin.wasm",
+  "contributes": ["sync.source"],
+  "permissions": ["data:own"]
+}

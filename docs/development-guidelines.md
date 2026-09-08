@@ -114,6 +114,13 @@ functions generic over `tauri::Runtime` so the mock runtime fits.
 enable/disable/unlock flows in `commands/settings.rs` re-seal them; a new place
 that changes the key must call `secrets::encrypt_all` / `decrypt_all` too.
 
+**Long plugin work** (a sync) → never one long invocation: the plugin does one
+step per round and answers with `"continue": "<action>"`; the host
+(`PluginWidget`, `followContinue`) calls it again, one chain at a time, at most
+`MAX_CONTINUE_ROUNDS` per press. Honour `continue` only on the sync page and
+only after a user action; the backend validates the token (`ViewSpec::validate`). A new interactive export joins
+`INTERACTIVE_EXPORTS` in `plugins/runtime.rs` for the 30 s network budget.
+
 **Network from a plugin** → `host_http` (`plugins/net.rs`) only; never hand a
 host to Extism's manifest allow-list (its HTTP has no cookie jar and does not
 re-check redirects). The allow-list is the plugin's `net:host=` set and it is

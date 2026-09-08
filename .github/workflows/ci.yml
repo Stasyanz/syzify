@@ -76,13 +76,14 @@ jobs:
             examples/plugins/smart-route
             examples/plugins/paste-import
             examples/plugins/net-probe
+            examples/plugins/sync-demo
             tools/pack-plugin
       # The plugin runtime/package tests load the example artifacts from disk;
       # they are gitignored (licensing hygiene), so build them here the same
       # way examples/plugins/README.md tells a developer to.
       - name: Build plugin test fixtures
         run: |
-          for p in consistency-widget smart-route paste-import net-probe; do
+          for p in consistency-widget smart-route paste-import net-probe sync-demo; do
             cargo build --release --target wasm32-unknown-unknown \
               --manifest-path "examples/plugins/$p/Cargo.toml"
           done
@@ -94,6 +95,8 @@ jobs:
              examples/plugins/paste-import/plugin.wasm
           cp examples/plugins/net-probe/target/wasm32-unknown-unknown/release/net_probe.wasm \
              examples/plugins/net-probe/plugin.wasm
+          cp examples/plugins/sync-demo/target/wasm32-unknown-unknown/release/sync_demo.wasm \
+             examples/plugins/sync-demo/plugin.wasm
           cargo run --manifest-path tools/pack-plugin/Cargo.toml -- examples/plugins/smart-route
       - name: cargo test (with coverage)
         run: |
@@ -124,9 +127,10 @@ jobs:
             examples/plugins/smart-route
             examples/plugins/paste-import
             examples/plugins/net-probe
+            examples/plugins/sync-demo
       - name: Build examples
         run: |
-          for p in consistency-widget smart-route paste-import net-probe; do
+          for p in consistency-widget smart-route paste-import net-probe sync-demo; do
             cargo build --release --target wasm32-unknown-unknown \
               --manifest-path "examples/plugins/$p/Cargo.toml"
           done

@@ -9,6 +9,36 @@ pub struct ViewSpec {
     pub title: Option<String>,
     #[serde(default)]
     pub elements: Vec<ViewElement>,
+    /// The action the host fires next, on its own, right after showing this
+    /// view — a sync plugin's "show the progress, then call me again". Only
+    /// the sync page honours it, and only after a user action; a widget, a
+    /// planner page and the initial render ignore it, so no page opens into
+    /// a running loop. `"continue"` on the wire; a short plain token
+    /// (`validate`).
+    #[serde(default, rename = "continue", skip_serializing_if = "Option::is_none")]
+    pub continue_action: Option<String>,
+}
+
+/// Longest `continue` action; a button action is a short word.
+pub const MAX_CONTINUE_ACTION: usize = 64;
+
+impl ViewSpec {
+    /// The `continue` action goes back to the plugin as the next call's
+    /// `action`, through the frontend: keep it a short plain token, not a
+    /// payload (a plugin sent 200 kB back through the IPC otherwise).
+    pub fn validate(&self) -> Result<(), String> {
+        let Some(action) = &self.continue_action else { return Ok(()) };
+        let plain = !action.is_empty()
+            && action.len() <= MAX_CONTINUE_ACTION
+            && action.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'));
+        if plain {
+            Ok(())
+        } else {
+            Err(format!(
+                "invalid continue action: 1 to {MAX_CONTINUE_ACTION} characters of letters, digits, '_', '-', '.', ':'"
+            ))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +99,7 @@ mod tests {
                 ViewElement::Stat { label: "Streak".to_string(), value: "5 weeks".to_string() },
                 ViewElement::Divider,
             ],
+            continue_action: None,
         };
         let json = serde_json::to_string(&spec).unwrap();
         // tagged enum -> "type":"stat" / "divider"
@@ -85,6 +116,32 @@ mod tests {
         let spec: ViewSpec = serde_json::from_str("{}").unwrap();
         assert!(spec.title.is_none());
         assert!(spec.elements.is_empty());
+        assert!(spec.continue_action.is_none());
+    }
+
+    /// `continue` rides through as the plugin wrote it, and is absent from
+    /// the wire when unset — the frontend's optional field.
+    #[test]
+    fn continue_action_is_the_continue_key() {
+        let spec: ViewSpec = serde_json::from_str(r#"{"continue":"sync","elements":[]}"#).unwrap();
+        assert_eq!(spec.continue_action.as_deref(), Some("sync"));
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains(r#""continue":"sync""#), "{json}");
+        let none = serde_json::to_string(&ViewSpec { title: None, elements: vec![], continue_action: None }).unwrap();
+        assert!(!none.contains("continue"), "{none}");
+    }
+
+    #[test]
+    fn continue_action_is_a_short_plain_token() {
+        let with = |a: &str| ViewSpec { title: None, elements: vec![], continue_action: Some(a.to_string()) };
+        assert!(ViewSpec { title: None, elements: vec![], continue_action: None }.validate().is_ok());
+        assert!(with("sync").validate().is_ok());
+        assert!(with("sync.activities:next-page_2").validate().is_ok());
+        assert!(with("").validate().is_err());
+        assert!(with("a b").validate().is_err());
+        assert!(with("{\"x\":1}").validate().is_err());
+        assert!(with(&"a".repeat(MAX_CONTINUE_ACTION + 1)).validate().is_err());
+        assert!(with(&"a".repeat(MAX_CONTINUE_ACTION)).validate().is_ok());
     }
 
     #[test]
