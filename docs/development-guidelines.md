@@ -100,9 +100,13 @@ first, then go through `db/` or the import pipeline — never the filesystem
 directly. Keep the host layer Tauri-free: what it needs from the app comes in
 through `PluginCtx` (`Db`, `VaultAccess`), so it is testable with a plain
 `AppState`. A write host function claims `vault_flight` for the call and reads
-the encryption key fresh (see `host_import_file`). Cover it twice: the pure
-function directly, and once through a real wasm fixture (the e2e ABI test in
-`plugins/runtime.rs`; add the fixture to the CI "Build plugin test fixtures" step).
+the encryption key fresh (see `host_import_file`). Cover it three times: the pure
+function directly, through a real wasm fixture (the e2e ABI test in
+`plugins/runtime.rs`; add the fixture to the CI "Build plugin test fixtures" step),
+and — for anything that needs an `AppHandle` (the runtime, events) — on a
+windowless app from `tauri::test::mock_builder` (dev feature `test`; see
+`run_contribution_imports_through_the_live_app_and_emits_the_event`). Keep such
+functions generic over `tauri::Runtime` so the mock runtime fits.
 
 ---
 

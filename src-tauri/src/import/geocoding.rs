@@ -32,7 +32,7 @@ pub fn geocoding_enabled(conn: &Connection) -> bool {
 /// Runs as a background job both at startup (`lib.rs`) and after an import
 /// (`commands::import`). Locks the DB only for the brief read/write around each
 /// network call so it never blocks the UI for the whole batch.
-pub fn run_background_geocoding(app: &AppHandle) {
+pub fn run_background_geocoding<R: tauri::Runtime>(app: &AppHandle<R>) {
     let state = app.state::<AppState>();
 
     // Single-flight: boot, post-import and the Settings toggle can each start

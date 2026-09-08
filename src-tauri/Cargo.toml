@@ -73,3 +73,8 @@ ed25519-dalek = "2"
 # pbkdf2_hmac instantiated in this crate, unreachable by package overrides.
 [profile.dev.package.sha2]
 opt-level = 3
+
+[dev-dependencies]
+# The `test` feature adds `tauri::test::mock_builder` — an app without a
+# window, so AppHandle-bound paths (plugin runtime, events) get real tests.
+tauri = { version = "2", features = ["test"] }

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use extism::{Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::db;
 use crate::models::plugin::PluginManifest;
@@ -22,9 +22,9 @@ const PLUGIN_MAX_HTTP_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB per network respons
 /// The live `AppState` behind an `AppHandle`, for `host_import_file`. Every
 /// read goes to the managed state at call time (see `VaultAccess`); nothing
 /// is snapshotted when the context is built.
-struct AppVault(AppHandle);
+struct AppVault<R: Runtime>(AppHandle<R>);
 
-impl VaultAccess for AppVault {
+impl<R: Runtime> VaultAccess for AppVault<R> {
     fn vault_path(&self) -> PathBuf {
         self.0.state::<AppState>().inner().vault_path()
     }
@@ -61,8 +61,8 @@ static RUN: Mutex<()> = Mutex::new(());
 /// could trigger another `run_contribution` from inside its call would
 /// deadlock. There is no host function that runs a plugin today; keep it
 /// that way (no plugin-invokes-plugin host call) unless the lock model changes.
-pub fn run_contribution(
-    app: &AppHandle,
+pub fn run_contribution<R: Runtime>(
+    app: &AppHandle<R>,
     plugin_id: &str,
     export: &str,
     input: &str,
@@ -396,6 +396,105 @@ mod tests {
         assert_eq!(activities, 1);
         drop(conn);
         assert_eq!(std::fs::read_dir(vault.join("raw")).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    /// The whole runtime path on a real (windowless) Tauri app: the plugin
+    /// record and wasm in the vault, the live `AppState` behind `AppVault`,
+    /// the import through `host_import_file`, and the `plugins:imported`
+    /// event the frontend refreshes on — emitted even when the call traps.
+    #[test]
+    fn run_contribution_imports_through_the_live_app_and_emits_the_event() {
+        use super::{run_contribution, PLUGINS_IMPORTED_EVENT};
+        use crate::models::plugin::Plugin;
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+        use tauri::{Listener, Manager};
+
+        let plugin_id = "com.syzify.example.paste-import";
+        let vault = std::env::temp_dir().join(format!("syz_runtime_app_{}", uuid::Uuid::new_v4()));
+        let plugin_dir = vault.join("plugins").join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::copy(paste_import_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
+
+        let state = AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        };
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &Plugin {
+                    id: plugin_id.to_string(),
+                    name: "Paste Import".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: format!(
+                        r#"{{"id":"{plugin_id}","name":"Paste Import","version":"0.1.0","entry":"plugin.wasm","contributes":["dashboard.widget"],"permissions":["import:files"]}}"#
+                    ),
+                    source: format!("plugins/{plugin_id}"),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+            crate::db::plugins::set_enabled(&conn, plugin_id, true).unwrap();
+        }
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let handle = app.handle().clone();
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        handle.listen(PLUGINS_IMPORTED_EVENT, move |e| sink.lock().unwrap().push(e.payload().to_string()));
+
+        let gpx = r#"<?xml version="1.0"?><gpx version="1.1" creator="t" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="55.75" lon="37.62"><time>2025-06-01T08:00:00Z</time></trkpt><trkpt lat="55.7501" lon="37.6201"><time>2025-06-01T08:00:10Z</time></trkpt></trkseg></trk></gpx>"#;
+        let input = |name: &str| {
+            serde_json::json!({ "action": "import", "values": { "name": name, "content": gpx } }).to_string()
+        };
+
+        // The form: no import, no event.
+        let out = run_contribution(&handle, plugin_id, "dashboard_widget", "{}").unwrap();
+        assert!(out.contains("Paste import"));
+        assert!(events.lock().unwrap().is_empty());
+
+        // An import: the activity lands, the event says one file.
+        let out = run_contribution(&handle, plugin_id, "dashboard_widget", &input("run.gpx")).unwrap();
+        assert!(out.contains(r#""label":"Imported","value":"1""#), "{out}");
+        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"imported":1}"#]);
+
+        // A trap after nothing imported: an error, no event.
+        let err = run_contribution(&handle, plugin_id, "dashboard_widget", &input("../run.gpx")).unwrap_err();
+        assert!(err.contains("failed"), "{err}");
+        assert_eq!(events.lock().unwrap().len(), 1);
+
+        // Disabled plugins do not run at all.
+        {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::set_enabled(&conn, plugin_id, false).unwrap();
+        }
+        let err = run_contribution(&handle, plugin_id, "dashboard_widget", "{}").unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+
+        let state = handle.state::<AppState>();
+        let conn = state.db.lock().unwrap();
+        let activities: i64 = conn.query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(activities, 1);
+        drop(conn);
         let _ = std::fs::remove_dir_all(&vault);
     }
 }
