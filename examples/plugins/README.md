@@ -106,7 +106,10 @@ context JSON string and returns a **ViewSpec** JSON the host renders with safe
 primitives — no raw HTML:
 
 - display: `heading`, `text`, `stat`, `stat_grid`, `table`, `divider`, `map` (a polyline of `[lat,lon]` points)
-- interactive: `input`, `select`, `button`
+- `notice` — a callout the user should see (`text`, `level` "info" / "warning" /
+  "error"): a refused sign-in, a stopped sync, a success
+- interactive: `input` (`input_type` "text", "number" or "password" — a sign-in
+  form's password is masked), `select`, `button`
 
 **Action loop:** when the user presses a `button`, the host re-invokes the export with
 `{ "action": <button action>, "values": { <input id>: <value> }, …context }` and swaps

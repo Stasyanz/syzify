@@ -88,12 +88,25 @@ function Element({
       );
     case "divider":
       return <hr className="border-border" />;
+    case "notice": {
+      const tone =
+        el.level === "error"
+          ? "text-red-700 bg-red-50 border-red-200"
+          : el.level === "warning"
+            ? "text-amber-700 bg-amber-50 border-amber-200"
+            : "text-ink bg-card border-border";
+      return (
+        <div role="note" className={`text-sm border rounded px-3 py-2 ${tone}`}>
+          {el.text}
+        </div>
+      );
+    }
     case "input":
       return (
         <label className="block">
           <span className="text-xs text-muted">{el.label}</span>
           <input
-            type={el.input_type === "number" ? "number" : "text"}
+            type={el.input_type === "number" || el.input_type === "password" ? el.input_type : "text"}
             value={values?.[el.id] ?? el.value}
             onChange={(e) => onChange?.(el.id, e.target.value)}
             disabled={disabled}

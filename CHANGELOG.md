@@ -43,6 +43,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   on the host — every entry imported like a file of its own, deduplicated
   by hash, bounded like `.gz` — the shape Garmin's activity and wellness
   downloads come in.
+- The Plugins card is back on the Settings screen (#116): sideload a
+  plugin, enable it, and start a sync from its card.
+- Plugin views can ask for a password (#117): an `input` of type
+  `password` is masked.
+- Plugin views can show a notice (#118): a callout with an info,
+  warning or error level, so a refused sign-in or a stopped sync stands
+  out from the rest of the page.
 
 ## [0.5.0] - 2026-09-06
 

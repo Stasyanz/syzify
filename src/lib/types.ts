@@ -658,6 +658,7 @@ export type ViewElement =
   | { type: "stat_grid"; stats: StatItem[] }
   | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "divider" }
+  | { type: "notice"; text: string; level?: "info" | "warning" | "error" | string }
   | { type: "input"; id: string; label: string; value: string; input_type: string }
   | { type: "select"; id: string; label: string; options: string[]; value: string }
   | { type: "button"; label: string; action: string }

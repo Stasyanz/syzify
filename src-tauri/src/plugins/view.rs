@@ -50,6 +50,13 @@ pub enum ViewElement {
     StatGrid { stats: Vec<StatItem> },
     Table { headers: Vec<String>, rows: Vec<Vec<String>> },
     Divider,
+    /// A callout the user should notice: a refused sign-in, a stopped
+    /// sync, a success. `level` is "info" (default), "warning" or "error".
+    Notice {
+        text: String,
+        #[serde(default)]
+        level: String,
+    },
     // Interactive elements. The host tracks input values and, on a button press,
     // re-invokes the plugin with `{ action, values, …context }`.
     Input {
@@ -57,7 +64,8 @@ pub enum ViewElement {
         label: String,
         #[serde(default)]
         value: String,
-        /// "text" (default) or "number".
+        /// "text" (default), "number" or "password" (rendered masked; the
+        /// value still travels through the action loop like any other).
         #[serde(default)]
         input_type: String,
     },
@@ -147,16 +155,22 @@ mod tests {
     #[test]
     fn deserializes_interactive_and_map_elements() {
         let json = r#"{"elements":[
+            {"type":"notice","text":"Signed in.","level":"info"},
+            {"type":"notice","text":"HTTP 429"},
             {"type":"input","id":"dist","label":"Distance","value":"8","input_type":"number"},
             {"type":"select","id":"sport","label":"Sport","options":["run","ride"],"value":"run"},
             {"type":"button","label":"Plan","action":"plan"},
             {"type":"map","points":[[52.5,13.4],[52.6,13.5]],"label":"Route"}
         ]}"#;
         let spec: ViewSpec = serde_json::from_str(json).unwrap();
-        assert_eq!(spec.elements.len(), 4);
-        match &spec.elements[3] {
+        assert_eq!(spec.elements.len(), 6);
+        match &spec.elements[5] {
             ViewElement::Map { points, .. } => assert_eq!(points.len(), 2),
             other => panic!("expected map, got {other:?}"),
+        }
+        match &spec.elements[1] {
+            ViewElement::Notice { text, level } => assert_eq!((text.as_str(), level.as_str()), ("HTTP 429", "")),
+            other => panic!("expected notice, got {other:?}"),
         }
     }
 }

@@ -7,6 +7,39 @@ import { PluginViewRenderer } from "./PluginViewRenderer";
 afterEach(cleanup);
 
 describe("PluginViewRenderer", () => {
+  it("renders notices as callouts by level", () => {
+    const spec: ViewSpec = {
+      title: null,
+      elements: [
+        { type: "notice", text: "Signed in." },
+        { type: "notice", text: "Wait an hour", level: "warning" },
+        { type: "notice", text: "Wrong password", level: "error" },
+      ],
+    };
+    render(<PluginViewRenderer spec={spec} />);
+    const notes = screen.getAllByRole("note");
+    expect(notes).toHaveLength(3);
+    expect(notes[0].className).toContain("bg-card");
+    expect(notes[1].className).toContain("amber");
+    expect(notes[2].className).toContain("red");
+    expect(notes[2].textContent).toBe("Wrong password");
+  });
+
+  it("masks a password input and keeps unknown input types as text", () => {
+    const spec: ViewSpec = {
+      title: null,
+      elements: [
+        { type: "input", id: "pw", label: "Password", value: "", input_type: "password" },
+        { type: "input", id: "n", label: "Count", value: "1", input_type: "number" },
+        { type: "input", id: "x", label: "Odd", value: "", input_type: "color" },
+      ],
+    };
+    render(<PluginViewRenderer spec={spec} />);
+    expect((screen.getByLabelText("Password") as HTMLInputElement).type).toBe("password");
+    expect((screen.getByLabelText("Count") as HTMLInputElement).type).toBe("number");
+    expect((screen.getByLabelText("Odd") as HTMLInputElement).type).toBe("text");
+  });
+
   it("renders each safe primitive from a ViewSpec", () => {
     const spec: ViewSpec = {
       title: "Consistency · last 4 weeks",
