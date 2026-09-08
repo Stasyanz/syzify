@@ -10,6 +10,7 @@ use extism::{Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::db;
+use crate::import::pipeline::{ImportResult, MonitoringBatch};
 use crate::models::plugin::PluginManifest;
 use crate::plugins::host::{self, PluginCtx, VaultAccess};
 use crate::state::{AppState, SingleFlightGuard};
@@ -101,6 +102,7 @@ pub fn run_contribution<R: Runtime>(
         vault: Some(Arc::new(AppVault(app.clone()))),
         imported: 0,
         imported_activities: 0,
+        monitoring: MonitoringBatch::default(),
     };
     let ud = host::user_data(ctx);
 
@@ -136,14 +138,18 @@ pub fn run_contribution<R: Runtime>(
         .map_err(|e| format!("plugin {plugin_id} export {export} failed: {e}"));
     // Before the `?`: a call that imported 40 files and then trapped on the
     // 41st (a bad name, the time budget) still changed the vault, and the
-    // views must follow. A locked/poisoned context reads as nothing.
-    let (imported, activities) = imported_count(&ud);
-    if imported > 0 {
-        let _ = app.emit(PLUGINS_IMPORTED_EVENT, serde_json::json!({ "imported": imported }));
+    // views must follow. Recompute first, then the event — the frontend
+    // refetches on it and must not see the days half done.
+    let done = finish_invocation(&ud);
+    if done.imported > 0 {
+        let _ = app.emit(
+            PLUGINS_IMPORTED_EVENT,
+            serde_json::json!({ "imported": done.imported, "monitoring_days": done.monitoring_days }),
+        );
     }
     // Newly imported activities get their location names like a drop
     // import's do; Monitor files have nothing to geocode.
-    if activities > 0 {
+    if done.activities > 0 {
         let geo_handle = app.clone();
         std::thread::spawn(move || {
             crate::import::geocoding::run_background_geocoding(&geo_handle);
@@ -152,16 +158,53 @@ pub fn run_contribution<R: Runtime>(
     out
 }
 
-/// Files the invocation behind `ud` imported: (all, of which activities).
-fn imported_count(ud: &UserData<PluginCtx>) -> (usize, usize) {
-    ud.get()
-        .ok()
-        .and_then(|ctx| ctx.lock().ok().map(|c| (c.imported, c.imported_activities)))
-        .unwrap_or((0, 0))
+/// What an invocation left behind, read once it is over.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Finished {
+    /// Files imported (activities + Monitor files).
+    imported: usize,
+    /// Of those, activities.
+    activities: usize,
+    /// Monitor days recomputed at the end.
+    monitoring_days: usize,
+}
+
+/// Close the invocation behind `ud`: recompute the Monitor days its
+/// imports touched — once for all of them, a wellness sync lands 30 days
+/// in 30 calls — and read the counters. A failed recompute is logged; no
+/// caller is left to report it to, and the boot-time safety net
+/// (`run_monitoring_recompute` over days with `computed_at IS NULL`) picks
+/// the days up. A poisoned context (a panicking host call) still yields
+/// its batch and counters: the files before the panic are in the vault.
+///
+/// The recompute runs after `host_import_file` released `vault_flight`.
+/// A restore that wins the slot in between swaps the DB for an empty
+/// in-memory one under the DB lock, so the recompute fails into the log
+/// and the app restarts anyway; a relocation reopens the same DB at its
+/// new path. Neither corrupts a day.
+fn finish_invocation(ud: &UserData<PluginCtx>) -> Finished {
+    let Ok(ctx) = ud.get() else { return Finished::default() };
+    let mut ctx = ctx.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let batch = std::mem::take(&mut ctx.monitoring);
+    let mut monitoring_days = 0;
+    if !batch.days.is_empty() {
+        let mut result = ImportResult::default();
+        let recomputed = ctx
+            .db
+            .lock()
+            .map_err(|e| e.to_string())
+            .and_then(|conn| batch.finish(&conn, &mut result));
+        match recomputed {
+            Ok(()) => monitoring_days = result.monitoring_days,
+            Err(e) => eprintln!("plugin {}: monitoring recompute failed: {e}", ctx.plugin_id),
+        }
+    }
+    Finished { imported: ctx.imported, activities: ctx.imported_activities, monitoring_days }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::import::pipeline::MonitoringBatch;
     use crate::plugins::view::ViewSpec;
     use extism::{host_fn, Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
 
@@ -346,6 +389,7 @@ mod tests {
                 vault: Some(state.clone()),
                 imported: 0,
                 imported_activities: 0,
+                monitoring: MonitoringBatch::default(),
             };
             let ud = host::user_data(ctx);
             let out = PluginBuilder::new(ExtismManifest::new([Wasm::file(paste_import_wasm())]))
@@ -355,7 +399,8 @@ mod tests {
                 .expect("load paste-import plugin")
                 .call::<&str, &str>("dashboard_widget", input)
                 .map(|s| s.to_string());
-            (out, super::imported_count(&ud))
+            let done = super::finish_invocation(&ud);
+            (out, (done.imported, done.activities))
         };
         let stats = |out: &str| {
             let spec: ViewSpec = serde_json::from_str(out).expect("valid ViewSpec");
@@ -397,6 +442,111 @@ mod tests {
         drop(conn);
         assert_eq!(std::fs::read_dir(vault.join("raw")).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    /// The batch a context accumulated is recomputed once when the
+    /// invocation is finished — every touched day, however many calls
+    /// touched it — and the counters come out with it.
+    #[test]
+    fn finish_invocation_recomputes_all_touched_days_once() {
+        use crate::models::plugin::Permission;
+        use crate::parser::fit_builder::monitoring_fixture;
+        use crate::plugins::host::{self, PluginCtx};
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+
+        let vault = std::env::temp_dir().join(format!("syz_finish_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let state = Arc::new(AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        });
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO activity (id, start_time, sport_type)
+                 VALUES ('a1', '2026-09-03T07:35:00+03:00', 'ride')",
+                [],
+            )
+            .unwrap();
+        let mut ctx = PluginCtx {
+            db: state.db.clone(),
+            plugin_id: "com.test".to_string(),
+            permissions: vec![Permission::ImportFiles],
+            vault: Some(state.clone()),
+            imported: 0,
+            imported_activities: 0,
+            monitoring: MonitoringBatch::default(),
+        };
+        let midnight = 1_788_555_600; // 2026-09-05 00:00 +03:00
+        let day = 86_400;
+        // Three files over two days in three calls, as the host function
+        // would leave them: two of the first day, one of the next.
+        for (i, (serial, night)) in [(424242u32, midnight), (424243, midnight), (424244, midnight + day)].iter().enumerate() {
+            let r = host::import_file(&mut ctx, &format!("M950000{i}.FIT"), &monitoring_fixture(*serial, *night)).unwrap();
+            ctx.imported += r.imported + r.monitoring_files;
+            ctx.imported_activities += r.imported;
+        }
+        assert_eq!(ctx.monitoring.days.len(), 2);
+        let computed = |state: &AppState| -> i64 {
+            state
+                .db
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM monitoring_day WHERE computed_at IS NOT NULL", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(computed(&state), 0, "nothing recomputed per call");
+
+        let ud = host::user_data(ctx);
+        let done = super::finish_invocation(&ud);
+        assert_eq!(done, super::Finished { imported: 3, activities: 0, monitoring_days: 2 });
+        assert_eq!(computed(&state), 2);
+        // Finishing again has nothing left to do.
+        assert_eq!(super::finish_invocation(&ud).monitoring_days, 0);
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    /// A recompute that fails is logged, not lost with the counters — and
+    /// a context poisoned by a panicking host call still yields both.
+    #[test]
+    fn finish_invocation_survives_a_failed_recompute_and_a_poisoned_context() {
+        use crate::plugins::host::{self, PluginCtx};
+        use std::sync::{Arc, Mutex};
+
+        // A schemaless DB: recompute_days fails at prepare.
+        let mut ctx = PluginCtx::new(
+            Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap())),
+            "com.test",
+            vec![],
+        );
+        ctx.monitoring.days.insert(20_700);
+        ctx.imported = 2;
+        let ud = host::user_data(ctx);
+        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 2, activities: 0, monitoring_days: 0 });
+
+        // Poison the context's lock from another thread.
+        let mut ctx = PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "com.test", vec![]);
+        ctx.imported = 3;
+        ctx.imported_activities = 1;
+        let ud = host::user_data(ctx);
+        let poisoner = ud.clone();
+        let _ = std::thread::spawn(move || {
+            let arc = poisoner.get().unwrap();
+            let _guard = arc.lock().unwrap();
+            panic!("host call panicked mid-way");
+        })
+        .join();
+        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 3, activities: 1, monitoring_days: 0 });
     }
 
     /// The whole runtime path on a real (windowless) Tauri app: the plugin
@@ -474,7 +624,7 @@ mod tests {
         // An import: the activity lands, the event says one file.
         let out = run_contribution(&handle, plugin_id, "dashboard_widget", &input("run.gpx")).unwrap();
         assert!(out.contains(r#""label":"Imported","value":"1""#), "{out}");
-        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"imported":1}"#]);
+        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"imported":1,"monitoring_days":0}"#]);
 
         // A trap after nothing imported: an error, no event.
         let err = run_contribution(&handle, plugin_id, "dashboard_widget", &input("../run.gpx")).unwrap_err();

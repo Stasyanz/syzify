@@ -11,9 +11,10 @@
 //!
 //! The host runs its own import pipeline on the bytes: the format comes
 //! from the name's extension, a file already in the vault is skipped by
-//! hash, a Garmin Monitor file lands as monitoring. The answer is the same
+//! hash, a Garmin Monitor file lands as monitoring (its day is recomputed
+//! once the whole invocation is over, not per call). The answer is the same
 //! `ImportResult` JSON the app's drop import gets (`imported`, `skipped`,
-//! `failed: [{path, reason}]`, `monitoring_files`, …). A file the pipeline
+//! `failed: [{path, reason}]`, `monitoring_files`). A file the pipeline
 //! refuses is a `failed` entry, not an error; an error (the call fails) means
 //! the plugin's own mistake or an unavailable vault — missing permission, a
 //! bad name, an oversized file, a locked vault.

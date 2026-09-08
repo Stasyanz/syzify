@@ -3,7 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 
 /** The event the plugin runtime emits after a contribution call imported
- * files through `host_import_file` (payload `{ imported }`). */
+ * files through `host_import_file`. Its payload (`{ imported,
+ * monitoring_days }`) is diagnostic; any import refreshes everything. */
 export const PLUGINS_IMPORTED_EVENT = "plugins:imported";
 
 /**

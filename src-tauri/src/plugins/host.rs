@@ -13,7 +13,7 @@ use extism::{host_fn, UserData};
 use serde::Deserialize;
 
 use crate::db;
-use crate::import::pipeline::{self, FailedFile, ImportResult, MonitoringBatch};
+use crate::import::pipeline::{self, ImportResult, MonitoringBatch};
 use crate::models::activity::ActivityFilters;
 use crate::models::plugin::Permission;
 use crate::state::{AppState, Db, SingleFlightGuard};
@@ -75,7 +75,6 @@ impl VaultAccess for AppState {
 /// Per-invocation context handed to host functions via Extism `UserData`.
 /// Holds the DB handle directly (not the Tauri `AppHandle`), so the host layer
 /// is decoupled from Tauri and constructible in tests.
-#[derive(Clone)]
 pub struct PluginCtx {
     pub db: Db,
     pub plugin_id: String,
@@ -89,6 +88,11 @@ pub struct PluginCtx {
     pub imported: usize,
     /// Of those, activities — the ones a geocoding pass has work for.
     pub imported_activities: usize,
+    /// The Monitor days this invocation's imports touched, recomputed once
+    /// by the runtime when the invocation ends — a wellness sync lands one
+    /// day per call and the watch writes several files per day, so a
+    /// per-call recompute would run many times over under the DB lock.
+    pub monitoring: MonitoringBatch,
 }
 
 #[cfg(test)]
@@ -102,6 +106,7 @@ impl PluginCtx {
             vault: None,
             imported: 0,
             imported_activities: 0,
+            monitoring: MonitoringBatch::default(),
         }
     }
 }
@@ -257,6 +262,9 @@ host_fn!(pub host_kv_get(user_data: PluginCtx; key: String) -> String {
 // becomes the raw file's original_path. Returns the ImportResult JSON the
 // drop import returns to the frontend: a file the pipeline refuses is a
 // `failed` entry there, not a trap — a sync loop goes on with the next one.
+// A Monitor file counts in `monitoring_files` only; its day is recomputed
+// when the invocation ends, so `monitoring_days` / `monitoring_range` /
+// `monitoring_night` stay 0 / null / false per call.
 // Traps (errors) are for the plugin's own mistakes and an unavailable vault:
 // missing permission, a bad name, an oversized file, a locked vault, a
 // vault operation in flight. The last two are transient and their messages
@@ -266,14 +274,15 @@ host_fn!(pub host_import_file(user_data: PluginCtx; name: String, bytes: Vec<u8>
     let ud = user_data.get()?;
     let mut ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
     ctx.require(&Permission::ImportFiles)?;
-    let result = import_file(&ctx, &name, &bytes).map_err(extism::Error::msg)?;
+    let result = import_file(&mut ctx, &name, &bytes).map_err(extism::Error::msg)?;
     ctx.imported += result.imported + result.monitoring_files;
     ctx.imported_activities += result.imported;
     Ok(serde_json::to_string(&result)?)
 });
 
-/// The import behind `host_import_file`, permission already checked.
-pub(crate) fn import_file(ctx: &PluginCtx, name: &str, bytes: &[u8]) -> Result<ImportResult, String> {
+/// The import behind `host_import_file`, permission already checked. The
+/// touched Monitor days land in `ctx.monitoring` for the runtime to finish.
+pub(crate) fn import_file(ctx: &mut PluginCtx, name: &str, bytes: &[u8]) -> Result<ImportResult, String> {
     validate_import_name(name)?;
     if bytes.len() > PLUGIN_IMPORT_MAX_BYTES {
         return Err(format!(
@@ -284,7 +293,7 @@ pub(crate) fn import_file(ctx: &PluginCtx, name: &str, bytes: &[u8]) -> Result<I
     }
     let vault = ctx
         .vault
-        .as_ref()
+        .clone()
         .ok_or_else(|| "file import is not available in this context".to_string())?;
     // Slot first, then the gates and the key under it: nothing may re-key
     // or move the vault between reading the key and writing the file.
@@ -296,14 +305,8 @@ pub(crate) fn import_file(ctx: &PluginCtx, name: &str, bytes: &[u8]) -> Result<I
     let conn = ctx.db.lock().map_err(|e| e.to_string())?;
 
     let mut result = ImportResult::default();
-    let mut batch = MonitoringBatch::default();
     let outcome = pipeline::import_bytes(&conn, &vault.vault_path(), name, bytes, key.as_ref());
-    result.record(name, outcome, &mut batch);
-    // Per call, so a Monitor day's night is recomputed as soon as its file
-    // lands — the plugin may render the outcome right away.
-    if let Err(reason) = batch.finish(&conn, &mut result) {
-        result.failed.push(FailedFile { path: "(monitoring recompute)".to_string(), reason });
-    }
+    result.record(name, outcome, &mut ctx.monitoring);
     Ok(result)
 }
 
@@ -428,6 +431,7 @@ mod tests {
             vault: Some(state.clone()),
             imported: 0,
             imported_activities: 0,
+            monitoring: MonitoringBatch::default(),
         }
     }
 
@@ -446,9 +450,9 @@ mod tests {
     fn import_file_runs_the_drop_pipeline_on_plugin_bytes() {
         let vault = fresh_vault("gpx");
         let state = app_state(&vault, None);
-        let ctx = import_ctx(&state);
+        let mut ctx = import_ctx(&state);
 
-        let r = import_file(&ctx, "run.gpx", GPX.as_bytes()).unwrap();
+        let r = import_file(&mut ctx, "run.gpx", GPX.as_bytes()).unwrap();
         assert_eq!((r.imported, r.skipped, r.failed.len()), (1, 0, 0));
         assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 1);
         let original: String = state
@@ -461,13 +465,13 @@ mod tests {
         assert_eq!(raw_files(&vault).len(), 1);
 
         // The same bytes again: a duplicate by hash, nothing new on disk.
-        let again = import_file(&ctx, "run-copy.gpx", GPX.as_bytes()).unwrap();
+        let again = import_file(&mut ctx, "run-copy.gpx", GPX.as_bytes()).unwrap();
         assert_eq!((again.imported, again.skipped), (0, 1));
         assert_eq!(raw_files(&vault).len(), 1);
 
         // A file the pipeline refuses is a failed entry, not an error — the
         // plugin's sync loop must be able to go on with the next file.
-        let bad = import_file(&ctx, "broken.gpx", b"<gpx>not really").unwrap();
+        let bad = import_file(&mut ctx, "broken.gpx", b"<gpx>not really").unwrap();
         assert_eq!(bad.failed.len(), 1);
         assert_eq!(bad.failed[0].path, "broken.gpx");
         assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 1);
@@ -491,12 +495,27 @@ mod tests {
                 [],
             )
             .unwrap();
-        let ctx = import_ctx(&state);
+        let mut ctx = import_ctx(&state);
         let midnight = 1_788_555_600; // 2026-09-05 00:00 +03:00
 
-        let r = import_file(&ctx, "M9500000.FIT", &monitoring_fixture(424242, midnight)).unwrap();
-        assert_eq!((r.imported, r.monitoring_files, r.monitoring_days), (0, 1, 1));
-        assert_eq!(r.monitoring_range, Some(("2026-09-05".to_string(), "2026-09-05".to_string())));
+        let r = import_file(&mut ctx, "M9500000.FIT", &monitoring_fixture(424242, midnight)).unwrap();
+        // Stored and counted, but the day is NOT recomputed per call…
+        assert_eq!((r.imported, r.monitoring_files, r.monitoring_days), (0, 1, 0));
+        assert_eq!(r.monitoring_range, None);
+        assert!(!r.monitoring_night);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_sample WHERE kind = 'hr'"), 3);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day WHERE computed_at IS NOT NULL"), 0);
+        // …it waits in the context, once per day however many files touch it.
+        let r2 = import_file(&mut ctx, "M9500001.FIT", &monitoring_fixture(424243, midnight)).unwrap();
+        assert_eq!(r2.monitoring_files, 1);
+        assert_eq!(ctx.monitoring.days.len(), 1);
+
+        // The runtime finishes the batch when the invocation ends.
+        let mut finished = ImportResult::default();
+        let batch = std::mem::take(&mut ctx.monitoring);
+        batch.finish(&state.db.lock().unwrap(), &mut finished).unwrap();
+        assert_eq!(finished.monitoring_days, 1);
+        assert_eq!(finished.monitoring_range, Some(("2026-09-05".to_string(), "2026-09-05".to_string())));
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day WHERE computed_at IS NOT NULL"), 1);
 
         let _ = std::fs::remove_dir_all(&vault);
@@ -506,26 +525,26 @@ mod tests {
     fn import_file_refuses_before_touching_the_vault() {
         let vault = fresh_vault("refuse");
         let state = app_state(&vault, None);
-        let ctx = import_ctx(&state);
+        let mut ctx = import_ctx(&state);
 
-        let err = import_file(&ctx, "../run.gpx", GPX.as_bytes()).unwrap_err();
+        let err = import_file(&mut ctx, "../run.gpx", GPX.as_bytes()).unwrap_err();
         assert!(err.contains("invalid import file name"), "got: {err}");
-        let err = import_file(&ctx, "run.txt", GPX.as_bytes()).unwrap_err();
+        let err = import_file(&mut ctx, "run.txt", GPX.as_bytes()).unwrap_err();
         assert!(err.contains("Unsupported format"), "got: {err}");
 
         let huge = vec![0u8; PLUGIN_IMPORT_MAX_BYTES + 1];
-        let err = import_file(&ctx, "huge.fit", &huge).unwrap_err();
+        let err = import_file(&mut ctx, "huge.fit", &huge).unwrap_err();
         assert!(err.contains("plugin import limit"), "got: {err}");
 
         // No vault in the context (a runtime that cannot import).
-        let no_vault = PluginCtx::new(state.db.clone(), "com.test", vec![Permission::ImportFiles]);
-        let err = import_file(&no_vault, "run.gpx", GPX.as_bytes()).unwrap_err();
+        let mut no_vault = PluginCtx::new(state.db.clone(), "com.test", vec![Permission::ImportFiles]);
+        let err = import_file(&mut no_vault, "run.gpx", GPX.as_bytes()).unwrap_err();
         assert!(err.contains("not available"), "got: {err}");
 
         // A backup/restore/relocation in flight.
         {
             let _running = state.vault_flight.try_begin().unwrap();
-            let err = import_file(&ctx, "run.gpx", GPX.as_bytes()).unwrap_err();
+            let err = import_file(&mut ctx, "run.gpx", GPX.as_bytes()).unwrap_err();
             assert!(err.starts_with(VAULT_BUSY), "got: {err}");
         }
 
@@ -538,7 +557,7 @@ mod tests {
             scopes: crate::crypto::EncryptionScopes { activities: true, database: false, photos: false },
         };
         crate::crypto::write_vault_lock(&vault, &lock).unwrap();
-        let err = import_file(&ctx, "run.gpx", GPX.as_bytes()).unwrap_err();
+        let err = import_file(&mut ctx, "run.gpx", GPX.as_bytes()).unwrap_err();
         assert!(err.starts_with(VAULT_LOCKED), "got: {err}");
 
         assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 0);
@@ -563,7 +582,7 @@ mod tests {
         let vault = fresh_vault("enc");
         crate::crypto::write_vault_lock(&vault, &lock_with(true)).unwrap();
         let state = app_state(&vault, Some(key));
-        let r = import_file(&import_ctx(&state), "run.gpx", GPX.as_bytes()).unwrap();
+        let r = import_file(&mut import_ctx(&state), "run.gpx", GPX.as_bytes()).unwrap();
         assert_eq!(r.imported, 1);
         let files = raw_files(&vault);
         assert!(files.iter().all(|f| f.ends_with(".enc")), "encrypted: {files:?}");
@@ -574,7 +593,7 @@ mod tests {
         let vault = fresh_vault("scope_off");
         crate::crypto::write_vault_lock(&vault, &lock_with(false)).unwrap();
         let state = app_state(&vault, Some(key));
-        let r = import_file(&import_ctx(&state), "run.gpx", GPX.as_bytes()).unwrap();
+        let r = import_file(&mut import_ctx(&state), "run.gpx", GPX.as_bytes()).unwrap();
         assert_eq!(r.imported, 1);
         let files = raw_files(&vault);
         assert!(files.iter().all(|f| f.ends_with(".gpx")), "plaintext: {files:?}");

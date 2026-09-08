@@ -15,8 +15,9 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Plugins can import files into the vault (#103): a new `import:files`
   permission and `host_import_file` host function run the app's own import
   pipeline on a file the plugin holds — deduplicated by hash, encrypted like
-  a dropped file, monitoring recomputed — and the app's views refresh after
-  it. The building block of sync plugins; `examples/plugins/paste-import`
+  a dropped file, the touched monitoring days recomputed once when the
+  plugin's invocation ends (#106) — and the app's views refresh after it.
+  The building block of sync plugins; `examples/plugins/paste-import`
   is the smallest one.
 
 ## [0.5.0] - 2026-09-06
