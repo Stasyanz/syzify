@@ -26,6 +26,7 @@ import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
 import { MonitoringData } from "../components/settings/MonitoringData";
+import { PluginsCard } from "../components/settings/PluginsCard";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 /** What each encryption scope covers. Raw files include Garmin monitoring
@@ -672,6 +673,8 @@ export function SettingsPage() {
             </button>
           </div>
         </section>
+
+        <PluginsCard />
 
         {legalDoc && (
           <LegalModal doc={legalDoc} onClose={() => setLegalDoc(null)} />
