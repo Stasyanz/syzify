@@ -103,15 +103,14 @@ impl NetState {
         NetState { deadline: Some(deadline), ..NetState::default() }
     }
 
+    #[cfg(test)]
     fn plain_loopback(&self) -> bool {
-        #[cfg(test)]
-        {
-            self.plain_loopback
-        }
-        #[cfg(not(test))]
-        {
-            false
-        }
+        self.plain_loopback
+    }
+
+    #[cfg(not(test))]
+    fn plain_loopback(&self) -> bool {
+        false
     }
 }
 
@@ -1144,6 +1143,8 @@ mod tests {
         assert_eq!(cookie_date("06-Nov-94 08:49:37").unwrap().to_rfc3339(), "1994-11-06T08:49:37+00:00");
         assert_eq!(cookie_date("Wed, 05 Nov 2025 8:49:37 GMT").map(|d| d.to_rfc3339()), Some("2025-11-05T08:49:37+00:00".to_string()));
         assert!(cookie_date("Sun, 06 Nov 1994").is_none());
+        assert!(cookie_date("Sun, 06 Nov 1994 08:49").is_none(), "a clock without seconds is no time");
+        assert_eq!(cookie_date("06 Nov 24 08:49:37").unwrap().to_rfc3339(), "2024-11-06T08:49:37+00:00");
         assert!(cookie_date("31 Feb 2020 00:00:00").is_none());
         assert!(cookie_date("06 Nov 1994 25:00:00").is_none());
         // Oversized cookies are ignored; a full jar drops its oldest.
@@ -1164,8 +1165,7 @@ mod tests {
             "/big" => Reply { body: vec![b'x'; HTTP_MAX_RESPONSE_BYTES + 1], ..Reply::ok("") },
             "/big-unsized" => Reply { body: vec![b'x'; HTTP_MAX_RESPONSE_BYTES + 1], unsized_body: true, ..Reply::ok("") },
             "/fits-unsized" => Reply { body: b"fits".to_vec(), unsized_body: true, ..Reply::ok("") },
-            p if p.starts_with("/loop") => Reply::redirect(302, "/loop?again"),
-            _ => Reply::ok(""),
+            _ => Reply::redirect(302, "/loop?again"),
         });
         let allowed = hosts(&["127.0.0.1"]);
         let mut state = local();

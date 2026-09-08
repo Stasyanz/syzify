@@ -413,7 +413,8 @@ mod tests {
                 .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
                 .map_err(|e| e.root_cause().to_string())
         };
-        let local = vec![Permission::Net { host: "127.0.0.1".to_string() }];
+        // Beside another permission: only the hosts make the allow-list.
+        let local = vec![Permission::Net { host: "127.0.0.1".to_string() }, Permission::ReadActivities];
 
         // The meta before any request is an error, not a stale one.
         let err = load(vec![]).call::<&str, &str>("meta_only", "{}").unwrap_err().root_cause().to_string();
