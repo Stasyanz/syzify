@@ -39,6 +39,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   the plugin again right away (`continue`) — so a sync runs as rounds of
   ordinary invocations, one activity or one day each, with a Stop button
   and progress between them. `examples/plugins/sync-demo` shows the shape.
+- Plugins can hand over a zip (#114): `host_import_file` expands a `.zip`
+  on the host — every entry imported like a file of its own, deduplicated
+  by hash, bounded like `.gz` — the shape Garmin's activity and wellness
+  downloads come in.
 
 ## [0.5.0] - 2026-09-06
 

@@ -1,6 +1,7 @@
 use std::fs;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -18,6 +19,20 @@ use rusqlite::Connection;
 /// archive (decompression bomb) exhaust memory. Real workout files decompress
 /// to a few MB.
 const MAX_GZ_DECOMPRESSED: u64 = 100 * 1024 * 1024;
+
+/// Distinct entry names one zip archive may hold (the reader keys entries
+/// by name; a later duplicate replaces an earlier one, silently). Garmin's
+/// activity download is one FIT in a zip, a day of wellness a handful of
+/// Monitor files.
+pub const MAX_ZIP_ENTRIES: usize = 64;
+
+/// Wall-clock budget for expanding one archive, checked between entries
+/// (one entry's read is bounded by bytes, not time). The sandbox's epoch
+/// deadline cuts wasm, not a host call, and the archive is expanded under
+/// the vault slot and the DB lock — a backup meanwhile is refused, the UI
+/// waits. A Garmin download expands in well under a second; the caller
+/// passes what is left of the invocation's budget when that is less.
+pub const ZIP_TIME_BUDGET: Duration = Duration::from_secs(30);
 
 /// Cap on the on-disk size of any imported file — it is read into memory
 /// whole (hashing + parsing), so without a bound a mispicked multi-GB file
@@ -298,6 +313,199 @@ pub enum ImportOutcome {
     Skipped,
     /// A Garmin Monitor file was stored; these local days need a recompute.
     Monitoring { days: std::collections::BTreeSet<i64> },
+}
+
+/// Whether a name announces a zip archive ("12345.zip"; case-insensitive).
+pub fn is_zip(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+}
+
+/// Bounds on expanding one zip archive; [`Default`] is the app's.
+#[derive(Debug, Clone, Copy)]
+pub struct ArchiveLimits {
+    /// Distinct entry names.
+    pub entries: usize,
+    /// Bytes read out of the archive, in total.
+    pub bytes: u64,
+    /// Wall clock for the archive, checked between entries.
+    pub time: Duration,
+}
+
+impl Default for ArchiveLimits {
+    fn default() -> Self {
+        ArchiveLimits { entries: MAX_ZIP_ENTRIES, bytes: MAX_GZ_DECOMPRESSED, time: ZIP_TIME_BUDGET }
+    }
+}
+
+/// Longest bare file name an import may be named by (a plugin's, or an
+/// archive entry's) — Garmin names are ~30 characters.
+pub const MAX_IMPORT_NAME: usize = 128;
+
+/// One plain path component of ASCII letters, digits, '.', '-' and '_' —
+/// "2026-09-06-18-05-31.fit", "M9500000.FIT", "12345_ACTIVITY.fit.gz" —
+/// starting with a letter or digit, at most [`MAX_IMPORT_NAME`] bytes, no
+/// `..`. The gate for every name that did not come from the user's own
+/// file dialog: a plugin's `host_import_file` name and a zip entry's. It
+/// becomes the raw file's `original_path` and decides the format.
+pub fn validate_bare_name(name: &str) -> Result<(), String> {
+    let bytes = name.as_bytes();
+    let plain = !name.is_empty()
+        && name.len() <= MAX_IMPORT_NAME
+        && !name.contains("..")
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+    if plain {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid file name {:?}: use letters, digits, '.', '-', '_' only \
+             (a bare file name, no path separators, no '..', at most {MAX_IMPORT_NAME} bytes)",
+            shown_name(name)
+        ))
+    }
+}
+
+/// A name as an error message shows it: printable ASCII only, cut short —
+/// a zip entry's name is whatever the archive says.
+fn shown_name(name: &str) -> String {
+    name.chars()
+        .take(64)
+        .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { '?' })
+        .collect()
+}
+
+/// Import every workout / Monitor file inside a zip held in memory — the
+/// shape Garmin hands downloads out in (an activity's original FIT, a day
+/// of wellness files). Each entry runs through [`import_bytes`] like a
+/// file of its own — format by its extension, hash dedup, encryption, the
+/// monitoring path — and is recorded under `<zip>/<entry>`; the archive
+/// itself is not stored, so a re-download of a file already in the vault
+/// is `skipped` whatever its compression. Bounded like `.gz`
+/// ([`ArchiveLimits`]): distinct entry names, bytes read in total — a
+/// declared size is checked first, the read is capped after, and every
+/// byte read is charged, so a lying declared size buys nothing — and wall
+/// clock. Only regular files (directories and symlink entries skipped);
+/// entry names pass [`validate_bare_name`]; nested zips and foreign
+/// extensions are `failed` entries, never expanded (a `.fit.gz` entry is,
+/// under the `.gz` cap). A corrupt or empty archive, or one with nothing
+/// importable in it, is one `failed` entry, not an error: a sync loop goes
+/// on with the next download.
+#[allow(clippy::too_many_arguments)]
+pub fn import_archive(
+    conn: &Connection,
+    vault_path: &Path,
+    name: &str,
+    bytes: &[u8],
+    encryption_key: Option<&[u8; 32]>,
+    result: &mut ImportResult,
+    batch: &mut MonitoringBatch,
+    limits: ArchiveLimits,
+) {
+    let deadline = Instant::now() + limits.time;
+    let over_limit = || format!("Entry exceeds the {} MB archive limit", limits.bytes / (1024 * 1024));
+    let mut archive = match zip::ZipArchive::new(Cursor::new(bytes)) {
+        Ok(a) => a,
+        Err(e) => return failed(result, name.to_string(), format!("Not a zip archive: {e}")),
+    };
+    if archive.is_empty() {
+        return failed(result, name.to_string(), "Empty archive".to_string());
+    }
+    if archive.len() > limits.entries {
+        return failed(
+            result,
+            name.to_string(),
+            format!("Archive holds {} entries — more than the {} limit", archive.len(), limits.entries),
+        );
+    }
+    let mut total: u64 = 0;
+    let mut recorded = 0;
+    for i in 0..archive.len() {
+        if Instant::now() > deadline {
+            failed(
+                result,
+                name.to_string(),
+                format!(
+                    "{} entries not imported — expanding the archive took longer than {} s",
+                    archive.len() - i,
+                    limits.time.as_secs()
+                ),
+            );
+            recorded += 1;
+            break;
+        }
+        // The name as the archive lists it, for the entries that cannot be
+        // opened (encrypted, an unsupported method); shown, not trusted.
+        let listed = format!("{name}/{}", shown_name(archive.name_for_index(i).unwrap_or("?")));
+        let mut entry = match archive.by_index(i) {
+            Ok(e) => e,
+            Err(e) => {
+                failed(result, listed, format!("Unreadable entry: {e}"));
+                recorded += 1;
+                continue;
+            }
+        };
+        // Regular files only: no directories, no symlink entries (the other
+        // zip reader, runkeeper.rs, draws the same line).
+        if !entry.is_file() {
+            continue;
+        }
+        // Only the file name component (Garmin's zips are flat), through
+        // the same gate as a plugin's own name: nothing is written to disk
+        // under it, but it becomes the raw file's original_path.
+        let entry_name = Path::new(entry.name()).file_name().and_then(|n| n.to_str()).map(str::to_string);
+        let entry_name = match entry_name.ok_or_else(|| "invalid file name: no file name".to_string()).and_then(|n| validate_bare_name(&n).map(|_| n)) {
+            Ok(n) => n,
+            Err(e) => {
+                failed(result, listed, e);
+                recorded += 1;
+                continue;
+            }
+        };
+        let label = format!("{name}/{entry_name}");
+        recorded += 1;
+        if is_zip(Path::new(&entry_name)) {
+            failed(result, label, "Nested zips are not expanded".to_string());
+            continue;
+        }
+        if let Err(e) = import_format(Path::new(&entry_name)) {
+            failed(result, label, e);
+            continue;
+        }
+        // What is left of the archive's byte budget. The declared size is
+        // refused up front without a read; whatever a read brings in is
+        // charged, even when the read then fails (a declared size that lied,
+        // a CRC mismatch) — nothing past the room is ever read.
+        let room = limits.bytes.saturating_sub(total);
+        if entry.size() > room {
+            failed(result, label, over_limit());
+            continue;
+        }
+        let mut data = Vec::new();
+        let read = (&mut entry).take(room + 1).read_to_end(&mut data);
+        total += data.len() as u64;
+        match read {
+            Err(e) => {
+                failed(result, label, format!("Failed to read entry: {e}"));
+                continue;
+            }
+            Ok(_) if data.len() as u64 > room => {
+                failed(result, label, over_limit());
+                continue;
+            }
+            Ok(_) => {}
+        }
+        let outcome = import_bytes(conn, vault_path, &label, &data, encryption_key);
+        result.record(&label, outcome, batch);
+    }
+    if recorded == 0 {
+        failed(result, name.to_string(), "Archive holds no importable entries".to_string());
+    }
+}
+
+fn failed(result: &mut ImportResult, path: String, reason: String) {
+    result.failed.push(FailedFile { path, reason });
 }
 
 /// Inner extension of a `.gz` path: "activity.fit.gz" → "fit".
@@ -2064,6 +2272,246 @@ mod tests {
         assert!(vault_dir.join(&raws[0].path_in_vault).exists());
 
         std::fs::remove_dir_all(&vault_dir).ok();
+    }
+
+    /// A zip in memory with the given entries (a name and its bytes).
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            let options: zip::write::FileOptions<'static, ()> = zip::write::FileOptions::default();
+            for (name, bytes) in entries {
+                if name.ends_with('/') {
+                    writer.add_directory(*name, options).unwrap();
+                } else {
+                    writer.start_file(*name, options).unwrap();
+                    writer.write_all(bytes).unwrap();
+                }
+            }
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    const ZIP_GPX: &str = r#"<?xml version="1.0"?><gpx version="1.1" creator="t" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="55.75" lon="37.62"><time>2025-07-01T08:00:00Z</time></trkpt><trkpt lat="55.7501" lon="37.6201"><time>2025-07-01T08:00:10Z</time></trkpt></trkseg></trk></gpx>"#;
+
+    fn archive_result(
+        conn: &Connection,
+        vault: &Path,
+        name: &str,
+        bytes: &[u8],
+        limits: ArchiveLimits,
+    ) -> (ImportResult, MonitoringBatch) {
+        let mut result = ImportResult::default();
+        let mut batch = MonitoringBatch::default();
+        import_archive(conn, vault, name, bytes, None, &mut result, &mut batch, limits);
+        (result, batch)
+    }
+
+    /// The app's limits with a smaller byte budget.
+    fn bytes_limit(bytes: u64) -> ArchiveLimits {
+        ArchiveLimits { bytes, ..ArchiveLimits::default() }
+    }
+
+    /// A zip of DEFLATE entries in which the declared UNCOMPRESSED size of
+    /// `lie` bytes is patched to 0 in the local and central headers — the
+    /// lie a crafted archive tells: the reader inflates the (honest)
+    /// compressed bytes to whatever they hold, past what was declared.
+    fn zip_lying_about_size(entries: &[(&str, &[u8])], lie: usize) -> Vec<u8> {
+        use std::io::Write;
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut cursor);
+            let o: zip::write::FileOptions<'static, ()> = zip::write::FileOptions::default();
+            for (name, bytes) in entries {
+                w.start_file(*name, o).unwrap();
+                w.write_all(bytes).unwrap();
+            }
+            w.finish().unwrap();
+        }
+        let mut zip = cursor.into_inner();
+        let size = (lie as u32).to_le_bytes();
+        let mut patched = 0;
+        let mut i = 0;
+        while i + 4 <= zip.len() {
+            if zip[i..i + 4] == size {
+                zip[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
+                patched += 1;
+                i += 4;
+            } else {
+                i += 1;
+            }
+        }
+        assert_eq!(patched, 2, "the uncompressed size in the local and the central header, nothing else");
+        zip
+    }
+
+    #[test]
+    fn a_zip_imports_each_entry_like_a_file_of_its_own_and_dedups_by_entry() {
+        use crate::parser::fit_builder::monitoring_fixture;
+        let conn = crate::db::test_db();
+        let vault = fresh_vault("tv_test_vault_zip");
+        let midnight = 1_788_555_600;
+        let zip = zip_of(&[
+            ("ride.gpx", ZIP_GPX.as_bytes()),
+            ("wellness/", b""),
+            ("wellness/M9500000.FIT", &monitoring_fixture(424242, midnight)),
+            ("notes.txt", b"hello"),
+            ("inner.zip", &zip_of(&[("x.gpx", ZIP_GPX.as_bytes())])),
+        ]);
+        let (result, batch) = archive_result(&conn, &vault, "12345.zip", &zip, ArchiveLimits::default());
+        assert_eq!((result.imported, result.skipped, result.monitoring_files), (1, 0, 1), "{:?}", result.failed);
+        // The fixture's day waits in the batch, uncomputed: 2026-09-05 at
+        // +03:00, and under UTC (the CI runner) its RHR row lands on the
+        // 4th as well — one or two days, never another.
+        let days: Vec<String> = batch.days.iter().filter_map(|d| db::monitoring::date_of(*d)).collect();
+        assert!(days == ["2026-09-05"] || days == ["2026-09-04", "2026-09-05"], "{days:?}");
+        let failed: Vec<(&str, &str)> = result.failed.iter().map(|f| (f.path.as_str(), f.reason.as_str())).collect();
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert_eq!(failed[0].0, "12345.zip/notes.txt");
+        assert!(failed[0].1.contains("Unsupported format"), "{failed:?}");
+        assert_eq!(failed[1], ("12345.zip/inner.zip", "Nested zips are not expanded"));
+        // Entries are the raw files, under the archive's name; the zip is not.
+        let paths: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT original_path FROM raw_file ORDER BY original_path").unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(paths, ["12345.zip/M9500000.FIT", "12345.zip/ride.gpx"]);
+
+        // The same files in another archive: skipped by hash, per entry.
+        let again = zip_of(&[("ride.gpx", ZIP_GPX.as_bytes()), ("M9500000.FIT", &monitoring_fixture(424242, midnight))]);
+        let (result, batch) = archive_result(&conn, &vault, "67890.zip", &again, ArchiveLimits::default());
+        assert_eq!((result.imported, result.skipped, result.monitoring_files), (0, 2, 0));
+        assert!(batch.days.is_empty());
+        assert!(result.failed.is_empty());
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    /// Entry names go through the plugin's own name gate, unreadable
+    /// entries are named as listed, and an archive with nothing importable
+    /// says so instead of reporting zeros.
+    #[test]
+    fn zip_entry_names_are_gated_and_unreadable_entries_named() {
+        use std::io::Write;
+        let conn = crate::db::test_db();
+        let vault = fresh_vault("tv_test_vault_zip_names");
+        let zip = zip_of(&[
+            ("dir/", b""),
+            ("..", b"x"),
+            ("bad\u{1}name.gpx", ZIP_GPX.as_bytes()),
+            ("тр.gpx", ZIP_GPX.as_bytes()),
+            ("nested/ok.gpx", ZIP_GPX.as_bytes()),
+        ]);
+        let (r, _) = archive_result(&conn, &vault, "n.zip", &zip, ArchiveLimits::default());
+        assert_eq!(r.imported, 1, "{:?}", r.failed);
+        let failed: Vec<(&str, &str)> = r.failed.iter().map(|f| (f.path.as_str(), f.reason.as_str())).collect();
+        assert_eq!(failed.len(), 3, "{failed:?}");
+        assert_eq!(failed[0].0, "n.zip/..");
+        assert!(failed[0].1.contains("no file name"), "{failed:?}");
+        assert_eq!(failed[1].0, "n.zip/bad?name.gpx", "control characters shown as ?");
+        assert!(failed[1].1.starts_with("invalid file name"), "{failed:?}");
+        assert_eq!(failed[2].0, "n.zip/??.gpx");
+        let paths: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT original_path FROM raw_file").unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(paths, ["n.zip/ok.gpx"], "the directory part is dropped");
+
+        // An AES-encrypted entry cannot be opened without a password.
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut cursor);
+            let o: zip::write::FileOptions<'static, ()> =
+                zip::write::FileOptions::default().with_aes_encryption(zip::AesMode::Aes256, "pw");
+            w.start_file("secret.gpx", o).unwrap();
+            w.write_all(ZIP_GPX.as_bytes()).unwrap();
+            w.finish().unwrap();
+        }
+        let (r, _) = archive_result(&conn, &vault, "enc.zip", &cursor.into_inner(), ArchiveLimits::default());
+        assert_eq!(r.failed.len(), 1, "{:?}", r.failed);
+        assert_eq!(r.failed[0].path, "enc.zip/secret.gpx");
+        assert!(r.failed[0].reason.starts_with("Unreadable entry"), "{:?}", r.failed);
+
+        // Directories only: not zeros, one failed line.
+        let (r, _) = archive_result(&conn, &vault, "dirs.zip", &zip_of(&[("a/", b""), ("b/", b"")]), ArchiveLimits::default());
+        assert_eq!(r.failed.iter().map(|f| f.reason.as_str()).collect::<Vec<_>>(), ["Archive holds no importable entries"]);
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn a_zip_is_bounded_and_a_bad_one_is_one_failed_entry() {
+        let conn = crate::db::test_db();
+        let vault = fresh_vault("tv_test_vault_zip_bounds");
+        let reasons = |r: &ImportResult| r.failed.iter().map(|f| f.reason.clone()).collect::<Vec<_>>();
+
+        let (r, _) = archive_result(&conn, &vault, "junk.zip", b"not a zip at all", ArchiveLimits::default());
+        assert!(reasons(&r)[0].starts_with("Not a zip archive"), "{:?}", r.failed);
+        let (r, _) = archive_result(&conn, &vault, "empty.zip", &zip_of(&[]), ArchiveLimits::default());
+        assert_eq!(reasons(&r), ["Empty archive"]);
+        let one_entry = ArchiveLimits { entries: 1, ..ArchiveLimits::default() };
+        let (r, _) = archive_result(&conn, &vault, "many.zip", &zip_of(&[("a.gpx", b"x"), ("b.gpx", b"x")]), one_entry);
+        assert_eq!(reasons(&r), ["Archive holds 2 entries — more than the 1 limit"]);
+
+        // Declared size over the cap: refused before reading. Total over the
+        // cap: the second entry does not fit after the first.
+        let big = vec![b'x'; 3000];
+        let (r, _) = archive_result(&conn, &vault, "big.zip", &zip_of(&[("big.gpx", &big)]), bytes_limit(2048));
+        assert_eq!(reasons(&r), ["Entry exceeds the 0 MB archive limit"]);
+        assert_eq!(r.failed[0].path, "big.zip/big.gpx");
+        let (r, _) = archive_result(
+            &conn,
+            &vault,
+            "two.zip",
+            &zip_of(&[("one.gpx", ZIP_GPX.as_bytes()), ("two.gpx", ZIP_GPX.as_bytes())]),
+            bytes_limit(ZIP_GPX.len() as u64 + 10),
+        );
+        assert_eq!((r.imported, r.failed.len()), (1, 1), "{:?}", r.failed);
+        assert_eq!(r.failed[0].path, "two.zip/two.gpx");
+
+        // A declared size that lies (0 for 3000 bytes) passes the up-front
+        // check, the capped read refuses it, and the bytes read are charged:
+        // the small honest entry after it does not fit either.
+        let bomb = vec![b'x'; 3000];
+        let lying = zip_lying_about_size(&[("bomb.gpx", &bomb)], bomb.len());
+        let (r, _) = archive_result(&conn, &vault, "liar.zip", &lying, bytes_limit(2048));
+        assert_eq!(reasons(&r), ["Entry exceeds the 0 MB archive limit"]);
+        let two = zip_lying_about_size(&[("bomb.gpx", &bomb), ("small.gpx", ZIP_GPX.as_bytes())], bomb.len());
+        let (r, _) = archive_result(&conn, &vault, "liar2.zip", &two, bytes_limit(2048));
+        assert_eq!((r.imported, r.failed.len()), (0, 2), "{:?}", r.failed);
+        assert_eq!(r.failed[1].path, "liar2.zip/small.gpx", "the budget was spent by the liar");
+
+        // A corrupt entry (a flipped byte: CRC mismatch) fails on its own and
+        // its bytes are charged too.
+        let mut corrupt = {
+            use std::io::Write;
+            let mut cursor = Cursor::new(Vec::new());
+            {
+                let mut w = zip::ZipWriter::new(&mut cursor);
+                let o: zip::write::FileOptions<'static, ()> =
+                    zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                w.start_file("c.gpx", o).unwrap();
+                w.write_all(ZIP_GPX.as_bytes()).unwrap();
+                w.finish().unwrap();
+            }
+            cursor.into_inner()
+        };
+        let at = corrupt.windows(5).position(|w| w == b"<gpx ").unwrap();
+        corrupt[at + 1] = b'G';
+        let (r, _) = archive_result(&conn, &vault, "crc.zip", &corrupt, ArchiveLimits::default());
+        assert!(reasons(&r)[0].starts_with("Failed to read entry"), "{:?}", r.failed);
+
+        // Out of time: the rest is one failed line, nothing more is read.
+        let (r, _) = archive_result(
+            &conn,
+            &vault,
+            "slow.zip",
+            &zip_of(&[("a.gpx", ZIP_GPX.as_bytes()), ("b.gpx", ZIP_GPX.as_bytes())]),
+            ArchiveLimits { time: Duration::ZERO, ..ArchiveLimits::default() },
+        );
+        assert_eq!((r.imported, r.failed.len()), (0, 1));
+        assert!(r.failed[0].reason.starts_with("2 entries not imported"), "{:?}", r.failed);
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]

@@ -36,10 +36,6 @@ pub const VAULT_BUSY: &str = "vault busy";
 /// Prefix of the `host_import_file` error while the vault is locked — transient.
 pub const VAULT_LOCKED: &str = "vault locked";
 
-/// Longest file name `host_import_file` accepts — Garmin names are ~30
-/// characters; the name is stored as the raw file's `original_path`.
-pub const PLUGIN_IMPORT_MAX_NAME: usize = 128;
-
 /// What an import needs from the app beyond the DB handle. A trait so the
 /// host layer stays Tauri-free: the runtime hands in the live `AppState`
 /// behind an `AppHandle`, tests hand in a plain `AppState`.
@@ -346,7 +342,8 @@ fn with_secrets<T>(
 // Import one file the plugin holds in memory — the drop import's pipeline
 // (format by extension, hash dedup, parse, store, monitoring recompute) on
 // the plugin's bytes. `name` is a bare file name; it decides the format and
-// becomes the raw file's original_path. Returns the ImportResult JSON the
+// becomes the raw file's original_path. A `.zip` (Garmin's downloads) is
+// expanded here, entry by entry, into the same result. Returns the ImportResult JSON the
 // drop import returns to the frontend: a file the pipeline refuses is a
 // `failed` entry there, not a trap — a sync loop goes on with the next one.
 // A Monitor file counts in `monitoring_files` only; its day is recomputed
@@ -426,31 +423,34 @@ pub(crate) fn import_file(ctx: &mut PluginCtx, name: &str, bytes: &[u8]) -> Resu
     let conn = ctx.db.lock().map_err(|e| e.to_string())?;
 
     let mut result = ImportResult::default();
-    let outcome = pipeline::import_bytes(&conn, &vault.vault_path(), name, bytes, key.as_ref());
-    result.record(name, outcome, &mut ctx.monitoring);
+    if pipeline::is_zip(Path::new(name)) {
+        // Garmin's downloads: every entry its own import, one result. The
+        // archive's clock is what is left of the invocation's budget, at
+        // most its own — the epoch deadline does not cut a host call.
+        let left = ctx.net.deadline.map(|d| d.saturating_duration_since(std::time::Instant::now()));
+        let limits = pipeline::ArchiveLimits {
+            time: left.map_or(pipeline::ZIP_TIME_BUDGET, |l| l.min(pipeline::ZIP_TIME_BUDGET)),
+            ..pipeline::ArchiveLimits::default()
+        };
+        pipeline::import_archive(&conn, &vault.vault_path(), name, bytes, key.as_ref(), &mut result, &mut ctx.monitoring, limits);
+    } else {
+        let outcome = pipeline::import_bytes(&conn, &vault.vault_path(), name, bytes, key.as_ref());
+        result.record(name, outcome, &mut ctx.monitoring);
+    }
     Ok(result)
 }
 
 /// A file name a plugin may import under: one plain path component of ASCII
 /// letters, digits, '.', '-' and '_' — Garmin's "2026-09-06-18-05-31.fit",
-/// "M9500000.FIT", "12345_ACTIVITY.fit.gz" — starting with a letter or digit,
-/// at most [`PLUGIN_IMPORT_MAX_NAME`] bytes, ending in an extension the
-/// pipeline imports (`.fit`/`.gpx`/`.tcx`, optionally `.gz`). Nothing else:
-/// the name becomes the raw file's `original_path` and decides its format.
+/// "M9500000.FIT", "12345_ACTIVITY.fit.gz", "12345.zip" — starting with a
+/// letter or digit, at most [`pipeline::MAX_IMPORT_NAME`] bytes, ending in an
+/// extension the pipeline imports (`.fit`/`.gpx`/`.tcx`, optionally `.gz`)
+/// or `.zip` (expanded by the pipeline, entry by entry). Nothing else: the
+/// name becomes the raw file's `original_path` and decides its format.
 pub fn validate_import_name(name: &str) -> Result<(), String> {
-    let bytes = name.as_bytes();
-    let plain = !name.is_empty()
-        && name.len() <= PLUGIN_IMPORT_MAX_NAME
-        && !name.contains("..")
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
-    if !plain {
-        return Err(format!(
-            "invalid import file name {name:?}: use letters, digits, '.', '-', '_' only \
-             (a bare file name, no path separators, no '..', at most {PLUGIN_IMPORT_MAX_NAME} bytes)"
-        ));
+    pipeline::validate_bare_name(name).map_err(|e| format!("invalid import file name: {e}"))?;
+    if pipeline::is_zip(Path::new(name)) {
+        return Ok(());
     }
     pipeline::import_format(Path::new(name))
         .map(|_| ())
@@ -486,10 +486,12 @@ mod tests {
             "2026-09-06-18-05-31.fit",
             "12345_ACTIVITY.fit.gz",
             "swim.TCX.GZ",
+            "12345.zip",
+            "wellness_2026-09-08.ZIP",
         ] {
             assert!(validate_import_name(good).is_ok(), "{good:?} should be accepted");
         }
-        let long = format!("{}.fit", "a".repeat(PLUGIN_IMPORT_MAX_NAME));
+        let long = format!("{}.fit", "a".repeat(pipeline::MAX_IMPORT_NAME));
         for bad in [
             "",
             "../run.gpx",
@@ -501,6 +503,7 @@ mod tests {
             "run",
             "run.txt",
             "run.gz",
+            "x.zip.gz",
             "run.gpx\0",
             "run 1.gpx",
             "трек.gpx",
@@ -690,10 +693,33 @@ mod tests {
 
         // A file the pipeline refuses is a failed entry, not an error — the
         // plugin's sync loop must be able to go on with the next file.
+        // A zip: every entry its own import, one result, entries named
+        // under the archive; the dedup sees the entry, not the archive.
+        let zip = {
+            use std::io::Write;
+            let mut cursor = std::io::Cursor::new(Vec::new());
+            {
+                let mut w = zip::ZipWriter::new(&mut cursor);
+                let o: zip::write::FileOptions<'static, ()> = zip::write::FileOptions::default();
+                w.start_file("run.gpx", o).unwrap();
+                w.write_all(GPX.as_bytes()).unwrap();
+                w.start_file("other.gpx", o).unwrap();
+                w.write_all(GPX.replace("2025-06-01", "2025-06-02").as_bytes()).unwrap();
+                w.start_file("readme.txt", o).unwrap();
+                w.write_all(b"x").unwrap();
+                w.finish().unwrap();
+            }
+            cursor.into_inner()
+        };
+        let z = import_file(&mut ctx, "12345.zip", &zip).unwrap();
+        assert_eq!((z.imported, z.skipped, z.failed.len()), (1, 1, 1), "{:?}", z.failed);
+        assert_eq!(z.failed[0].path, "12345.zip/readme.txt");
+        assert!(import_file(&mut ctx, "junk.zip", b"nope").unwrap().failed[0].reason.starts_with("Not a zip"));
+
         let bad = import_file(&mut ctx, "broken.gpx", b"<gpx>not really").unwrap();
         assert_eq!(bad.failed.len(), 1);
         assert_eq!(bad.failed[0].path, "broken.gpx");
-        assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 1);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 2, "run.gpx and the zip's other.gpx");
 
         let _ = std::fs::remove_dir_all(&vault);
     }
