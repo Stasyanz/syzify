@@ -13,6 +13,19 @@ interface RenderProps {
   disabled?: boolean;
 }
 
+/** Consecutive buttons become one group (an array); every other element
+ * stands alone. */
+export function groupButtons(elements: ViewElement[]): Array<ViewElement | ViewElement[]> {
+  const out: Array<ViewElement | ViewElement[]> = [];
+  for (const el of elements) {
+    const last = out[out.length - 1];
+    if (el.type === "button" && Array.isArray(last)) last.push(el);
+    else if (el.type === "button") out.push([el]);
+    else out.push(el);
+  }
+  return out;
+}
+
 // Renders a plugin's declarative ViewSpec using a fixed set of safe primitives.
 // Every value is rendered as text (React escapes it) — no raw HTML, so a plugin
 // cannot inject markup or scripts. Inputs/buttons are controlled by the host.
@@ -22,9 +35,18 @@ export function PluginViewRenderer({ spec, values, onChange, onAction, disabled 
       {spec.title && (
         <h3 className="text-sm font-semibold text-ink">{spec.title}</h3>
       )}
-      {spec.elements.map((el, i) => (
-        <Element key={i} el={el} values={values} onChange={onChange} onAction={onAction} disabled={disabled} />
-      ))}
+      {groupButtons(spec.elements).map((group, i) =>
+        Array.isArray(group) ? (
+          // Adjacent buttons read as one toolbar, with room between them.
+          <div key={i} className="flex flex-wrap gap-2">
+            {group.map((el, j) => (
+              <Element key={j} el={el} values={values} onChange={onChange} onAction={onAction} disabled={disabled} />
+            ))}
+          </div>
+        ) : (
+          <Element key={i} el={group} values={values} onChange={onChange} onAction={onAction} disabled={disabled} />
+        ),
+      )}
     </div>
   );
 }

@@ -51,6 +51,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   warning or error level, so a refused sign-in or a stopped sync stands
   out from the rest of the page.
 
+### Fixed
+- Buttons in a plugin view no longer sit glued together: adjacent ones
+  form a row with a gap (#120).
+
 ## [0.5.0] - 2026-09-06
 
 ### Added

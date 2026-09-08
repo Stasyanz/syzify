@@ -1,12 +1,38 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent } from "@testing-library/react";
-import type { ViewSpec } from "../../lib/types";
-import { PluginViewRenderer } from "./PluginViewRenderer";
+import type { ViewSpec, ViewElement } from "../../lib/types";
+import { PluginViewRenderer, groupButtons } from "./PluginViewRenderer";
 
 afterEach(cleanup);
 
+describe("groupButtons", () => {
+  it("rows up adjacent buttons and leaves the rest alone", () => {
+    const b = (label: string): ViewElement => ({ type: "button", label, action: label });
+    const t: ViewElement = { type: "text", text: "x" };
+    const grouped = groupButtons([t, b("a"), b("b"), t, b("c")]);
+    expect(grouped).toHaveLength(4);
+    expect(grouped[1]).toEqual([b("a"), b("b")]);
+    expect(grouped[3]).toEqual([b("c")]);
+    expect(groupButtons([])).toEqual([]);
+  });
+});
+
 describe("PluginViewRenderer", () => {
+  it("renders adjacent buttons in one row with a gap", () => {
+    const spec: ViewSpec = {
+      title: null,
+      elements: [
+        { type: "button", label: "Sync now", action: "sync" },
+        { type: "button", label: "Sign out", action: "signout" },
+      ],
+    };
+    render(<PluginViewRenderer spec={spec} />);
+    const row = screen.getByText("Sync now").parentElement!;
+    expect(row.className).toContain("gap-2");
+    expect(row).toBe(screen.getByText("Sign out").parentElement);
+  });
+
   it("renders notices as callouts by level", () => {
     const spec: ViewSpec = {
       title: null,
