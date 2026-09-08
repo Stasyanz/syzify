@@ -1,18 +1,21 @@
-# Syzify plugins — manifest format (phase 1)
+# Syzify plugins — the Host SDK
 
-Plugins extend Syzify locally. A plugin is described by a `plugin.json` manifest.
-This directory holds reference manifests you can sideload to try the installer.
+Plugins extend Syzify locally. A plugin is a `plugin.json` manifest plus a
+**WASM** module that runs in a memory-isolated Extism (wasmtime) sandbox in the
+Rust backend, calling capability-gated host functions and returning declarative
+views the app renders. This directory holds the reference plugins; each is
+sideloadable as it is.
 
-> **Status:** Phase 1 ships the framework (registry, manifest + permission model,
-> install/enable/disable/uninstall, management UI). Phase 2 adds the **runtime**:
-> plugins are compiled to **WASM** and run in a memory-isolated Extism (wasmtime)
-> sandbox in the Rust backend, calling capability-gated host functions, with
-> default-deny network brokered by the host (`host_http`, declared `net:host=` hosts
-> checked on every redirect hop, a cookie jar per call — the `net-probe` example).
-> Contribution points so far: `dashboard.widget`, `activity.detail.panel` (the
-> `consistency-widget` example) and `route.planner` (the `smart-route` example).
-> Plugins can also import files into the vault through the app's own pipeline
-> (`import:files`, the `paste-import` example) — the building block of a sync plugin.
+> **What exists today:** the registry (install a signed `.syzify-ext` or sideload
+> a `plugin.json`, enable, disable, uninstall; Settings → Plugins), the runtime,
+> the contribution points `dashboard.widget`, `activity.detail.panel`,
+> `route.planner` and `sync.source`, and the host functions below: data queries,
+> a private store, secret storage, brokered network (`host_http` — declared
+> `net:host=` hosts checked on every redirect hop, a cookie jar per call), and
+> file import through the app's own pipeline (`host_import_file`, zips included).
+> A sync plugin — sign in, fetch, import, round by round — is buildable with
+> nothing else; the Garmin Connect plugin is. What is not there yet is marked
+> below.
 
 ## Install one
 
@@ -63,16 +66,18 @@ The manifest uses **camelCase** (familiar to JS authors); the app's own IPC stay
 
 ## Contribution points
 
-- `activity.detail.panel` — a panel on the activity detail page
+Rendered today — the export is the point with dots replaced by underscores:
+
 - `dashboard.widget` — a card on the dashboard
-- `import.datasource` — a new data source / parser (e.g. sleep)
-- `route.planner` — a standalone planning page
+- `activity.detail.panel` — a panel on the activity detail page
+- `route.planner` — a standalone page (**Settings → Plugins → Open**)
 - `sync.source` — a sync page (**Settings → Plugins → Sync**): status, login, a
   **Sync now** button; its rounds run through the continue loop (below). See the
   `sync-demo` example
-- `map.overlay` — a layer over the existing map
-- `activity.derived_metric` — compute & store extra metrics
-- `settings.section`, `command`, `menu.item`
+
+Reserved names, accepted in a manifest but not rendered by any host yet:
+`import.datasource`, `map.overlay`, `activity.derived_metric`,
+`settings.section`, `command`, `menu.item`.
 
 ## Permissions
 
@@ -85,9 +90,10 @@ Capability-gated; the user grants them by enabling the plugin.
   scope of vault encryption is on, stored in the clear otherwise — and the Plugins
   screen says so on the plugin's card ("stores secrets", plus a note while the
   vault is not encrypted). Never put a token in `plugin_kv`
-- `import:files` — import files (FIT/GPX/TCX, optionally gzipped) into the vault through
-  the app's own import pipeline — one file per `host_import_file` call, ≤ 32 MiB, deduplicated
-  by hash, encrypted under the vault's `activities` scope like a dropped file. Note the
+- `import:files` — import files (FIT/GPX/TCX, optionally gzipped, or a zip of them) into
+  the vault through the app's own import pipeline — one file or archive per
+  `host_import_file` call, ≤ 32 MiB, deduplicated by hash, encrypted under the vault's
+  `activities` scope like a dropped file. Note the
   dedup answer (`skipped`) tells the plugin whether an identical file, or an activity with
   the same start/sport/distance/duration, is already in the vault — a narrow read the
   permission implies without `read:activities`
@@ -98,7 +104,7 @@ Capability-gated; the user grants them by enabling the plugin.
 Unknown permission strings are preserved verbatim (forward-compatibility) and shown
 to the user rather than silently dropped.
 
-## Writing a WASM plugin (phase 2)
+## Writing a WASM plugin
 
 A plugin is a WASM module that **exports one function per contribution point**
 (dots → underscores: `dashboard.widget` → `dashboard_widget`). The export receives a
@@ -129,7 +135,18 @@ plugin) bounds one round, not the loop: the loop is bounded by the round cap and
 the user. Do one activity, one day of wellness per round and keep the cursor in
 `data:own`, so a stopped loop resumes where it was. See [`sync-demo/`](sync-demo/).
 
-Host functions (call only what your permissions allow):
+Host functions (call only what your permissions allow). Two things to know
+before the table:
+
+- **A host function's error aborts the whole invocation.** A refused host, a
+  missing permission, a bad request, a transport failure — none comes back as
+  an error value; the call fails and the app shows an error card. The `Result`
+  a `#[host_fn]` binding returns covers only the decoding of the answer. So
+  check inputs before calling, and let `host_import_file` report a bad file as
+  a `failed` entry rather than expecting to catch it.
+- **The sandbox has no clock and no randomness.** "Today" for a sync is the
+  `Date` header of a response (`host_http_meta`), a cursor is whatever the
+  plugin stored last time.
 
 | Host function | Needs | Purpose |
 |---|---|---|
@@ -179,10 +196,11 @@ several requests just works inside one action; it must **finish inside one**,
 because the next action starts with an empty jar. A session that has to survive
 between actions goes through `data:own` explicitly (a `Cookie` header on the
 next request — discouraged; keep tokens, not cookies, when the service offers
-them). A `route.planner` action of a plugin holding `net:host=` gets a 30 s
-invocation budget — the one place the user pressed a button and waits; widgets
-and panels keep 5 s, as they render on their own and every invocation queues
-behind the previous one. One request may use all of what is left of it. See
+them). A `route.planner` or `sync.source` action of a plugin holding
+`net:host=` gets a 30 s invocation budget — the pages where the user pressed a
+button and waits; widgets and panels keep 5 s, as they render on their own and
+every invocation queues behind the previous one. One request may use all of
+what is left of it. See
 [`net-probe/`](net-probe/) for the shape of a call and
 [`smart-route/`](smart-route/) for a `route.planner` page that fetches weather.
 
