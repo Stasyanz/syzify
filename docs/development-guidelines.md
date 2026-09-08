@@ -108,6 +108,13 @@ windowless app from `tauri::test::mock_builder` (dev feature `test`; see
 `run_contribution_imports_through_the_live_app_and_emits_the_event`). Keep such
 functions generic over `tauri::Runtime` so the mock runtime fits.
 
+**Network from a plugin** → `host_http` (`plugins/net.rs`) only; never hand a
+host to Extism's manifest allow-list (its HTTP has no cookie jar and does not
+re-check redirects). The allow-list is the plugin's `net:host=` set and it is
+checked on **every hop**, `https://` only; the cookie jar is per invocation and
+never persisted. Test against the loopback `test_server` in `net.rs` (set
+`NetState::plain_loopback`; the runtime never does).
+
 ---
 
 ## 3. What NOT to do

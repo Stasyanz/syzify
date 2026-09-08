@@ -153,8 +153,8 @@ pub fn get_plugin_contributions(
 /// (e.g. the current activity id for a detail panel).
 ///
 /// Off the main thread: a call may fetch over the network or import files
-/// (up to the sandbox's 5 s budget, and a host call inside it is not cut
-/// short by that budget), which would freeze the window from a sync command.
+/// (up to the sandbox's budget — 5 s, 30 s for a network plugin's
+/// `route.planner` action), which would freeze the window from a sync command.
 #[tauri::command]
 pub async fn render_plugin_view(
     plugin_id: String,

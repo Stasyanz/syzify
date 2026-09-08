@@ -3,8 +3,8 @@
 //! Every function checks the calling plugin's granted permissions before
 //! touching data, and reads/writes go through the `db/` layer (file imports
 //! through the import pipeline). Plugins get no ambient authority: no DOM,
-//! no IPC, no filesystem, and no network beyond the hosts the runtime
-//! wires into the sandbox from the manifest's `net:host=` permissions.
+//! no IPC, no filesystem, and no network beyond `host_http` to the hosts
+//! the manifest's `net:host=` permissions declare (`plugins/net.rs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,6 +16,7 @@ use crate::db;
 use crate::import::pipeline::{self, ImportResult, MonitoringBatch};
 use crate::models::activity::ActivityFilters;
 use crate::models::plugin::Permission;
+use crate::plugins::net::{self, NetState};
 use crate::state::{AppState, Db, SingleFlightGuard};
 
 /// Cap on one file a plugin hands to `host_import_file` — what the pipeline
@@ -93,6 +94,9 @@ pub struct PluginCtx {
     /// day per call and the watch writes several files per day, so a
     /// per-call recompute would run many times over under the DB lock.
     pub monitoring: MonitoringBatch,
+    /// The invocation's network side (`host_http`): its cookie jar, the
+    /// last response's meta, the budget's deadline.
+    pub net: NetState,
 }
 
 #[cfg(test)]
@@ -107,11 +111,24 @@ impl PluginCtx {
             imported: 0,
             imported_activities: 0,
             monitoring: MonitoringBatch::default(),
+            net: NetState::default(),
         }
     }
 }
 
 impl PluginCtx {
+    /// The hosts the plugin declared via `net:host=` — `host_http`'s
+    /// allow-list, for the first request and every redirect hop.
+    fn network_hosts(&self) -> Vec<String> {
+        self.permissions
+            .iter()
+            .filter_map(|p| match p {
+                Permission::Net { host } => Some(host.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn require(&self, needed: &Permission) -> Result<(), extism::Error> {
         require_permission(&self.permissions, needed).map_err(|_| {
             extism::Error::msg(format!(
@@ -280,6 +297,40 @@ host_fn!(pub host_import_file(user_data: PluginCtx; name: String, bytes: Vec<u8>
     Ok(serde_json::to_string(&result)?)
 });
 
+// One brokered HTTP request. The host follows redirects itself (as many
+// as the plugin's `max_redirects` allows, 10 at most) — every hop checked
+// against the plugin's `net:host=` list, the invocation's cookie jar
+// reading every hop's Set-Cookie and lending its cookies to the next —
+// and returns the final response's body. Its status, URL, headers and
+// the hops taken are read with `host_http_meta` right after: the
+// two-call shape of Extism's own HTTP, so a plugin ports with a local
+// change. A refused hop, a bad request, a spent budget and a transport
+// failure all trap.
+host_fn!(pub host_http(user_data: PluginCtx; req: String, body: Vec<u8>) -> Vec<u8> {
+    let ud = user_data.get()?;
+    let mut ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
+    let allowed = ctx.network_hosts();
+    if allowed.is_empty() {
+        return Err(extism::Error::msg(format!("plugin {} lacks permission net:host=<host>", ctx.plugin_id)));
+    }
+    net::fetch(&mut ctx.net, &allowed, &req, &body).map_err(|e| extism::Error::msg(format!("host_http: {e}")))
+});
+
+// `{status, url, headers: [[name, value], …], hops: [{status, url,
+// location}, …]}` of the last `host_http` response of this invocation;
+// headers as pairs, so a repeated one (five Set-Cookie of a login)
+// survives. An error before any response.
+host_fn!(pub host_http_meta(user_data: PluginCtx;) -> String {
+    let ud = user_data.get()?;
+    let ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
+    let meta = ctx
+        .net
+        .last
+        .as_ref()
+        .ok_or_else(|| extism::Error::msg("host_http_meta: no response yet — call host_http first"))?;
+    Ok(serde_json::to_string(meta)?)
+});
+
 /// The import behind `host_import_file`, permission already checked. The
 /// touched Monitor days land in `ctx.monitoring` for the runtime to finish.
 pub(crate) fn import_file(ctx: &mut PluginCtx, name: &str, bytes: &[u8]) -> Result<ImportResult, String> {
@@ -432,6 +483,7 @@ mod tests {
             imported: 0,
             imported_activities: 0,
             monitoring: MonitoringBatch::default(),
+            net: NetState::default(),
         }
     }
 

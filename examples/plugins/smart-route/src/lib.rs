@@ -7,16 +7,23 @@
 //! returns a suggested loop drawn as a `map` overlay. Demonstrates the action
 //! loop (the host re-invokes with `{action, values}`), a `map` element, and
 //! **brokered network access** — the manifest declares
-//! `net:host=api.open-meteo.com`; the host wires exactly that into the sandbox's
-//! allow-list. A non-200 response degrades gracefully; a *blocked* host aborts
-//! the call (the host shows an error card), so a plugin can never reach a host
-//! the user didn't approve.
+//! `net:host=api.open-meteo.com`, and `host_http` (the only way to the
+//! network; see `net-probe/` for the shape) refuses any other host, on the
+//! first request and on every redirect hop. A non-200 response degrades
+//! gracefully; a *refused* host aborts the call (the host shows an error
+//! card), so a plugin can never reach a host the user didn't approve.
 //!
 //! Build: `cargo build --release --target wasm32-unknown-unknown`
 //! then copy `target/wasm32-unknown-unknown/release/smart_route.wasm` to `plugin.wasm`.
 
 use extism_pdk::*;
 use serde_json::{json, Value};
+
+#[host_fn]
+extern "ExtismHost" {
+    fn host_http(request: String, body: Vec<u8>) -> Vec<u8>;
+    fn host_http_meta() -> String;
+}
 
 const LAT: f64 = 52.52;
 const LON: f64 = 13.41;
@@ -81,12 +88,14 @@ fn loop_points(distance_km: f64) -> Vec<[f64; 2]> {
 }
 
 fn fetch_weather() -> Result<(f64, f64), String> {
-    let req = HttpRequest::new(FORECAST_URL).with_method("GET");
-    let res = http::request::<()>(&req, None).map_err(|e| e.to_string())?;
-    if res.status_code() != 200 {
-        return Err(format!("status {}", res.status_code()));
+    let request = json!({ "url": FORECAST_URL, "method": "GET", "headers": [] }).to_string();
+    let body = unsafe { host_http(request, Vec::new()) }.map_err(|e| e.to_string())?;
+    let meta = unsafe { host_http_meta() }.map_err(|e| e.to_string())?;
+    let meta: Value = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
+    if meta["status"] != 200 {
+        return Err(format!("status {}", meta["status"]));
     }
-    let v: Value = serde_json::from_slice(&res.body()).map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     let temp = v["current"]["temperature_2m"].as_f64().ok_or("no temperature")?;
     let wind = v["current"]["wind_speed_10m"].as_f64().ok_or("no wind")?;
     Ok((temp, wind))

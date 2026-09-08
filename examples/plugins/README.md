@@ -7,11 +7,12 @@ This directory holds reference manifests you can sideload to try the installer.
 > install/enable/disable/uninstall, management UI). Phase 2 adds the **runtime**:
 > plugins are compiled to **WASM** and run in a memory-isolated Extism (wasmtime)
 > sandbox in the Rust backend, calling capability-gated host functions, with
-> default-deny network brokered by declared `net:host=` hosts. Contribution points so
-> far: `dashboard.widget`, `activity.detail.panel` (the `consistency-widget` example)
-> and `route.planner` (the `smart-route` example). Plugins can also import files
-> into the vault through the app's own pipeline (`import:files`, the `paste-import`
-> example) — the building block of a sync plugin.
+> default-deny network brokered by the host (`host_http`, declared `net:host=` hosts
+> checked on every redirect hop, a cookie jar per call — the `net-probe` example).
+> Contribution points so far: `dashboard.widget`, `activity.detail.panel` (the
+> `consistency-widget` example) and `route.planner` (the `smart-route` example).
+> Plugins can also import files into the vault through the app's own pipeline
+> (`import:files`, the `paste-import` example) — the building block of a sync plugin.
 
 ## Install one
 
@@ -82,7 +83,8 @@ Capability-gated; the user grants them by enabling the plugin.
   dedup answer (`skipped`) tells the plugin whether an identical file, or an activity with
   the same start/sport/distance/duration, is already in the vault — a narrow read the
   permission implies without `read:activities`
-- `net:host=<hostname>` — network access to one host. **Every host is disclosed**
+- `net:host=<hostname>` — network access to one host through `host_http`, on the
+  first request and on every redirect hop. **Every host is disclosed**
   on the Plugins screen and counts as a network endpoint (privacy policy, PRD §16.2).
 
 Unknown permission strings are preserved verbatim (forward-compatibility) and shown
@@ -109,6 +111,7 @@ Host functions (call only what your permissions allow):
 | `host_query` | `read:activities` / `read:dashboard` | `{"kind":"activities"\|"activity"\|"dashboard", …}` → JSON (`activity` takes an `id`) |
 | `host_data_get` / `host_data_set` | `data:own` | the plugin's private structured store |
 | `host_kv_get` / `host_kv_set` | `data:own` | the plugin's private key/value store |
+| `host_http(request, body)` + `host_http_meta()` | `net:host=` | one HTTP request: `request` is `{"url", "method"?, "headers"?: [[name, value], …], "max_redirects"?}` (GET by default; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Expect`, `Upgrade`, `TE` are the host's; redirects followed up to `max_redirects`, 10 by default and at most — `0` hands a 3xx back as it is, `Location` and all), `body` the request body bytes (empty for GET/HEAD, ≤ 1 MiB) → the final response's body bytes (≤ 5 MiB); `host_http_meta()` right after → `{"status", "url", "headers": [[name, value], …], "hops": [{"status", "url", "location"}, …]}` of that response — lowercase names, one pair per header, so five `Set-Cookie` are five pairs; `hops` are the redirects taken on the way. The host holds a cookie jar for the invocation; see **Network** below. A refused hop, a bad request, a spent budget or a transport failure fails the call |
 | `host_import_file(name, bytes)` | `import:files` | run the app's import pipeline on one file → the drop import's `ImportResult` JSON: `{imported, skipped, failed: [{path, reason}], monitoring_files, monitoring_days, monitoring_range, monitoring_night}` — per call only the first four are filled: the Monitor days an invocation touches are recomputed once, when it ends, so `monitoring_days` / `monitoring_range` / `monitoring_night` come back as 0 / null / false — a plugin cannot tell yet whether the night it synced is complete (no monitoring query in the Host SDK today). `name` is a bare file name (letters, digits, `.`, `-`, `_`, ≤ 128 bytes; its extension — `.fit`/`.gpx`/`.tcx`, optionally `.gz` — decides the format). A file the pipeline refuses is a `failed` entry; a bad name, an oversized file (> 32 MiB), a locked vault or a vault operation in flight fail the call |
 
 `host_import_file` is how a **sync plugin** lands what it fetched: one call per file
@@ -122,9 +125,37 @@ re-renders widgets on its own (a return to the window, a cache refresh), and an
 import there would run again each time. See [`paste-import/`](paste-import/) for the
 smallest version.
 
-Network is **default-deny**: a plugin can reach only the hosts it declared via
-`net:host=` (each shown to the user before enabling). The host wires exactly those
-into the sandbox's allow-list; any other host aborts the call. See
+**Network** is `host_http` and nothing else — the PDK's own `http::request`
+(Extism's built-in HTTP) is given no allowed host and refuses everything. It is
+**default-deny**: a plugin reaches only the hosts it declared via `net:host=`
+(each shown to the user before enabling), over `https://` on its default port
+only, and the rule is applied **to every redirect hop** as well as the first request — a declared
+host that redirects to an undeclared one fails the call, and nothing is sent
+there. `Authorization` and `Cookie` headers the plugin set are dropped when a
+hop changes host. Only the final response comes back; the redirects taken are
+listed in the meta's `hops` (status, URL, `Location`), and `max_redirects: 0`
+stops the chain at the first response so a plugin can read a `Location` itself.
+A cookie jar lives for **one invocation** (one contribution
+call, in memory, never written anywhere): every hop's `Set-Cookie` lands in it
+— name, value, `Domain` (must cover the responding host), `Path`, `Secure`,
+`Max-Age=0` or an `Expires` in the past deletes; `HttpOnly`, `SameSite` are
+ignored; there is no public-suffix list, so a `Domain=co.uk` cookie would be
+shared between two declared hosts under it; at most 100 cookies of ≤ 4 KiB —
+and its cookies ride on every later request of the same invocation, before any
+`Cookie` header the plugin set. On a cross-host hop `Authorization` and the
+plugin's `Cookie` are dropped, but a 307/308 body is replayed to the new host
+as a browser does. The allow-list is one of **names**: where the bytes go is
+decided by DNS and the system proxy (honoured, like the app's own requests),
+and the certificate must match the name. So a login flow of
+several requests just works inside one action; it must **finish inside one**,
+because the next action starts with an empty jar. A session that has to survive
+between actions goes through `data:own` explicitly (a `Cookie` header on the
+next request — discouraged; keep tokens, not cookies, when the service offers
+them). A `route.planner` action of a plugin holding `net:host=` gets a 30 s
+invocation budget — the one place the user pressed a button and waits; widgets
+and panels keep 5 s, as they render on their own and every invocation queues
+behind the previous one. One request may use all of what is left of it. See
+[`net-probe/`](net-probe/) for the shape of a call and
 [`smart-route/`](smart-route/) for a `route.planner` page that fetches weather.
 
 `route.planner` contributions are opened full-page from **Settings → Plugins → Open**.
@@ -141,8 +172,8 @@ cp target/wasm32-unknown-unknown/release/consistency_widget.wasm plugin.wasm
 ```
 
 Then sideload its `plugin.json`, enable it, and open the Dashboard.
-(`smart-route` and `paste-import` build the same way; their artifacts are
-`smart_route.wasm` and `paste_import.wasm`.)
+(`smart-route`, `paste-import` and `net-probe` build the same way; their
+artifacts are `smart_route.wasm`, `paste_import.wasm` and `net_probe.wasm`.)
 
 
 ## Licensing: Interface Material

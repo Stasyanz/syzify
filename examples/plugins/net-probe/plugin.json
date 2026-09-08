@@ -1,0 +1,11 @@
+{
+  "id": "com.syzify.example.net-probe",
+  "name": "Network Probe (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.6.0",
+  "author": "Syzify",
+  "description": "Reference WASM plugin: a route.planner page that sends one request through host_http and shows the status, headers and body that came back. Its host is disclosed on the Plugins screen.",
+  "entry": "plugin.wasm",
+  "contributes": ["route.planner"],
+  "permissions": ["net:host=api.open-meteo.com"]
+}

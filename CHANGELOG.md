@@ -19,6 +19,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   plugin's invocation ends (#106) — and the app's views refresh after it.
   The building block of sync plugins; `examples/plugins/paste-import`
   is the smallest one.
+- Plugins reach the network through the app (#108): a `host_http` host
+  function that follows redirects itself and checks every hop — not only
+  the first request — against the hosts the plugin declared, keeps a
+  cookie jar for the length of one call, and hands back the final
+  response's headers as pairs (repeated ones survive), so a plugin can log
+  in to a service the way a browser does. The
+  built-in sandbox HTTP no longer gets any host; `examples/plugins/net-probe`
+  shows the call, `smart-route` uses it.
 
 ## [0.5.0] - 2026-09-06
 

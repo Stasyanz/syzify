@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use extism::{Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -13,12 +13,29 @@ use crate::db;
 use crate::import::pipeline::{ImportResult, MonitoringBatch};
 use crate::models::plugin::PluginManifest;
 use crate::plugins::host::{self, PluginCtx, VaultAccess};
+use crate::plugins::net::NetState;
 use crate::state::{AppState, SingleFlightGuard};
 
 /// Hard caps so a misbehaving plugin can't hang or exhaust memory.
 const PLUGIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// The budget of a network plugin's interactive page: a login is five or
+/// six round trips, a sync page a few more, and the epoch deadline would
+/// otherwise fire the moment the host call returned. The user pressed the
+/// button and waits; 30 s off the main thread is the cost of it
+/// (`render_plugin_view` runs on a blocking thread).
+const PLUGIN_NET_TIMEOUT: Duration = Duration::from_secs(30);
 const PLUGIN_MAX_PAGES: u32 = 1024; // 1024 × 64 KiB = 64 MiB
-const PLUGIN_MAX_HTTP_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB per network response
+
+/// The one contribution point where the user pressed a button and waits
+/// for the answer. Widgets and panels render on their own (a remount, a
+/// cache refresh) and every invocation queues behind `RUN`: a widget that
+/// could hold the lock for 30 s would stall every other plugin's render.
+const INTERACTIVE_EXPORT: &str = "route_planner";
+
+/// How long one invocation may run before the sandbox traps it.
+fn invocation_budget(talks_to_the_network: bool, export: &str) -> Duration {
+    if talks_to_the_network && export == INTERACTIVE_EXPORT { PLUGIN_NET_TIMEOUT } else { PLUGIN_TIMEOUT }
+}
 
 /// The live `AppState` behind an `AppHandle`, for `host_import_file`. Every
 /// read goes to the managed state at call time (see `VaultAccess`); nothing
@@ -91,10 +108,17 @@ pub fn run_contribution<R: Runtime>(
     // Re-validate the entry from the stored manifest before joining it into a
     // path — the stored manifest is not re-run through parse_and_validate.
     crate::models::plugin::validate_entry(entry)?;
+    // Same for the hosts: after this point they are the whole allow-list
+    // of `host_http`, and a swapped or rolled-back vault DB must not turn
+    // a metadata address into a declared host.
+    for host in manifest.network_hosts() {
+        crate::models::plugin::validate_net_host(&host)?;
+    }
     // `source` is set by the installer to "plugins/<validated-id>", so plugins
     // survive backup/restore and a vault move and stay inside the vault.
     let path = vault_path.join(&record.source).join(entry);
 
+    let budget = invocation_budget(!manifest.network_hosts().is_empty(), export);
     let ctx = PluginCtx {
         db: db_handle,
         plugin_id: plugin_id.to_string(),
@@ -103,20 +127,20 @@ pub fn run_contribution<R: Runtime>(
         imported: 0,
         imported_activities: 0,
         monitoring: MonitoringBatch::default(),
+        // Set before the sandbox is built, so it ends no later than the
+        // epoch deadline: no request outlives its invocation.
+        net: NetState::with_deadline(Instant::now() + budget),
     };
     let ud = host::user_data(ctx);
 
-    // Network is default-deny: the sandbox can only reach hosts the plugin
-    // declared via `net:host=` permissions (and that the user saw before
-    // enabling). Timeout and memory caps bound a misbehaving plugin.
-    let mut ext_manifest = ExtismManifest::new([Wasm::file(path)])
-        .with_timeout(PLUGIN_TIMEOUT)
+    // Network goes through `host_http` only: it checks every request and
+    // every redirect hop against the plugin's `net:host=` hosts (the ones
+    // the user saw before enabling). Extism's built-in HTTP is given no
+    // allowed host, so it refuses everything. Timeout and memory caps
+    // bound a misbehaving plugin.
+    let ext_manifest = ExtismManifest::new([Wasm::file(path)])
+        .with_timeout(budget)
         .with_memory_max(PLUGIN_MAX_PAGES);
-    // Bound network responses too (public field — avoids an extra dependency).
-    ext_manifest.memory.max_http_response_bytes = Some(PLUGIN_MAX_HTTP_BYTES);
-    for host in manifest.network_hosts() {
-        ext_manifest = ext_manifest.with_allowed_host(host);
-    }
     let mut plugin = PluginBuilder::new(ext_manifest)
         .with_wasi(false)
         .with_function("host_query", [PTR], [PTR], ud.clone(), host::host_query)
@@ -125,6 +149,8 @@ pub fn run_contribution<R: Runtime>(
         .with_function("host_kv_set", [PTR], [PTR], ud.clone(), host::host_kv_set)
         .with_function("host_kv_get", [PTR], [PTR], ud.clone(), host::host_kv_get)
         .with_function("host_import_file", [PTR, PTR], [PTR], ud.clone(), host::host_import_file)
+        .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
+        .with_function("host_http_meta", [], [PTR], ud.clone(), host::host_http_meta)
         .build()
         .map_err(|e| {
             // Detail (may include vault paths) goes to the log, not the UI.
@@ -135,7 +161,15 @@ pub fn run_contribution<R: Runtime>(
     let out = plugin
         .call::<&str, &str>(export, input)
         .map(|s| s.to_string())
-        .map_err(|e| format!("plugin {plugin_id} export {export} failed: {e}"));
+        .map_err(|e| {
+            // A host function's refusal ("host X is not declared") is the
+            // ROOT of the chain; the outer layers are wasmtime's "error
+            // while executing at wasm backtrace" — the log gets those.
+            // So a host function's error string is user-facing text: no
+            // vault paths in it (those go to eprintln! in host.rs).
+            eprintln!("plugin {plugin_id} export {export} failed: {e:?}");
+            format!("plugin {plugin_id} export {export} failed: {}", e.root_cause())
+        });
     // Before the `?`: a call that imported 40 files and then trapped on the
     // 41st (a bad name, the time budget) still changed the vault, and the
     // views must follow. Recompute first, then the event — the frontend
@@ -205,6 +239,7 @@ fn finish_invocation(ud: &UserData<PluginCtx>) -> Finished {
 #[cfg(test)]
 mod tests {
     use crate::import::pipeline::MonitoringBatch;
+    use crate::plugins::net::NetState;
     use crate::plugins::view::ViewSpec;
     use extism::{host_fn, Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
 
@@ -283,6 +318,10 @@ mod tests {
 
     #[test]
     fn route_planner_network_is_fail_closed_without_permission() {
+        use crate::models::plugin::Permission;
+        use crate::plugins::host::{self, PluginCtx};
+        use std::sync::{Arc, Mutex};
+
         let wasm = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../examples/plugins/smart-route/plugin.wasm"
@@ -292,20 +331,219 @@ mod tests {
             "missing {wasm} — rebuild the smart-route example (see examples/plugins/README.md)"
         );
 
-        // Built with NO allowed_hosts. The plugin tries to reach open-meteo, so
-        // the call must fail (default-deny enforced at the WASM boundary). The
-        // host surfaces this as an error card; it never reaches a host the user
-        // didn't approve.
-        let manifest = ExtismManifest::new([Wasm::file(wasm)]);
-        let mut plugin = PluginBuilder::new(manifest)
+        // The plugin reaches open-meteo through host_http; a context without
+        // that host declared refuses the call at the host boundary (an error
+        // card in the UI), and nothing is sent anywhere.
+        let run = |permissions: Vec<Permission>, input: &str| {
+            let ctx = PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "smart", permissions);
+            let ud = host::user_data(ctx);
+            PluginBuilder::new(ExtismManifest::new([Wasm::file(wasm)]))
+                .with_wasi(false)
+                .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
+                .with_function("host_http_meta", [], [PTR], ud, host::host_http_meta)
+                .build()
+                .expect("load smart-route plugin")
+                .call::<&str, &str>("route_planner", input)
+                .map(|s| s.to_string())
+        };
+        // The initial form makes no request.
+        assert!(run(vec![], "{}").is_ok());
+        // "plan" fetches the weather: refused without the host, and with
+        // another host declared.
+        let err = run(vec![], r#"{"action":"plan"}"#).unwrap_err().root_cause().to_string();
+        assert!(err.contains("lacks permission net:host"), "{err}");
+        let other = vec![Permission::Net { host: "api.example.com".to_string() }];
+        let err = run(other, r#"{"action":"plan"}"#).unwrap_err().root_cause().to_string();
+        assert!(err.contains("api.open-meteo.com") && err.contains("not declared"), "{err}");
+        // Extism's own HTTP gets no allowed host any more: a plugin built
+        // against it (the pre-#108 ABI) is refused the same way.
+        let mut old_style = PluginBuilder::new(ExtismManifest::new([Wasm::file(wasm)]).with_allowed_host("api.open-meteo.com"))
             .with_wasi(false)
+            .with_function("host_http", [PTR, PTR], [PTR], host::user_data(PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "smart", vec![])), host::host_http)
+            .with_function("host_http_meta", [], [PTR], host::user_data(PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "smart", vec![])), host::host_http_meta)
             .build()
-            .expect("load smart-route plugin");
+            .unwrap();
+        assert!(old_style.call::<&str, &str>("route_planner", r#"{"action":"plan"}"#).is_err(), "the manifest allow-list is not consulted by host_http");
+    }
 
-        // The "plan" action triggers the weather fetch; with no allowed host it
-        // must fail (the initial form, which makes no request, would succeed).
-        let result = plugin.call::<&str, &str>("route_planner", r#"{"action":"plan"}"#);
-        assert!(result.is_err(), "network must be denied without an allowed host");
+    fn net_probe_wasm() -> &'static str {
+        let wasm = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/plugins/net-probe/plugin.wasm"
+        );
+        assert!(
+            std::path::Path::new(wasm).exists(),
+            "missing {wasm}; build it: cargo build --release --target wasm32-unknown-unknown in examples/plugins/net-probe"
+        );
+        wasm
+    }
+
+    /// The net-probe wasm calling the REAL host_http / host_http_meta (two-
+    /// pointer and zero-argument ABI) against the plain loopback server:
+    /// the jar lives for one plugin instance, headers come back as pairs,
+    /// and an undeclared host traps the call.
+    #[test]
+    fn http_permission_and_cookie_jar_hold_at_the_host_boundary_through_real_wasm() {
+        use crate::models::plugin::Permission;
+        use crate::plugins::host::{self, PluginCtx};
+        use crate::plugins::net::test_server::{Reply, Server};
+        use std::sync::{Arc, Mutex};
+
+        let server = Server::start(|req| match req.path.as_str() {
+            "/login" => Reply::ok("in")
+                .header("Set-Cookie", "SESSIONID=abc; Path=/")
+                .header("Set-Cookie", "CASTGC=TGT-1; Path=/"),
+            "/hop" => Reply::redirect(302, "/home").header("Set-Cookie", "hop=1; Path=/"),
+            _ => Reply::ok("home"),
+        });
+        let load = |permissions: Vec<Permission>| {
+            let mut ctx = PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "probe", permissions);
+            ctx.net.plain_loopback = true;
+            let ud = host::user_data(ctx);
+            PluginBuilder::new(ExtismManifest::new([Wasm::file(net_probe_wasm())]))
+                .with_wasi(false)
+                .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
+                .with_function("host_http_meta", [], [PTR], ud, host::host_http_meta)
+                .build()
+                .expect("load net-probe plugin")
+        };
+        let probe = |plugin: &mut extism::Plugin, req: serde_json::Value| {
+            plugin
+                .call::<&str, &str>("probe", &req.to_string())
+                .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+                .map_err(|e| e.root_cause().to_string())
+        };
+        let local = vec![Permission::Net { host: "127.0.0.1".to_string() }];
+
+        // The meta before any request is an error, not a stale one.
+        let err = load(vec![]).call::<&str, &str>("meta_only", "{}").unwrap_err().root_cause().to_string();
+        assert!(err.contains("no response yet"), "{err}");
+
+        // No host declared: the call traps before anything is sent.
+        let err = probe(&mut load(vec![]), serde_json::json!({ "url": server.url("/login") })).unwrap_err();
+        assert!(err.contains("lacks permission net:host"), "{err}");
+        let other = vec![Permission::Net { host: "api.example.com".to_string() }];
+        let err = probe(&mut load(other), serde_json::json!({ "url": server.url("/login") })).unwrap_err();
+        assert!(err.contains("not declared"), "{err}");
+        assert!(server.requests().is_empty());
+
+        // One instance = one invocation: the jar carries over between calls.
+        let mut plugin = load(local.clone());
+        let out = probe(&mut plugin, serde_json::json!({ "url": server.url("/login") })).unwrap();
+        assert_eq!(out["status"], 200);
+        assert_eq!(out["body"], "in");
+        assert_eq!(out["url"], server.url("/login"));
+        let set: Vec<&str> = out["headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p[0] == "set-cookie")
+            .map(|p| p[1].as_str().unwrap())
+            .collect();
+        assert_eq!(set, ["SESSIONID=abc; Path=/", "CASTGC=TGT-1; Path=/"]);
+        let out = probe(&mut plugin, serde_json::json!({ "url": server.url("/hop"), "headers": [["X-Probe", "1"]] })).unwrap();
+        assert_eq!((out["status"].as_u64(), out["url"].as_str()), (Some(200), Some(server.url("/home").as_str())));
+        // A POST with a body, then a request from a fresh instance.
+        probe(&mut plugin, serde_json::json!({ "url": server.url("/home"), "method": "POST", "body": "a=1" })).unwrap();
+        probe(&mut load(local), serde_json::json!({ "url": server.url("/home") })).unwrap();
+
+        let sent = server.requests();
+        assert_eq!(sent.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["/login", "/hop", "/home", "/home", "/home"]);
+        assert_eq!(sent[0].header("cookie"), None);
+        assert_eq!(sent[1].header("cookie"), Some("SESSIONID=abc; CASTGC=TGT-1"));
+        assert_eq!(sent[1].header("x-probe"), Some("1"));
+        assert_eq!(sent[2].header("cookie"), Some("SESSIONID=abc; CASTGC=TGT-1; hop=1"));
+        assert_eq!((sent[3].method.as_str(), sent[3].body.as_slice()), ("POST", &b"a=1"[..]));
+        assert_eq!(sent[4].header("cookie"), None, "a new invocation starts with an empty jar");
+    }
+
+    #[test]
+    fn network_plugins_get_the_longer_budget_on_the_interactive_page_only() {
+        assert_eq!(super::invocation_budget(false, "route_planner"), super::PLUGIN_TIMEOUT);
+        assert_eq!(super::invocation_budget(true, "dashboard_widget"), super::PLUGIN_TIMEOUT);
+        assert_eq!(super::invocation_budget(true, "route_planner"), super::PLUGIN_NET_TIMEOUT);
+        assert!(super::PLUGIN_NET_TIMEOUT >= crate::plugins::net::HTTP_REQUEST_TIMEOUT, "one hop may use the whole budget");
+    }
+
+    /// The runtime's wiring on a real (windowless) app: the stored
+    /// manifest's `net:host=` is the allow-list, and only https passes —
+    /// both refusals happen before any connection, so no network is needed.
+    #[test]
+    fn run_contribution_refuses_undeclared_and_plain_hosts_through_the_live_app() {
+        use super::run_contribution;
+        use crate::models::plugin::Plugin;
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+        use tauri::Manager;
+
+        let plugin_id = "com.syzify.example.net-probe";
+        let vault = std::env::temp_dir().join(format!("syz_runtime_net_{}", uuid::Uuid::new_v4()));
+        let plugin_dir = vault.join("plugins").join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::copy(net_probe_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
+        let state = AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        };
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &Plugin {
+                    id: plugin_id.to_string(),
+                    name: "Network Probe".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: format!(
+                        r#"{{"id":"{plugin_id}","name":"Network Probe","version":"0.1.0","entry":"plugin.wasm","contributes":["route.planner"],"permissions":["net:host=api.example.com"]}}"#
+                    ),
+                    source: format!("plugins/{plugin_id}"),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+            crate::db::plugins::set_enabled(&conn, plugin_id, true).unwrap();
+        }
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let handle = app.handle().clone();
+
+        let out = run_contribution(&handle, plugin_id, "route_planner", "{}").unwrap();
+        assert!(out.contains("Network probe"), "the form renders without a request: {out}");
+        let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"https://other.example.com/"}"#).unwrap_err();
+        assert!(err.contains("not declared (net:host=other.example.com)"), "{err}");
+        let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"http://api.example.com/"}"#).unwrap_err();
+        assert!(err.contains("only https://"), "{err}");
+        let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"https://api.example.com:8443/"}"#).unwrap_err();
+        assert!(err.contains("only the default port"), "{err}");
+
+        // A stored manifest with a host the installer would refuse (a
+        // rolled-back or edited vault DB) does not run at all.
+        {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE plugin SET manifest = replace(manifest, 'api.example.com', '169.254.169.254') WHERE id = ?1",
+                [plugin_id],
+            )
+            .unwrap();
+        }
+        let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"https://169.254.169.254/"}"#).unwrap_err();
+        assert!(err.contains("invalid net host"), "{err}");
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     // End-to-end capability gate: a REAL plugin wasm calling the REAL host_query
@@ -390,6 +628,7 @@ mod tests {
                 imported: 0,
                 imported_activities: 0,
                 monitoring: MonitoringBatch::default(),
+                net: NetState::default(),
             };
             let ud = host::user_data(ctx);
             let out = PluginBuilder::new(ExtismManifest::new([Wasm::file(paste_import_wasm())]))
@@ -486,6 +725,7 @@ mod tests {
             imported: 0,
             imported_activities: 0,
             monitoring: MonitoringBatch::default(),
+            net: NetState::default(),
         };
         let midnight = 1_788_555_600; // 2026-09-05 00:00 +03:00
         let day = 86_400;
@@ -626,9 +866,12 @@ mod tests {
         assert!(out.contains(r#""label":"Imported","value":"1""#), "{out}");
         assert_eq!(events.lock().unwrap().as_slice(), [r#"{"imported":1,"monitoring_days":0}"#]);
 
-        // A trap after nothing imported: an error, no event.
+        // A trap after nothing imported: an error, no event. The message
+        // is the host function's own (user-facing text): the vault's path
+        // is not in it.
         let err = run_contribution(&handle, plugin_id, "dashboard_widget", &input("../run.gpx")).unwrap_err();
-        assert!(err.contains("failed"), "{err}");
+        assert!(err.contains("invalid import file name"), "{err}");
+        assert!(!err.contains(vault.to_str().unwrap()), "{err}");
         assert_eq!(events.lock().unwrap().len(), 1);
 
         // Disabled plugins do not run at all.
