@@ -17,6 +17,7 @@ function permissionLabel(perm: string): string {
     "read:laps": "Read laps",
     "read:dashboard": "Read dashboard",
     "data:own": "Private storage",
+    "import:files": "Import files into the vault (can tell whether a file is already there)",
   };
   return map[perm] ?? perm;
 }

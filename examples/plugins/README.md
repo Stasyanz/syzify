@@ -9,7 +9,9 @@ This directory holds reference manifests you can sideload to try the installer.
 > sandbox in the Rust backend, calling capability-gated host functions, with
 > default-deny network brokered by declared `net:host=` hosts. Contribution points so
 > far: `dashboard.widget`, `activity.detail.panel` (the `consistency-widget` example)
-> and `route.planner` (the `smart-route` example).
+> and `route.planner` (the `smart-route` example). Plugins can also import files
+> into the vault through the app's own pipeline (`import:files`, the `paste-import`
+> example) — the building block of a sync plugin.
 
 ## Install one
 
@@ -74,6 +76,12 @@ Capability-gated; the user grants them by enabling the plugin.
 
 - `read:activities`, `read:trackpoints`, `read:hrv`, `read:laps`, `read:dashboard` — read-only data access
 - `data:own` — the plugin's own isolated storage (`plugin_data` / `plugin_kv`)
+- `import:files` — import files (FIT/GPX/TCX, optionally gzipped) into the vault through
+  the app's own import pipeline — one file per `host_import_file` call, ≤ 32 MiB, deduplicated
+  by hash, encrypted under the vault's `activities` scope like a dropped file. Note the
+  dedup answer (`skipped`) tells the plugin whether an identical file, or an activity with
+  the same start/sport/distance/duration, is already in the vault — a narrow read the
+  permission implies without `read:activities`
 - `net:host=<hostname>` — network access to one host. **Every host is disclosed**
   on the Plugins screen and counts as a network endpoint (privacy policy, PRD §16.2).
 
@@ -101,6 +109,18 @@ Host functions (call only what your permissions allow):
 | `host_query` | `read:activities` / `read:dashboard` | `{"kind":"activities"\|"activity"\|"dashboard", …}` → JSON (`activity` takes an `id`) |
 | `host_data_get` / `host_data_set` | `data:own` | the plugin's private structured store |
 | `host_kv_get` / `host_kv_set` | `data:own` | the plugin's private key/value store |
+| `host_import_file(name, bytes)` | `import:files` | run the app's import pipeline on one file → the drop import's `ImportResult` JSON: `{imported, skipped, failed: [{path, reason}], monitoring_files, monitoring_days, monitoring_range, monitoring_night}`. `name` is a bare file name (letters, digits, `.`, `-`, `_`, ≤ 128 bytes; its extension — `.fit`/`.gpx`/`.tcx`, optionally `.gz` — decides the format). A file the pipeline refuses is a `failed` entry; a bad name, an oversized file (> 32 MiB), a locked vault or a vault operation in flight fail the call |
+
+`host_import_file` is how a **sync plugin** lands what it fetched: one call per file
+(each stays inside the sandbox's 5 s budget), the same bytes the watch writes, so a
+file already imported over USB is skipped by hash. Every import refreshes the app's
+views, even when the call fails afterwards. Two failures are transient and worth a
+retry later; their messages start with `vault busy` (a backup, restore, relocation or
+encryption toggle is running) and `vault locked`. Anything else is the plugin's own
+mistake. Import behind a `button` action, never in the initial render: the host
+re-renders widgets on its own (a return to the window, a cache refresh), and an
+import there would run again each time. See [`paste-import/`](paste-import/) for the
+smallest version.
 
 Network is **default-deny**: a plugin can reach only the hosts it declared via
 `net:host=` (each shown to the user before enabling). The host wires exactly those
@@ -121,7 +141,8 @@ cp target/wasm32-unknown-unknown/release/consistency_widget.wasm plugin.wasm
 ```
 
 Then sideload its `plugin.json`, enable it, and open the Dashboard.
-(`smart-route` builds the same way; its artifact is `smart_route.wasm`.)
+(`smart-route` and `paste-import` build the same way; their artifacts are
+`smart_route.wasm` and `paste_import.wasm`.)
 
 
 ## Licensing: Interface Material

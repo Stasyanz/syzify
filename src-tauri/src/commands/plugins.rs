@@ -151,15 +151,24 @@ pub fn get_plugin_contributions(
 /// export by replacing dots with underscores (`dashboard.widget` ->
 /// `dashboard_widget`). `context` is an opaque JSON string passed to the plugin
 /// (e.g. the current activity id for a detail panel).
+///
+/// Off the main thread: a call may fetch over the network or import files
+/// (up to the sandbox's 5 s budget, and a host call inside it is not cut
+/// short by that budget), which would freeze the window from a sync command.
 #[tauri::command]
-pub fn render_plugin_view(
+pub async fn render_plugin_view(
     plugin_id: String,
     point: String,
     context: String,
     app: AppHandle,
 ) -> Result<ViewSpec, String> {
     let export = point.replace('.', "_");
-    let output = runtime::run_contribution(&app, &plugin_id, &export, &context)?;
+    let output = tauri::async_runtime::spawn_blocking({
+        let plugin_id = plugin_id.clone();
+        move || runtime::run_contribution(&app, &plugin_id, &export, &context)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))??;
     serde_json::from_str::<ViewSpec>(&output)
         .map_err(|e| format!("plugin {plugin_id} returned an invalid view: {e}"))
 }

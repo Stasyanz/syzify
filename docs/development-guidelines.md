@@ -95,6 +95,15 @@ a column-list `const` as the single source of truth (see `db/activities.rs`).
 (`examples/plugins/README.md`); extend the
 `Permission` enum and the `contributes` handling, keep `Unknown` for forward-compat.
 
+**A host function** (`plugins/host.rs`) → `host_fn!` + `ctx.require(&Permission::X)`
+first, then go through `db/` or the import pipeline — never the filesystem
+directly. Keep the host layer Tauri-free: what it needs from the app comes in
+through `PluginCtx` (`Db`, `VaultAccess`), so it is testable with a plain
+`AppState`. A write host function claims `vault_flight` for the call and reads
+the encryption key fresh (see `host_import_file`). Cover it twice: the pure
+function directly, and once through a real wasm fixture (the e2e ABI test in
+`plugins/runtime.rs`; add the fixture to the CI "Build plugin test fixtures" step).
+
 ---
 
 ## 3. What NOT to do

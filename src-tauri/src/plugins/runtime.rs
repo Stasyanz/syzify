@@ -2,28 +2,64 @@
 //! of its exported contribution functions. The module is memory-isolated and
 //! has no ambient authority — it can only call the host functions we wire in.
 
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use extism::{Manifest as ExtismManifest, PluginBuilder, Wasm, PTR};
-use tauri::{AppHandle, Manager};
+use extism::{Manifest as ExtismManifest, PluginBuilder, UserData, Wasm, PTR};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::db;
 use crate::models::plugin::PluginManifest;
-use crate::plugins::host::{self, PluginCtx};
-use crate::state::AppState;
+use crate::plugins::host::{self, PluginCtx, VaultAccess};
+use crate::state::{AppState, SingleFlightGuard};
 
 /// Hard caps so a misbehaving plugin can't hang or exhaust memory.
 const PLUGIN_TIMEOUT: Duration = Duration::from_secs(5);
 const PLUGIN_MAX_PAGES: u32 = 1024; // 1024 × 64 KiB = 64 MiB
 const PLUGIN_MAX_HTTP_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB per network response
 
+/// The live `AppState` behind an `AppHandle`, for `host_import_file`. Every
+/// read goes to the managed state at call time (see `VaultAccess`); nothing
+/// is snapshotted when the context is built.
+struct AppVault(AppHandle);
+
+impl VaultAccess for AppVault {
+    fn vault_path(&self) -> PathBuf {
+        self.0.state::<AppState>().inner().vault_path()
+    }
+    fn ensure_unlocked(&self) -> Result<(), String> {
+        self.0.state::<AppState>().inner().ensure_unlocked()
+    }
+    fn activities_key(&self) -> Result<Option<[u8; 32]>, String> {
+        self.0.state::<AppState>().inner().activities_key()
+    }
+    fn claim_vault(&self) -> Option<SingleFlightGuard<'_>> {
+        self.0.state::<AppState>().inner().claim_vault()
+    }
+}
+
+/// Event the frontend refreshes its activity-derived queries on: a plugin
+/// imported files during a contribution call. Emitted by the runtime (the
+/// host layer has no `AppHandle`), whether the call then returned a view or
+/// trapped — the files are in the vault either way.
+pub const PLUGINS_IMPORTED_EVENT: &str = "plugins:imported";
+
+/// One plugin invocation at a time. `render_plugin_view` runs off the main
+/// thread, so two widgets could otherwise call in parallel and fight over
+/// the vault-mutation slot (`host_import_file` claims it per file) — the
+/// loser would trap for no reason of its own. A poisoned lock (a panicking
+/// call) must not take every later plugin down with it.
+static RUN: Mutex<()> = Mutex::new(());
+
 /// Run an enabled plugin's exported contribution function, returning its raw
 /// output string (a ViewSpec JSON for UI contributions).
 ///
-/// INVARIANT: this must not be called re-entrantly. Host functions acquire
-/// `state.db` (a non-reentrant `std::sync::Mutex`) during `plugin.call`, so a
-/// plugin that could trigger another `run_contribution` on the same thread
-/// would deadlock. There is no host function that runs a plugin today; keep it
+/// INVARIANT: this must not be called re-entrantly. Invocations are
+/// serialized by `RUN`, and host functions acquire `state.db` (a
+/// non-reentrant `std::sync::Mutex`) during `plugin.call`, so a plugin that
+/// could trigger another `run_contribution` from inside its call would
+/// deadlock. There is no host function that runs a plugin today; keep it
 /// that way (no plugin-invokes-plugin host call) unless the lock model changes.
 pub fn run_contribution(
     app: &AppHandle,
@@ -31,6 +67,7 @@ pub fn run_contribution(
     export: &str,
     input: &str,
 ) -> Result<String, String> {
+    let _one_at_a_time = RUN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let db_handle = app.state::<AppState>().db.clone();
     let vault_path = app.state::<AppState>().vault_path.clone();
     let record = {
@@ -61,6 +98,9 @@ pub fn run_contribution(
         db: db_handle,
         plugin_id: plugin_id.to_string(),
         permissions: manifest.parsed_permissions(),
+        vault: Some(Arc::new(AppVault(app.clone()))),
+        imported: 0,
+        imported_activities: 0,
     };
     let ud = host::user_data(ctx);
 
@@ -82,6 +122,7 @@ pub fn run_contribution(
         .with_function("host_data_get", [PTR], [PTR], ud.clone(), host::host_data_get)
         .with_function("host_kv_set", [PTR], [PTR], ud.clone(), host::host_kv_set)
         .with_function("host_kv_get", [PTR], [PTR], ud.clone(), host::host_kv_get)
+        .with_function("host_import_file", [PTR, PTR], [PTR], ud.clone(), host::host_import_file)
         .build()
         .map_err(|e| {
             // Detail (may include vault paths) goes to the log, not the UI.
@@ -91,8 +132,32 @@ pub fn run_contribution(
 
     let out = plugin
         .call::<&str, &str>(export, input)
-        .map_err(|e| format!("plugin {plugin_id} export {export} failed: {e}"))?;
-    Ok(out.to_string())
+        .map(|s| s.to_string())
+        .map_err(|e| format!("plugin {plugin_id} export {export} failed: {e}"));
+    // Before the `?`: a call that imported 40 files and then trapped on the
+    // 41st (a bad name, the time budget) still changed the vault, and the
+    // views must follow. A locked/poisoned context reads as nothing.
+    let (imported, activities) = imported_count(&ud);
+    if imported > 0 {
+        let _ = app.emit(PLUGINS_IMPORTED_EVENT, serde_json::json!({ "imported": imported }));
+    }
+    // Newly imported activities get their location names like a drop
+    // import's do; Monitor files have nothing to geocode.
+    if activities > 0 {
+        let geo_handle = app.clone();
+        std::thread::spawn(move || {
+            crate::import::geocoding::run_background_geocoding(&geo_handle);
+        });
+    }
+    out
+}
+
+/// Files the invocation behind `ud` imported: (all, of which activities).
+fn imported_count(ud: &UserData<PluginCtx>) -> (usize, usize) {
+    ud.get()
+        .ok()
+        .and_then(|ctx| ctx.lock().ok().map(|c| (c.imported, c.imported_activities)))
+        .unwrap_or((0, 0))
 }
 
 #[cfg(test)]
@@ -212,11 +277,7 @@ mod tests {
         let wasm = reference_wasm(); // dashboard_widget calls host_query{dashboard} (needs read:dashboard)
 
         let run = |permissions: Vec<Permission>| {
-            let ctx = PluginCtx {
-                db: Arc::new(Mutex::new(crate::db::test_db())),
-                plugin_id: "test".to_string(),
-                permissions,
-            };
+            let ctx = PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "test", permissions);
             PluginBuilder::new(ExtismManifest::new([Wasm::file(wasm)]))
                 .with_wasi(false)
                 .with_function("host_query", [PTR], [PTR], host::user_data(ctx), host::host_query)
@@ -234,5 +295,107 @@ mod tests {
         let out = run(vec![Permission::ReadDashboard]).expect("granted permission must pass");
         let spec: ViewSpec = serde_json::from_str(&out).unwrap();
         assert!(spec.title.unwrap().contains("Consistency"));
+    }
+
+    // End-to-end import: the paste-import example wasm calls the REAL
+    // host_import_file (two-pointer ABI) against a real vault + db.
+    fn paste_import_wasm() -> &'static str {
+        let wasm = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/plugins/paste-import/plugin.wasm"
+        );
+        assert!(
+            std::path::Path::new(wasm).exists(),
+            "missing {wasm}; build it: cargo build --release --target wasm32-unknown-unknown in examples/plugins/paste-import"
+        );
+        wasm
+    }
+
+    #[test]
+    fn import_permission_is_enforced_at_host_boundary_through_real_wasm() {
+        use crate::models::plugin::Permission;
+        use crate::plugins::host::{self, PluginCtx};
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+
+        let vault = std::env::temp_dir().join(format!("syz_wasm_import_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let state = Arc::new(AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        });
+        let gpx = r#"<?xml version="1.0"?><gpx version="1.1" creator="t" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="55.75" lon="37.62"><time>2025-06-01T08:00:00Z</time></trkpt><trkpt lat="55.7501" lon="37.6201"><time>2025-06-01T08:00:10Z</time></trkpt></trkseg></trk></gpx>"#;
+        let input = |name: &str| {
+            serde_json::json!({ "action": "import", "values": { "name": name, "content": gpx } }).to_string()
+        };
+
+        // One plugin instance per call, like the runtime: the context (and its
+        // counter) lives for one invocation.
+        let run = |permissions: Vec<Permission>, input: &str| {
+            let ctx = PluginCtx {
+                db: state.db.clone(),
+                plugin_id: "com.syzify.example.paste-import".to_string(),
+                permissions,
+                vault: Some(state.clone()),
+                imported: 0,
+                imported_activities: 0,
+            };
+            let ud = host::user_data(ctx);
+            let out = PluginBuilder::new(ExtismManifest::new([Wasm::file(paste_import_wasm())]))
+                .with_wasi(false)
+                .with_function("host_import_file", [PTR, PTR], [PTR], ud.clone(), host::host_import_file)
+                .build()
+                .expect("load paste-import plugin")
+                .call::<&str, &str>("dashboard_widget", input)
+                .map(|s| s.to_string());
+            (out, super::imported_count(&ud))
+        };
+        let stats = |out: &str| {
+            let spec: ViewSpec = serde_json::from_str(out).expect("valid ViewSpec");
+            serde_json::to_string(&spec.elements).unwrap()
+        };
+
+        // The form alone needs no permission — no host call is made.
+        let (out, imported) = run(vec![], "{}");
+        assert!(out.is_ok(), "the initial form must render without import:files");
+        assert_eq!(imported, (0, 0));
+
+        // Importing without the permission fails at the host boundary.
+        let (out, imported) = run(vec![], &input("run.gpx"));
+        assert!(out.is_err(), "missing permission must be denied");
+        assert_eq!(imported, (0, 0));
+        let (out, _) = run(vec![Permission::ReadActivities], &input("run.gpx"));
+        assert!(out.is_err(), "wrong permission must be denied");
+
+        // With it: the activity lands, the counter says so.
+        let (out, imported) = run(vec![Permission::ImportFiles], &input("run.gpx"));
+        let el = stats(&out.expect("granted permission must pass"));
+        assert!(el.contains(r#""label":"Imported","value":"1""#), "{el}");
+        assert_eq!(imported, (1, 1), "(files, of which activities)");
+
+        // Again: skipped by hash, nothing counted.
+        let (out, imported) = run(vec![Permission::ImportFiles], &input("run.gpx"));
+        let el = stats(&out.unwrap());
+        assert!(el.contains(r#""label":"Skipped","value":"1""#), "{el}");
+        assert_eq!(imported, (0, 0));
+
+        // A bad name traps the call — the plugin's mistake, not a failed file.
+        let (out, imported) = run(vec![Permission::ImportFiles], &input("../run.gpx"));
+        assert!(out.is_err(), "a path-like name must be refused");
+        assert_eq!(imported, (0, 0));
+
+        let conn = state.db.lock().unwrap();
+        let activities: i64 = conn.query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(activities, 1);
+        drop(conn);
+        assert_eq!(std::fs::read_dir(vault.join("raw")).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&vault);
     }
 }

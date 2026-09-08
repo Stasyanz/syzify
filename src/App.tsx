@@ -14,6 +14,7 @@ import { ToastContainer } from "./components/ui/Toast";
 import { ConfirmDialogHost } from "./components/ui/ConfirmDialog";
 import { useDropImport } from "./hooks/useDropImport";
 import { useWatchFolderListener } from "./hooks/useWatchFolderListener";
+import { usePluginImportRefresh } from "./hooks/usePluginImportRefresh";
 import { ImportProgressOverlay } from "./components/import/ImportProgressOverlay";
 import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
@@ -139,6 +140,7 @@ function DropImportOverlay() {
 function AppContent() {
   const qc = useQueryClient();
   const { pendingFiles, importing: watchImporting, handleImport: watchImport, handleDismiss: watchDismiss } = useWatchFolderListener();
+  usePluginImportRefresh();
   const { data: encStatus, isLoading } = useQuery({
     queryKey: ["encryptionStatus"],
     queryFn: () => api.getEncryptionStatus(),

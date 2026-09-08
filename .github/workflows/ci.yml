@@ -74,13 +74,14 @@ jobs:
             src-tauri
             examples/plugins/consistency-widget
             examples/plugins/smart-route
+            examples/plugins/paste-import
             tools/pack-plugin
       # The plugin runtime/package tests load the example artifacts from disk;
       # they are gitignored (licensing hygiene), so build them here the same
       # way examples/plugins/README.md tells a developer to.
       - name: Build plugin test fixtures
         run: |
-          for p in consistency-widget smart-route; do
+          for p in consistency-widget smart-route paste-import; do
             cargo build --release --target wasm32-unknown-unknown \
               --manifest-path "examples/plugins/$p/Cargo.toml"
           done
@@ -88,6 +89,8 @@ jobs:
              examples/plugins/consistency-widget/plugin.wasm
           cp examples/plugins/smart-route/target/wasm32-unknown-unknown/release/smart_route.wasm \
              examples/plugins/smart-route/plugin.wasm
+          cp examples/plugins/paste-import/target/wasm32-unknown-unknown/release/paste_import.wasm \
+             examples/plugins/paste-import/plugin.wasm
           cargo run --manifest-path tools/pack-plugin/Cargo.toml -- examples/plugins/smart-route
       - name: cargo test (with coverage)
         run: |
@@ -116,9 +119,10 @@ jobs:
           workspaces: |
             examples/plugins/consistency-widget
             examples/plugins/smart-route
+            examples/plugins/paste-import
       - name: Build examples
         run: |
-          for p in consistency-widget smart-route; do
+          for p in consistency-widget smart-route paste-import; do
             cargo build --release --target wasm32-unknown-unknown \
               --manifest-path "examples/plugins/$p/Cargo.toml"
           done

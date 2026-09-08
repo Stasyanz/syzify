@@ -12,6 +12,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   Z1–Z5 / Z1–Z7 with their ranges, time and share of the timer, a Heart
   rate / Power switch when a ride carries both. Time below zone 1 and above
   the maximum is left out, so the shares may add up to less than 100 %.
+- Plugins can import files into the vault (#103): a new `import:files`
+  permission and `host_import_file` host function run the app's own import
+  pipeline on a file the plugin holds — deduplicated by hash, encrypted like
+  a dropped file, monitoring recomputed — and the app's views refresh after
+  it. The building block of sync plugins; `examples/plugins/paste-import`
+  is the smallest one.
 
 ## [0.5.0] - 2026-09-06
 

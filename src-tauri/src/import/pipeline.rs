@@ -347,6 +347,23 @@ pub fn import_single_file(
 
     // 1. Detect format from the extension (inner extension for .gz) —
     // unsupported files are rejected before any bytes are read.
+    import_format(source_path)?;
+
+    // 2. Read the original once: hashed for dedup, and fed to the gz decoder.
+    // Size-gated first — the whole file lands in memory.
+    let size = fs::metadata(source_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?
+        .len();
+    ensure_import_size(size)?;
+    let file_bytes =
+        fs::read(source_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    import_bytes(conn, vault_path, path_str, &file_bytes, encryption_key)
+}
+
+/// The format a file name announces: its extension, or the inner extension
+/// of a `.gz` ("ride.fit.gz" → FIT). The gz inner extension comes back too,
+/// lowercased, when the name is gzipped.
+pub(crate) fn import_format(source_path: &Path) -> Result<(FileFormat, Option<String>), String> {
     let gz_inner = gz_inner_ext(source_path)?;
     let effective_ext = match &gz_inner {
         Some(inner_ext) => inner_ext.as_str(),
@@ -357,16 +374,28 @@ pub fn import_single_file(
     };
     let format = FileFormat::from_extension(effective_ext)
         .ok_or_else(|| format!("Unsupported format: {}", effective_ext))?;
+    Ok((format, gz_inner))
+}
 
-    // 2. Read the original once: hashed for dedup, and fed to the gz decoder.
-    // Size-gated first — the whole file lands in memory.
-    let size = fs::metadata(source_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?
-        .len();
-    ensure_import_size(size)?;
-    let file_bytes =
-        fs::read(source_path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let hash = hex::encode(Sha256::digest(&file_bytes));
+/// Import a file already in memory. `path_str` names it — the dropped file's
+/// path, or the bare file name a plugin hands over — and decides the format
+/// by its extension; it is recorded as the raw file's `original_path` and
+/// never read from disk here. Everything after the read of a dropped file
+/// is this function, so a plugin import and a drop import cannot drift.
+pub fn import_bytes(
+    conn: &Connection,
+    vault_path: &Path,
+    path_str: &str,
+    file_bytes: &[u8],
+    encryption_key: Option<&[u8; 32]>,
+) -> Result<ImportOutcome, String> {
+    let source_path = Path::new(path_str);
+    let (format, gz_inner) = import_format(source_path)?;
+    let effective_ext = match &gz_inner {
+        Some(inner_ext) => inner_ext.as_str(),
+        None => source_path.extension().and_then(|e| e.to_str()).unwrap_or_default(),
+    };
+    let hash = hex::encode(Sha256::digest(file_bytes));
 
     // 3. Check hash dedup — before decompression, so known files cost nothing
     if db::raw_files::hash_exists(conn, &hash).map_err(|e| e.to_string())? {
@@ -375,10 +404,10 @@ pub fn import_single_file(
 
     // 4. Decompress .gz in memory (size-capped); no plaintext temp file
     let decompressed = match gz_inner {
-        Some(_) => Some(decompress_gz(&file_bytes, MAX_GZ_DECOMPRESSED)?),
+        Some(_) => Some(decompress_gz(file_bytes, MAX_GZ_DECOMPRESSED)?),
         None => None,
     };
-    let effective_bytes: &[u8] = decompressed.as_deref().unwrap_or(&file_bytes);
+    let effective_bytes: &[u8] = decompressed.as_deref().unwrap_or(file_bytes);
 
     // 5. Generate IDs
     let activity_id = Uuid::new_v4().to_string();
@@ -1048,6 +1077,35 @@ mod tests {
 
         // An empty batch says nothing.
         assert!(!ImportResult::default().monitoring_night);
+    }
+
+    /// The JSON the frontend AND plugins (`host_import_file`, see
+    /// examples/plugins/README.md) read — a published contract, so its
+    /// keys are pinned here.
+    #[test]
+    fn import_result_json_contract() {
+        let r = ImportResult {
+            imported: 1,
+            skipped: 2,
+            failed: vec![FailedFile { path: "x.gpx".to_string(), reason: "bad".to_string() }],
+            monitoring_files: 3,
+            monitoring_days: 1,
+            monitoring_range: Some(("2026-09-05".to_string(), "2026-09-05".to_string())),
+            monitoring_night: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "imported": 1,
+                "skipped": 2,
+                "failed": [{ "path": "x.gpx", "reason": "bad" }],
+                "monitoring_files": 3,
+                "monitoring_days": 1,
+                "monitoring_range": ["2026-09-05", "2026-09-05"],
+                "monitoring_night": true
+            })
+        );
     }
 
     #[test]
