@@ -37,6 +37,8 @@ const DEFAULT_URL: &str = "https://api.open-meteo.com/v1/forecast\
 extern "ExtismHost" {
     fn host_http(request: String, body: Vec<u8>) -> Vec<u8>;
     fn host_http_meta() -> String;
+    fn host_secret_set(request: String) -> String;
+    fn host_secret_get(key: String) -> String;
 }
 
 /// One request through the host: the final response's meta and body.
@@ -84,6 +86,20 @@ pub fn probe(input: String) -> FnResult<String> {
         "body": String::from_utf8_lossy(&body),
     })
     .to_string())
+}
+
+/// For tests: store a secret (`{"key", "value"}`; an empty value deletes) —
+/// what a login flow does with the tokens it obtained (needs `data:secret`).
+#[plugin_fn]
+pub fn secret_set(input: String) -> FnResult<String> {
+    unsafe { host_secret_set(input) }?;
+    Ok("ok".to_string())
+}
+
+/// For tests: read a secret back (an empty string when there is none).
+#[plugin_fn]
+pub fn secret_get(input: String) -> FnResult<String> {
+    Ok(unsafe { host_secret_get(input) }?)
 }
 
 /// For tests: the meta without a request — an error on a fresh invocation.

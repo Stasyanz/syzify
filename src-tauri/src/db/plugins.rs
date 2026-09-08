@@ -99,6 +99,52 @@ pub fn delete_plugin(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+// --- plugin secrets (plugins/secrets.rs seals and unseals; this layer stores bytes) ---
+
+pub fn secret_set(conn: &Connection, plugin_id: &str, key: &str, value: &[u8], encrypted: bool) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO plugin_secret (plugin_id, key, value, encrypted) VALUES (?1, ?2, ?3, ?4)",
+        params![plugin_id, key, value, encrypted],
+    )?;
+    Ok(())
+}
+
+/// `(value bytes, encrypted)`.
+pub fn secret_get(conn: &Connection, plugin_id: &str, key: &str) -> Result<Option<(Vec<u8>, bool)>> {
+    conn.query_row(
+        "SELECT value, encrypted FROM plugin_secret WHERE plugin_id = ?1 AND key = ?2",
+        params![plugin_id, key],
+        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, bool>(1)?)),
+    )
+    .optional()
+}
+
+pub fn secret_count(conn: &Connection, plugin_id: &str) -> Result<usize> {
+    conn.query_row("SELECT COUNT(*) FROM plugin_secret WHERE plugin_id = ?1", params![plugin_id], |row| {
+        row.get::<_, i64>(0).map(|n| n as usize)
+    })
+}
+
+/// Drop every secret of a plugin — a reinstall the user cannot vouch for,
+/// or a manifest that no longer asks for them.
+pub fn secrets_clear(conn: &Connection, plugin_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM plugin_secret WHERE plugin_id = ?1", params![plugin_id])?;
+    Ok(())
+}
+
+pub fn secret_delete(conn: &Connection, plugin_id: &str, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM plugin_secret WHERE plugin_id = ?1 AND key = ?2", params![plugin_id, key])?;
+    Ok(())
+}
+
+/// Every secret in one state, `(plugin_id, key, value bytes)` — the rows an
+/// encryption toggle has to re-seal.
+pub fn secrets_where(conn: &Connection, encrypted: bool) -> Result<Vec<(String, String, Vec<u8>)>> {
+    let mut stmt = conn.prepare("SELECT plugin_id, key, value FROM plugin_secret WHERE encrypted = ?1 ORDER BY plugin_id, key")?;
+    let rows = stmt.query_map(params![encrypted], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    rows.collect()
+}
+
 // --- plugin-scoped key/value store ---
 
 pub fn kv_set(conn: &Connection, plugin_id: &str, key: &str, value: &str) -> Result<()> {
@@ -248,8 +294,10 @@ mod tests {
         upsert_plugin(&conn, &sample_plugin("com.acme.sleep")).unwrap();
         kv_set(&conn, "com.acme.sleep", "k", "v").unwrap();
         insert_data(&conn, "com.acme.sleep", "sleep", None, None, "{}").unwrap();
+        secret_set(&conn, "com.acme.sleep", "token", b"t", false).unwrap();
 
         delete_plugin(&conn, "com.acme.sleep").unwrap();
+        assert_eq!(secret_get(&conn, "com.acme.sleep", "token").unwrap(), None);
 
         assert_eq!(kv_get(&conn, "com.acme.sleep", "k").unwrap(), None);
         assert!(get_data(&conn, "com.acme.sleep", "sleep", None).unwrap().is_empty());

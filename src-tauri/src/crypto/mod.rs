@@ -87,6 +87,33 @@ pub fn verify_password(key: &[u8; 32], verifier: &[u8], nonce: &[u8; 12]) -> boo
     }
 }
 
+/// Seal bytes under the vault key: `[12-byte nonce][ciphertext+tag]`, with
+/// `aad` bound into the tag — the row identity for a plugin secret, so a
+/// ciphertext copied to another row does not open there.
+pub fn seal(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("Failed to create cipher: {}", e))?;
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), aes_gcm::aead::Payload { msg: plaintext, aad })
+        .map_err(|e| format!("Failed to seal: {}", e))?;
+    let mut out = Vec::with_capacity(12 + ciphertext.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Reverse of [`seal`]; fails on a wrong key, a wrong `aad` or a changed byte.
+pub fn open(key: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, String> {
+    if blob.len() < 12 + 16 {
+        return Err("sealed value is too short".to_string());
+    }
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("Failed to create cipher: {}", e))?;
+    cipher
+        .decrypt(Nonce::from_slice(&blob[..12]), aes_gcm::aead::Payload { msg: &blob[12..], aad })
+        .map_err(|_| "sealed value does not open: wrong key or tampered".to_string())
+}
+
 /// Encrypt a file in-place: reads file, writes [12-byte nonce][ciphertext+tag],
 /// renames to .enc extension. Returns new path relative to vault.
 pub fn encrypt_file(key: &[u8; 32], path: &Path) -> Result<PathBuf, String> {
@@ -372,6 +399,21 @@ pub fn remove_vault_lock(vault_path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn seal_and_open_bind_the_associated_data() {
+        let key = [3u8; 32];
+        let blob = super::seal(&key, b"row-1", b"token").unwrap();
+        assert_ne!(super::seal(&key, b"row-1", b"token").unwrap(), blob, "a fresh nonce every time");
+        assert_eq!(super::open(&key, b"row-1", &blob).unwrap(), b"token");
+        assert!(super::open(&key, b"row-2", &blob).is_err(), "another row");
+        assert!(super::open(&[4u8; 32], b"row-1", &blob).is_err(), "another key");
+        let mut bent = blob.clone();
+        bent[15] ^= 1;
+        assert!(super::open(&key, b"row-1", &bent).is_err(), "a changed byte");
+        assert!(super::open(&key, b"row-1", &blob[..20]).unwrap_err().contains("too short"));
+        assert_eq!(super::open(&key, b"", &super::seal(&key, b"", b"").unwrap()).unwrap(), b"");
+    }
+
     use super::*;
     use std::fs;
 

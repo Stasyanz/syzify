@@ -17,6 +17,7 @@ use crate::import::pipeline::{self, ImportResult, MonitoringBatch};
 use crate::models::activity::ActivityFilters;
 use crate::models::plugin::Permission;
 use crate::plugins::net::{self, NetState};
+use crate::plugins::secrets;
 use crate::state::{AppState, Db, SingleFlightGuard};
 
 /// Cap on one file a plugin hands to `host_import_file` — what the pipeline
@@ -56,6 +57,13 @@ pub trait VaultAccess: Send + Sync {
     /// restore or relocation must not move `raw/` out from under the write,
     /// and the encryption toggle must not re-key files while one lands.
     fn claim_vault(&self) -> Option<SingleFlightGuard<'_>>;
+    /// The key plugin secrets are sealed under: the vault key whenever ANY
+    /// scope is encrypted (a token must not sit in the clear because only
+    /// `activities` was chosen), `None` for a plaintext vault. Read fresh
+    /// per call and only under the vault slot (`with_secrets`), like the
+    /// activities key under an import: a key read outside the slot could
+    /// be one Disable is discarding.
+    fn secrets_key(&self) -> Result<Option<[u8; 32]>, String>;
 }
 
 impl VaultAccess for AppState {
@@ -70,6 +78,9 @@ impl VaultAccess for AppState {
     }
     fn claim_vault(&self) -> Option<SingleFlightGuard<'_>> {
         self.vault_flight.try_begin()
+    }
+    fn secrets_key(&self) -> Result<Option<[u8; 32]>, String> {
+        self.encryption_key_for(|s| s.any())
     }
 }
 
@@ -196,6 +207,17 @@ struct KvSetRequest {
     value: String,
 }
 
+/// Strict: an empty value deletes, so a misspelt `value` must not pass
+/// as "delete the token".
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretSetRequest {
+    key: String,
+    /// Empty deletes the secret.
+    #[serde(default)]
+    value: String,
+}
+
 // Read-only data access. `{"kind":"activities"|"dashboard", ...}` -> JSON.
 host_fn!(pub host_query(user_data: PluginCtx; req: String) -> String {
     let ud = user_data.get()?;
@@ -272,6 +294,54 @@ host_fn!(pub host_kv_get(user_data: PluginCtx; key: String) -> String {
     let conn = ctx.db.lock().map_err(|e| extism::Error::msg(e.to_string()))?;
     Ok(db::plugins::kv_get(&conn, &ctx.plugin_id, &key)?.unwrap_or_default())
 });
+
+// Store one secret (a token) of the plugin's: `{"key", "value"}`, an empty
+// value deletes it. Sealed under the vault key when any scope is
+// encrypted, plain otherwise (disclosed on the Plugins screen). A vault
+// operation in flight or a locked vault traps with the [`VAULT_BUSY`] /
+// [`VAULT_LOCKED`] prefix — transient, like an import.
+host_fn!(pub host_secret_set(user_data: PluginCtx; req: String) -> String {
+    let ud = user_data.get()?;
+    let ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
+    ctx.require(&Permission::DataSecret)?;
+    let r: SecretSetRequest = serde_json::from_str(&req)?;
+    with_secrets(&ctx, |conn, key| secrets::set(conn, key, &ctx.plugin_id, &r.key, &r.value))
+        .map_err(extism::Error::msg)?;
+    Ok(String::new())
+});
+
+// The secret, or an empty string when there is none (the kv contract).
+host_fn!(pub host_secret_get(user_data: PluginCtx; key: String) -> String {
+    let ud = user_data.get()?;
+    let ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
+    ctx.require(&Permission::DataSecret)?;
+    let value = with_secrets(&ctx, |conn, vault_key| secrets::get(conn, vault_key, &ctx.plugin_id, &key))
+        .map_err(extism::Error::msg)?;
+    Ok(value.unwrap_or_default())
+});
+
+/// The gate both secret calls share, in the import's order: the vault
+/// slot first, then the lock gate and the key under it, then the row.
+/// Nothing may re-key the vault between reading the key and writing the
+/// row — a `set` that sealed under a key Disable was discarding would
+/// leave a row no key ever opens again, and a `get` during an enable
+/// could read `None` for a row just sealed.
+fn with_secrets<T>(
+    ctx: &PluginCtx,
+    f: impl FnOnce(&rusqlite::Connection, Option<&[u8; 32]>) -> Result<T, String>,
+) -> Result<T, String> {
+    let vault = ctx
+        .vault
+        .clone()
+        .ok_or_else(|| "secret storage is not available in this context".to_string())?;
+    let _flight = vault
+        .claim_vault()
+        .ok_or_else(|| format!("{VAULT_BUSY}: another vault operation is in progress"))?;
+    vault.ensure_unlocked().map_err(|e| format!("{VAULT_LOCKED}: {e}"))?;
+    let key = vault.secrets_key()?;
+    let conn = ctx.db.lock().map_err(|e| e.to_string())?;
+    f(&conn, key.as_ref())
+}
 
 // Import one file the plugin holds in memory — the drop import's pipeline
 // (format by extension, hash dedup, parse, store, monitoring recompute) on
@@ -471,6 +541,103 @@ mod tests {
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
         })
+    }
+
+    /// The secret gate: plain without a lock, sealed under the key with
+    /// one (any scope), refused while locked, refused without a vault.
+    #[test]
+    fn secrets_follow_the_vault_key_and_the_lock() {
+        let vault = std::env::temp_dir().join(format!("syz_secret_gate_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let state = Arc::new(AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        });
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &crate::models::plugin::Plugin {
+                    id: "com.test".to_string(),
+                    name: "T".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: "{}".to_string(),
+                    source: "plugins/com.test".to_string(),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+        }
+        let ctx = PluginCtx {
+            db: state.db.clone(),
+            plugin_id: "com.test".to_string(),
+            permissions: vec![Permission::DataSecret],
+            vault: Some(state.clone()),
+            imported: 0,
+            imported_activities: 0,
+            monitoring: MonitoringBatch::default(),
+            net: NetState::default(),
+        };
+        let row = |name: &str| {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::secret_get(&conn, "com.test", name).unwrap()
+        };
+
+        let key_seen = |ctx: &PluginCtx| with_secrets(ctx, |_, key| Ok(key.copied()));
+
+        // Plaintext vault: no key, stored in the clear.
+        assert_eq!(key_seen(&ctx).unwrap(), None);
+        with_secrets(&ctx, |conn, key| secrets::set(conn, key, "com.test", "a", "plain")).unwrap();
+        assert_eq!(row("a"), Some((b"plain".to_vec(), false)));
+
+        // A vault operation in flight (a backup, an encryption toggle):
+        // refused with the prefix before the key is read, nothing written.
+        {
+            let _busy = state.vault_flight.try_begin().unwrap();
+            let err = with_secrets(&ctx, |conn, key| secrets::set(conn, key, "com.test", "x", "lost")).unwrap_err();
+            assert!(err.starts_with(VAULT_BUSY), "{err}");
+        }
+        assert_eq!(row("x"), None);
+
+        // Encryption on (photos only) and the key held: sealed.
+        let key = [5u8; 32];
+        crate::crypto::write_vault_lock(
+            &vault,
+            &crate::crypto::VaultLock {
+                salt: "00".repeat(32),
+                verifier: String::new(),
+                nonce: String::new(),
+                created_at: String::new(),
+                scopes: crate::crypto::EncryptionScopes { activities: false, database: false, photos: true },
+            },
+        )
+        .unwrap();
+        *state.encryption_key.lock().unwrap() = Some(key);
+        assert_eq!(key_seen(&ctx).unwrap(), Some(key));
+        with_secrets(&ctx, |conn, key| secrets::set(conn, key, "com.test", "b", "sealed")).unwrap();
+        assert!(row("b").unwrap().1);
+
+        // Locked (lock on disk, key gone): the gate refuses with the prefix.
+        *state.encryption_key.lock().unwrap() = None;
+        let err = key_seen(&ctx).unwrap_err();
+        assert!(err.starts_with(VAULT_LOCKED), "{err}");
+
+        // No vault at all: not available.
+        let bare = PluginCtx::new(state.db.clone(), "com.test", vec![Permission::DataSecret]);
+        assert!(key_seen(&bare).unwrap_err().contains("not available"));
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A context whose db IS the state's db, as the runtime builds it.

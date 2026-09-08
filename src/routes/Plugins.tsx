@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { confirmDialog } from "../stores/confirmStore";
 import { Puzzle, Plus, Trash2, Globe, ShieldCheck, Fingerprint } from "lucide-react";
-import type { PluginInfo } from "../lib/types";
+import type { EncryptionStatus, PluginInfo } from "../lib/types";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 
@@ -17,9 +17,27 @@ function permissionLabel(perm: string): string {
     "read:laps": "Read laps",
     "read:dashboard": "Read dashboard",
     "data:own": "Private storage",
+    "data:secret": "Stores secrets (tokens)",
     "import:files": "Import files into the vault (can tell whether a file is already there)",
   };
   return map[perm] ?? perm;
+}
+
+/** The note under a plugin holding `data:secret` while the vault is not
+ * encrypted: its tokens sit in the clear until encryption is on. `sealed`
+ * is the host's own predicate — any encrypted scope, not the mere presence
+ * of a lock — and `null` while it is still unknown (nothing is shown then). */
+export function secretsDisclosure(permissions: string[], sealed: boolean | null): string | null {
+  if (sealed !== false || !permissions.includes("data:secret")) return null;
+  return "Secrets are stored unencrypted until vault encryption is on (Settings → Encryption).";
+}
+
+/** Whether plugin secrets are sealed, from the encryption status: any scope
+ * on. Unknown while loading; a failed status query counts as NOT sealed, so
+ * the disclosure fails towards the warning. */
+export function secretsSealed(status: EncryptionStatus | undefined, failed: boolean): boolean | null {
+  if (status) return status.scopes.activities || status.scopes.database || status.scopes.photos;
+  return failed ? false : null;
 }
 
 export function PluginsPage() {
@@ -31,6 +49,12 @@ export function PluginsPage() {
     queryKey: ["plugins"],
     queryFn: () => api.getPlugins(),
   });
+  // Whether a plugin's secrets are sealed: any encrypted scope seals them.
+  const { data: encryption, isError: encryptionUnknown } = useQuery({
+    queryKey: ["encryptionStatus"],
+    queryFn: () => api.getEncryptionStatus(),
+  });
+  const sealed = secretsSealed(encryption, encryptionUnknown);
 
   // Invalidate the registry list *and* the contribution/render caches, so host
   // pages (Dashboard, activity detail) pick up an install/enable/uninstall on
@@ -213,6 +237,13 @@ export function PluginsPage() {
                         </span>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {secretsDisclosure(p.permissions, sealed) && (
+                  <div className="flex items-start gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                    <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                    <div className="text-xs">{secretsDisclosure(p.permissions, sealed)}</div>
                   </div>
                 )}
 

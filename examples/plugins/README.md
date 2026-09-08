@@ -77,6 +77,11 @@ Capability-gated; the user grants them by enabling the plugin.
 
 - `read:activities`, `read:trackpoints`, `read:hrv`, `read:laps`, `read:dashboard` — read-only data access
 - `data:own` — the plugin's own isolated storage (`plugin_data` / `plugin_kv`)
+- `data:secret` — the plugin's secrets (a sync plugin's tokens) through
+  `host_secret_set` / `host_secret_get`: sealed under the vault key whenever any
+  scope of vault encryption is on, stored in the clear otherwise — and the Plugins
+  screen says so on the plugin's card ("stores secrets", plus a note while the
+  vault is not encrypted). Never put a token in `plugin_kv`
 - `import:files` — import files (FIT/GPX/TCX, optionally gzipped) into the vault through
   the app's own import pipeline — one file per `host_import_file` call, ≤ 32 MiB, deduplicated
   by hash, encrypted under the vault's `activities` scope like a dropped file. Note the
@@ -111,6 +116,7 @@ Host functions (call only what your permissions allow):
 | `host_query` | `read:activities` / `read:dashboard` | `{"kind":"activities"\|"activity"\|"dashboard", …}` → JSON (`activity` takes an `id`) |
 | `host_data_get` / `host_data_set` | `data:own` | the plugin's private structured store |
 | `host_kv_get` / `host_kv_set` | `data:own` | the plugin's private key/value store |
+| `host_secret_set` / `host_secret_get` | `data:secret` | the plugin's secrets: `host_secret_set({"key", "value"})` stores one (an empty value deletes it — a sign-out is one call per token; key ≤ 128 chars, value ≤ 64 KiB, at most 32 per plugin; an unknown field in the request fails the call), `host_secret_get(key)` reads it back, an empty string when there is none. Sealed under the vault key when vault encryption is on (any scope), plain otherwise; a locked vault fails the call with the `vault locked` prefix |
 | `host_http(request, body)` + `host_http_meta()` | `net:host=` | one HTTP request: `request` is `{"url", "method"?, "headers"?: [[name, value], …], "max_redirects"?}` (GET by default; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Expect`, `Upgrade`, `TE` are the host's; redirects followed up to `max_redirects`, 10 by default and at most — `0` hands a 3xx back as it is, `Location` and all), `body` the request body bytes (empty for GET/HEAD, ≤ 1 MiB) → the final response's body bytes (≤ 5 MiB); `host_http_meta()` right after → `{"status", "url", "headers": [[name, value], …], "hops": [{"status", "url", "location"}, …]}` of that response — lowercase names, one pair per header, so five `Set-Cookie` are five pairs; `hops` are the redirects taken on the way. The host holds a cookie jar for the invocation; see **Network** below. A refused hop, a bad request, a spent budget or a transport failure fails the call |
 | `host_import_file(name, bytes)` | `import:files` | run the app's import pipeline on one file → the drop import's `ImportResult` JSON: `{imported, skipped, failed: [{path, reason}], monitoring_files, monitoring_days, monitoring_range, monitoring_night}` — per call only the first four are filled: the Monitor days an invocation touches are recomputed once, when it ends, so `monitoring_days` / `monitoring_range` / `monitoring_night` come back as 0 / null / false — a plugin cannot tell yet whether the night it synced is complete (no monitoring query in the Host SDK today). `name` is a bare file name (letters, digits, `.`, `-`, `_`, ≤ 128 bytes; its extension — `.fit`/`.gpx`/`.tcx`, optionally `.gz` — decides the format). A file the pipeline refuses is a `failed` entry; a bad name, an oversized file (> 32 MiB), a locked vault or a vault operation in flight fail the call |
 
@@ -157,6 +163,17 @@ and panels keep 5 s, as they render on their own and every invocation queues
 behind the previous one. One request may use all of what is left of it. See
 [`net-probe/`](net-probe/) for the shape of a call and
 [`smart-route/`](smart-route/) for a `route.planner` page that fetches weather.
+
+**Secrets.** A login flow ends with tokens; keep them with `host_secret_set`,
+never in `plugin_kv`. The host seals them under the vault key when encryption is
+on — any scope, so an `activities`-only vault still carries only ciphertext in
+`vault.db` and in backups — and follows the key when encryption is turned on or
+off. In a plaintext vault they are stored in the clear, and the user is told so
+on the plugin's card. Cookies from `host_http` are never persisted; store the
+tokens a service hands out, not the session that produced them. Secrets follow
+the trust of the build: a signed upgrade from the same key keeps them, an
+unsigned reinstall (anyone can sideload under the same id) or an upgrade whose
+manifest no longer asks for `data:secret` drops them.
 
 `route.planner` contributions are opened full-page from **Settings → Plugins → Open**.
 

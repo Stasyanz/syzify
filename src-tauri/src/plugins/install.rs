@@ -119,7 +119,17 @@ fn register(
         updated_at: String::new(),
     };
     let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let replacing = db::plugins::get_plugin(&conn, &manifest.id).map_err(|e| e.to_string())?.is_some();
     db::plugins::upsert_plugin(&conn, &record).map_err(|e| e.to_string())?;
+    // Tokens do not survive a build the user cannot tell from a stranger's
+    // (an unsigned reinstall: anyone can sideload under the same id), nor a
+    // manifest that no longer asks for them (they would sit orphaned, with
+    // no way to remove them short of an uninstall). A same-key signed
+    // upgrade keeps them — that is what signing is for.
+    let keeps_secrets = manifest.parsed_permissions().contains(&crate::models::plugin::Permission::DataSecret);
+    if (replacing && !signed) || !keeps_secrets {
+        db::plugins::secrets_clear(&conn, &manifest.id).map_err(|e| e.to_string())?;
+    }
     db::plugins::get_plugin(&conn, &manifest.id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Plugin vanished right after install".to_string())
@@ -164,6 +174,43 @@ mod tests {
         };
         let conn = state.db.lock().unwrap();
         db::plugins::upsert_plugin(&conn, &record).unwrap();
+    }
+
+    /// Secrets follow the trust of the build: an unsigned reinstall or a
+    /// manifest without `data:secret` drops them, a signed upgrade keeps them.
+    #[test]
+    fn register_drops_secrets_on_unsigned_reinstall_or_a_manifest_without_the_permission() {
+        let state = test_state();
+        let with = r#"{"id":"com.sync","name":"S","version":"1.0.0","permissions":["data:secret"]}"#;
+        let without = r#"{"id":"com.sync","name":"S","version":"1.1.0"}"#;
+        let secret = |state: &AppState| {
+            let conn = state.db.lock().unwrap();
+            db::plugins::secret_get(&conn, "com.sync", "token").unwrap()
+        };
+        let stash = |state: &AppState| {
+            let conn = state.db.lock().unwrap();
+            db::plugins::secret_set(&conn, "com.sync", "token", b"t", false).unwrap();
+        };
+
+        // Signed install, then a signed upgrade: kept.
+        register(&state, with.to_string(), "plugins/com.sync".to_string(), true).unwrap();
+        stash(&state);
+        register(&state, with.to_string(), "plugins/com.sync".to_string(), true).unwrap();
+        assert!(secret(&state).is_some(), "a signed upgrade keeps the tokens");
+        // The upgrade stops asking for them: gone.
+        register(&state, without.to_string(), "plugins/com.sync".to_string(), true).unwrap();
+        assert!(secret(&state).is_none(), "no permission, no orphaned tokens");
+
+        // Unsigned: a fresh install may hold them, a reinstall drops them.
+        {
+            let conn = state.db.lock().unwrap();
+            db::plugins::delete_plugin(&conn, "com.sync").unwrap();
+        }
+        register(&state, with.to_string(), "plugins/com.sync".to_string(), false).unwrap();
+        stash(&state);
+        assert!(secret(&state).is_some());
+        register(&state, with.to_string(), "plugins/com.sync".to_string(), false).unwrap();
+        assert!(secret(&state).is_none(), "an unsigned reinstall could be anyone's build");
     }
 
     #[test]

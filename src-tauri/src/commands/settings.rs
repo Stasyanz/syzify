@@ -575,8 +575,21 @@ fn unlock_vault_core(password: &str, state: &AppState) -> Result<(), String> {
     if let Err(e) = resume_file_encryption(state, &key, &lock) {
         eprintln!("unlock: file-encryption resume incomplete (will retry): {e}");
     }
+    // Plugin secrets a crash left in the clear, the same way.
+    if let Err(e) = seal_plain_secrets(state, &key) {
+        eprintln!("unlock: plugin secrets resume incomplete (will retry): {e}");
+    }
 
     Ok(())
+}
+
+/// Seal every plaintext plugin secret under the vault key (idempotent:
+/// sealed rows are skipped). Runs when encryption is turned on and on every
+/// unlock, so a secret stored during an enable, or left plain by a crash,
+/// never stays in the clear inside an encrypted vault.
+fn seal_plain_secrets(state: &AppState, key: &[u8; 32]) -> Result<usize, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    crate::plugins::secrets::encrypt_all(&conn, key)
 }
 
 /// Re-run bulk file encryption for the enabled file scopes. Idempotent
@@ -849,6 +862,13 @@ fn enable_encryption_core(
         }
     }
 
+    // Plugin secrets: sealed under the key whatever the scopes (a token must
+    // not sit in the clear because only `activities` was chosen). Best-effort
+    // like the files — the unlock resume pass finishes a straggler.
+    if let Err(e) = seal_plain_secrets(state, &key) {
+        eprintln!("enable: plugin secrets sealing incomplete (resumes on unlock): {e}");
+    }
+
     Ok(())
 }
 
@@ -937,6 +957,18 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Strin
 
     let key = derive_and_verify(password, &lock)?;
     let orig_scopes = lock.scopes;
+
+    // Plugin secrets first, while everything else is still as it was: a
+    // row that does not open under this key leaves the vault exactly as
+    // enabled as before, with the plugin named so the user can sign out
+    // of it or uninstall it and try again. (The slot is held: no plugin
+    // writes a secret meanwhile. If a later step fails and the vault
+    // settles LOCKED, the unlock resume pass seals these rows again.)
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::plugins::secrets::decrypt_all(&conn, &key)
+            .map_err(|e| format!("Plugin secrets could not be decrypted — {e}. Sign out of that plugin or uninstall it, then try again"))?;
+    }
 
     // Turn every scope OFF in the lock up front (keeping it on disk for its
     // salt/verifier so a crash mid-disable is still resumable). encryption_key_for
@@ -1250,6 +1282,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&vault);
     }
 
+    fn test_plugin(id: &str) -> crate::models::plugin::Plugin {
+        crate::models::plugin::Plugin {
+            id: id.to_string(),
+            name: "Sync".to_string(),
+            version: "0.1.0".to_string(),
+            author: None,
+            description: None,
+            enabled: true,
+            signed: false,
+            manifest: "{}".to_string(),
+            source: format!("plugins/{id}"),
+            installed_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// A secret sealed under another key stops Disable before the lock is
+    /// removed: the vault stays enabled, a retry is possible, nothing lost.
+    #[test]
+    fn disable_keeps_the_lock_when_a_secret_does_not_open() {
+        let vault = std::env::temp_dir().join("syz_disable_secret_stuck");
+        let _ = std::fs::remove_dir_all(&vault);
+        std::fs::create_dir_all(vault.join("raw")).unwrap();
+        let conn = crate::init_vault(&vault).unwrap();
+        let state = test_state_with(&vault, conn);
+        let scopes = crypto::EncryptionScopes { activities: true, database: false, photos: false };
+        enable_encryption_core("pw", scopes, &state).unwrap();
+        {
+            let conn = state.db.lock().unwrap();
+            db::plugins::upsert_plugin(&conn, &test_plugin("com.test.sync")).unwrap();
+            crate::plugins::secrets::set(&conn, Some(&[42u8; 32]), "com.test.sync", "token", "foreign").unwrap();
+        }
+        let err = disable_encryption_core("pw", &state).unwrap_err();
+        assert!(err.contains("Plugin secrets could not be decrypted") && err.contains("com.test.sync"), "{err}");
+        // The vault is exactly as enabled as before: lock with its scopes,
+        // key held, files still ciphertext, status unchanged.
+        let lock = crypto::read_vault_lock(&vault).unwrap().unwrap();
+        assert_eq!(lock.scopes, scopes, "scopes untouched");
+        assert!(state.encryption_key.lock().unwrap().is_some(), "key kept");
+        // Drop the stuck row and the retry completes.
+        {
+            let conn = state.db.lock().unwrap();
+            db::plugins::secret_delete(&conn, "com.test.sync", "token").unwrap();
+        }
+        disable_encryption_core("pw", &state).unwrap();
+        assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
     /// With no file scopes enabled, resume touches nothing.
     #[test]
     fn resume_noop_when_no_file_scopes() {
@@ -1293,11 +1374,43 @@ mod tests {
         assert!(enable_encryption_core("pw", none, &state).is_err());
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
 
+        // A plugin secret stored in the clear before encryption existed.
+        let secret_row = |state: &AppState| -> (Vec<u8>, bool) {
+            let conn = state.db.lock().unwrap();
+            db::plugins::secret_get(&conn, "com.test.sync", "token").unwrap().unwrap()
+        };
+        {
+            let conn = state.db.lock().unwrap();
+            db::plugins::upsert_plugin(&conn, &test_plugin("com.test.sync")).unwrap();
+            crate::plugins::secrets::set(&conn, None, "com.test.sync", "token", "oauth-1").unwrap();
+        }
+        assert_eq!(secret_row(&state), (b"oauth-1".to_vec(), false));
+
         enable_encryption_core("pw", scopes, &state).unwrap();
 
         // Lock has all scopes (database flipped only after the actual swap).
         let lock = crypto::read_vault_lock(&vault).unwrap().unwrap();
         assert!(lock.scopes.activities && lock.scopes.database && lock.scopes.photos);
+
+        // The secret is sealed under the key and reads back through it.
+        let key = state.encryption_key.lock().unwrap().unwrap();
+        let (blob, sealed) = secret_row(&state);
+        assert!(sealed && !blob.windows(5).any(|w| w == b"oauth"));
+        {
+            let conn = state.db.lock().unwrap();
+            assert_eq!(
+                crate::plugins::secrets::get(&conn, Some(&key), "com.test.sync", "token").unwrap().as_deref(),
+                Some("oauth-1")
+            );
+            // A row left plain (a crash, a write during the enable) is
+            // sealed by the unlock resume pass.
+            db::plugins::secret_set(&conn, "com.test.sync", "late", b"oauth-2", false).unwrap();
+        }
+        unlock_vault_core("pw", &state).unwrap();
+        {
+            let conn = state.db.lock().unwrap();
+            assert!(db::plugins::secret_get(&conn, "com.test.sync", "late").unwrap().unwrap().1);
+        }
         // Files are ciphertext, the DB no longer opens plaintext, yet the live
         // (keyed) connection still works and the key is held for new writes.
         assert!(vault.join("raw/a.fit.enc").exists());
@@ -1318,6 +1431,16 @@ mod tests {
         assert!(vault.join("raw/a.fit.enc").exists());
 
         disable_encryption_core("pw", &state).unwrap();
+
+        // Secrets are back in the clear, readable without a key.
+        assert_eq!(secret_row(&state), (b"oauth-1".to_vec(), false));
+        {
+            let conn = state.db.lock().unwrap();
+            assert_eq!(
+                crate::plugins::secrets::get(&conn, None, "com.test.sync", "late").unwrap().as_deref(),
+                Some("oauth-2")
+            );
+        }
 
         // Everything is plaintext again, the lock is gone, the key discarded.
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());

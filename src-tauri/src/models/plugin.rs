@@ -158,6 +158,10 @@ pub enum Permission {
     ReadDashboard,
     /// Access to the plugin's own isolated storage.
     DataOwn,
+    /// The plugin's secrets (a sync plugin's tokens): `host_secret_set/get`,
+    /// sealed under the vault key when encryption is on, disclosed as
+    /// "stores secrets" either way.
+    DataSecret,
     /// Import files into the vault through the app's own pipeline
     /// (`host_import_file`) — what a sync plugin needs to land activities
     /// and monitoring it fetched.
@@ -180,6 +184,7 @@ impl Permission {
             "read:laps" => Permission::ReadLaps,
             "read:dashboard" => Permission::ReadDashboard,
             "data:own" => Permission::DataOwn,
+            "data:secret" => Permission::DataSecret,
             "import:files" => Permission::ImportFiles,
             other => Permission::Unknown(other.to_string()),
         }
@@ -261,6 +266,7 @@ mod tests {
     fn parses_known_permissions() {
         assert_eq!(Permission::parse("read:activities"), Permission::ReadActivities);
         assert_eq!(Permission::parse("data:own"), Permission::DataOwn);
+        assert_eq!(Permission::parse("data:secret"), Permission::DataSecret);
         assert_eq!(Permission::parse("import:files"), Permission::ImportFiles);
         assert_eq!(
             Permission::parse("net:host=api.open-meteo.com"),

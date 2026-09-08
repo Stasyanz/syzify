@@ -27,6 +27,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   in to a service the way a browser does. The
   built-in sandbox HTTP no longer gets any host; `examples/plugins/net-probe`
   shows the call, `smart-route` uses it.
+- Plugins can keep secrets (#110): a `data:secret` permission and
+  `host_secret_set` / `host_secret_get` host functions for the tokens a
+  sync plugin holds. They are encrypted under the vault key whenever any
+  part of the vault is encrypted, follow the key when encryption is turned
+  on or off, and the Plugins screen says "stores secrets" on such a plugin
+  — with a note while the vault is not encrypted, because then they are
+  stored in the clear.
 
 ## [0.5.0] - 2026-09-06
 

@@ -55,6 +55,9 @@ impl<R: Runtime> VaultAccess for AppVault<R> {
     fn claim_vault(&self) -> Option<SingleFlightGuard<'_>> {
         self.0.state::<AppState>().inner().claim_vault()
     }
+    fn secrets_key(&self) -> Result<Option<[u8; 32]>, String> {
+        self.0.state::<AppState>().inner().secrets_key()
+    }
 }
 
 /// Event the frontend refreshes its activity-derived queries on: a plugin
@@ -151,6 +154,8 @@ pub fn run_contribution<R: Runtime>(
         .with_function("host_import_file", [PTR, PTR], [PTR], ud.clone(), host::host_import_file)
         .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
         .with_function("host_http_meta", [], [PTR], ud.clone(), host::host_http_meta)
+        .with_function("host_secret_set", [PTR], [PTR], ud.clone(), host::host_secret_set)
+        .with_function("host_secret_get", [PTR], [PTR], ud.clone(), host::host_secret_get)
         .build()
         .map_err(|e| {
             // Detail (may include vault paths) goes to the log, not the UI.
@@ -403,7 +408,9 @@ mod tests {
             PluginBuilder::new(ExtismManifest::new([Wasm::file(net_probe_wasm())]))
                 .with_wasi(false)
                 .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
-                .with_function("host_http_meta", [], [PTR], ud, host::host_http_meta)
+                .with_function("host_http_meta", [], [PTR], ud.clone(), host::host_http_meta)
+                .with_function("host_secret_set", [PTR], [PTR], ud.clone(), host::host_secret_set)
+                .with_function("host_secret_get", [PTR], [PTR], ud, host::host_secret_get)
                 .build()
                 .expect("load net-probe plugin")
         };
@@ -458,6 +465,116 @@ mod tests {
         assert_eq!(sent[4].header("cookie"), None, "a new invocation starts with an empty jar");
     }
 
+    /// The secret host functions through the real wasm: permission gate,
+    /// sealed row under an encrypted vault, empty value deletes, the kv
+    /// "empty string when absent" contract.
+    #[test]
+    fn secret_permission_and_sealing_hold_at_the_host_boundary_through_real_wasm() {
+        use crate::models::plugin::Permission;
+        use crate::plugins::host::{self, PluginCtx};
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+
+        let vault = std::env::temp_dir().join(format!("syz_wasm_secret_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let key = [11u8; 32];
+        crate::crypto::write_vault_lock(
+            &vault,
+            &crate::crypto::VaultLock {
+                salt: "00".repeat(32),
+                verifier: String::new(),
+                nonce: String::new(),
+                created_at: String::new(),
+                scopes: crate::crypto::EncryptionScopes { activities: true, database: false, photos: false },
+            },
+        )
+        .unwrap();
+        let state = Arc::new(AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(Some(key)),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        });
+        let plugin_id = "com.syzify.example.net-probe";
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &crate::models::plugin::Plugin {
+                    id: plugin_id.to_string(),
+                    name: "Probe".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: "{}".to_string(),
+                    source: format!("plugins/{plugin_id}"),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+        }
+        let call = |permissions: Vec<Permission>, export: &str, input: &str| {
+            let ctx = PluginCtx {
+                db: state.db.clone(),
+                plugin_id: plugin_id.to_string(),
+                permissions,
+                vault: Some(state.clone()),
+                imported: 0,
+                imported_activities: 0,
+                monitoring: MonitoringBatch::default(),
+                net: NetState::default(),
+            };
+            let ud = host::user_data(ctx);
+            PluginBuilder::new(ExtismManifest::new([Wasm::file(net_probe_wasm())]))
+                .with_wasi(false)
+                .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
+                .with_function("host_http_meta", [], [PTR], ud.clone(), host::host_http_meta)
+                .with_function("host_secret_set", [PTR], [PTR], ud.clone(), host::host_secret_set)
+                .with_function("host_secret_get", [PTR], [PTR], ud, host::host_secret_get)
+                .build()
+                .expect("load net-probe plugin")
+                .call::<&str, &str>(export, input)
+                .map(|s| s.to_string())
+                .map_err(|e| e.root_cause().to_string())
+        };
+        let granted = vec![Permission::DataSecret];
+        let set = r#"{"key":"oauth1","value":"tok-1"}"#;
+
+        assert!(call(vec![], "secret_set", set).unwrap_err().contains("lacks permission"));
+        assert!(call(vec![Permission::DataOwn], "secret_get", "oauth1").is_err(), "data:own is not data:secret");
+        assert_eq!(call(granted.clone(), "secret_set", set).unwrap(), "ok");
+        assert_eq!(call(granted.clone(), "secret_get", "oauth1").unwrap(), "tok-1");
+        assert_eq!(call(granted.clone(), "secret_get", "missing").unwrap(), "");
+        // A misspelt field must not pass as "delete the token".
+        let err = call(granted.clone(), "secret_set", r#"{"key":"oauth1","valeu":"x"}"#).unwrap_err();
+        assert!(err.contains("unknown field"), "{err}");
+        assert_eq!(call(granted.clone(), "secret_get", "oauth1").unwrap(), "tok-1");
+        {
+            let conn = state.db.lock().unwrap();
+            let (blob, sealed) = crate::db::plugins::secret_get(&conn, plugin_id, "oauth1").unwrap().unwrap();
+            assert!(sealed && !blob.windows(5).any(|w| w == b"tok-1"), "sealed under the vault key");
+        }
+        // Locked: the key is gone while the lock stays.
+        *state.encryption_key.lock().unwrap() = None;
+        let err = call(granted.clone(), "secret_get", "oauth1").unwrap_err();
+        assert!(err.contains("vault locked"), "{err}");
+        let err = call(granted.clone(), "secret_set", set).unwrap_err();
+        assert!(err.contains("vault locked"), "{err}");
+        *state.encryption_key.lock().unwrap() = Some(key);
+        // Sign out: an empty value deletes.
+        assert_eq!(call(granted.clone(), "secret_set", r#"{"key":"oauth1"}"#).unwrap(), "ok");
+        assert_eq!(call(granted, "secret_get", "oauth1").unwrap(), "");
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
     #[test]
     fn network_plugins_get_the_longer_budget_on_the_interactive_page_only() {
         assert_eq!(super::invocation_budget(false, "route_planner"), super::PLUGIN_TIMEOUT);
@@ -506,7 +623,7 @@ mod tests {
                     enabled: true,
                     signed: false,
                     manifest: format!(
-                        r#"{{"id":"{plugin_id}","name":"Network Probe","version":"0.1.0","entry":"plugin.wasm","contributes":["route.planner"],"permissions":["net:host=api.example.com"]}}"#
+                        r#"{{"id":"{plugin_id}","name":"Network Probe","version":"0.1.0","entry":"plugin.wasm","contributes":["route.planner"],"permissions":["net:host=api.example.com","data:secret"]}}"#
                     ),
                     source: format!("plugins/{plugin_id}"),
                     installed_at: String::new(),
@@ -530,6 +647,16 @@ mod tests {
         assert!(err.contains("only https://"), "{err}");
         let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"https://api.example.com:8443/"}"#).unwrap_err();
         assert!(err.contains("only the default port"), "{err}");
+
+        // Secrets through the live app's vault: a plaintext vault stores
+        // them in the clear, and they read back.
+        run_contribution(&handle, plugin_id, "secret_set", r#"{"key":"t","value":"tok"}"#).unwrap();
+        assert_eq!(run_contribution(&handle, plugin_id, "secret_get", "t").unwrap(), "tok");
+        {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            assert_eq!(crate::db::plugins::secret_get(&conn, plugin_id, "t").unwrap(), Some((b"tok".to_vec(), false)));
+        }
 
         // A stored manifest with a host the installer would refuse (a
         // rolled-back or edited vault DB) does not run at all.

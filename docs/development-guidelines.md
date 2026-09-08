@@ -108,6 +108,12 @@ windowless app from `tauri::test::mock_builder` (dev feature `test`; see
 `run_contribution_imports_through_the_live_app_and_emits_the_event`). Keep such
 functions generic over `tauri::Runtime` so the mock runtime fits.
 
+**A plugin's secret** (a token) → `plugins/secrets.rs` behind `data:secret`, never
+`plugin_kv`: sealed with `crypto::seal` under the vault key when any scope is on
+(row identity as associated data), plain with a disclosure otherwise. The
+enable/disable/unlock flows in `commands/settings.rs` re-seal them; a new place
+that changes the key must call `secrets::encrypt_all` / `decrypt_all` too.
+
 **Network from a plugin** → `host_http` (`plugins/net.rs`) only; never hand a
 host to Extism's manifest allow-list (its HTTP has no cookie jar and does not
 re-check redirects). The allow-list is the plugin's `net:host=` set and it is

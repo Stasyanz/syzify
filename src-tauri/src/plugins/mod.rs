@@ -3,4 +3,5 @@ pub mod install;
 pub mod net;
 pub mod package;
 pub mod runtime;
+pub mod secrets;
 pub mod view;
