@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-09
+
 ### Added
 - Time in Zones card on the activity page (#101), next to Cycling Dynamics:
   the device's heart-rate and power zones as Garmin Connect shows them —

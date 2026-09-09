@@ -1,7 +1,7 @@
 {
   "name": "syzify",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "SEE LICENSE IN LICENSE-PLUGIN-EXCEPTION.md",
   "type": "module",
   "scripts": {
