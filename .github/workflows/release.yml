@@ -91,6 +91,11 @@ jobs:
           name: syzify-${{ matrix.target }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: error
+          # The installers live in the GitHub Release; these full bundles
+          # (~270 MB per Linux target) are only the hand-off to the publish
+          # job. A run on the private test repo counts them against the
+          # 0.5 GB/month Actions storage — the 90-day default filled it.
+          retention-days: 3
 
   publish:
     name: Publish GitHub Release
