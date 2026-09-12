@@ -17,6 +17,10 @@ import {
   bucketMaxBars,
   cadenceZoneRanges,
   externalSelectionCols,
+  gradeCategories,
+  gradeCategory,
+  gradeRunAverages,
+  gradeFillStops,
   gradeGradientStops,
   gradeSeries,
   nearestIdx,
@@ -119,6 +123,8 @@ function SingleChart({
   barRange,
   barStep,
   gradeValues,
+  gradeCats,
+  gradeRunGrades,
   selectionStats,
   onSelectionMenu,
   avgValue,
@@ -141,6 +147,13 @@ function SingleChart({
   /** Smoothed grade (%) per chart point (elevation only) — colors the line
    * by climb steepness and adds the percentage to the hover popup. */
   gradeValues?: (number | null)[];
+  /** The category each chart point paints (short runs absorbed) — the
+   * line and the fill read this, the tooltip reads `gradeValues`. */
+  gradeCats?: number[];
+  /** The average grade of the painted climb a point sits in (null on the
+   * flat): the tooltip shows this over a filled segment — one number for
+   * the whole band — and the point's own grade elsewhere. */
+  gradeRunGrades?: (number | null)[];
   /** Stats line for a drag-selected trackpoint range (elevation only) —
    * enables x-drag selection and the selection badge. */
   selectionStats?: (tpA: number, tpB: number) => string | null;
@@ -207,6 +220,116 @@ function SingleChart({
         surface: surfaceColor,
       });
     };
+
+    // The metric's own series: line, fill and (for zone bars / grades) the
+    // painters — one object, so the elevation layers below can borrow it.
+    const main: uPlot.Series = {
+      label: `${config.label} (${config.unit})`,
+      stroke: config.color,
+      fill: config.fill,
+      width: 1.5,
+      // Inverted axis: fill DOWN from the line toward the slow edge —
+      // the default 0-baseline sits above the data there and would
+      // paint the fill overhead.
+      fillTo: config.invertY ? (_u, _si, _dataMin, dataMax) => dataMax : undefined,
+      // Hypsometric bands: a sharp-stop vertical gradient paints the
+      // fill by altitude, atlas-style. Offsets clamp to the visible
+      // range, so sea-level rides are simply green.
+      ...(config.elevationBands
+        ? {
+            fill: (u: uPlot) => {
+              const { top, height } = u.bbox;
+              const grad = u.ctx.createLinearGradient(0, top, 0, top + height);
+              const stops = bandGradientStops(
+                config.elevationBands!,
+                (v) => u.valToPos(v, "y", true),
+                top,
+                height,
+              );
+              for (const s of stops) grad.addColorStop(s.offset, s.color);
+              return grad;
+            },
+          }
+        : {}),
+      // Grade coloring: a sharp-stop HORIZONTAL gradient paints the
+      // line by climb steepness (flat teal → warm ramp), the sibling of
+      // the vertical fill gradient above. A hair wider than the default
+      // 1.5 — the color IS the information here.
+      ...(gradeValues
+        ? {
+            width: 2,
+            stroke: (u: uPlot) => {
+              const { left, width } = u.bbox;
+              const grad = u.ctx.createLinearGradient(left, 0, left + width, 0);
+              const stops = gradeGradientStops(
+                xValues,
+                gradeCats ?? [],
+                (x) => u.valToPos(x, "x", true),
+                left,
+                width,
+              );
+              for (const s of stops) grad.addColorStop(s.offset, s.color);
+              return grad;
+            },
+          }
+        : {}),
+      // Design HRChart: rounded bars, each colored by the zone its
+      // value falls into, at the design's 0.88 opacity ("e0" alpha).
+      ...(barZones
+        ? {
+            width: 0,
+            points: { show: false },
+            paths: uPlot.paths.bars!({
+              size: [0.8, 100],
+              radius: 0.25,
+              disp: {
+                fill: {
+                  unit: 3,
+                  // Array.from, NOT .map: u.data[1] is a Float64Array,
+                  // whose .map would coerce the color strings to NaN.
+                  values: (u) =>
+                    Array.from(
+                      u.data[1] as ArrayLike<number>,
+                      (v) => `${zoneColorFor(v ?? 0, barZones)}e0`,
+                    ),
+                },
+              },
+            }),
+          }
+        : {}),
+    };
+    // Whether the fill layer has anything to paint: a ride whose grade
+    // never reaches the climb threshold keeps the single series (the line
+    // still colors by grade, all flat teal).
+    const climbs = gradeCats?.some((c) => c > 0) ?? false;
+    // Elevation with a climb, bottom to top: the altitude fill alone (no
+    // stroke), then the grade fill with the grade-colored line over it —
+    // uPlot fills a series before it strokes it, so the second series
+    // carries both; a series has ONE fill, hence the two.
+    const gradeLayers = (m: uPlot.Series): uPlot.Series[] => [
+      // width 0 is what silences the stroke (uPlot skips a zero-width
+      // line before it looks at the color). Its hover point stays — the
+      // cursor's own points option cannot single out a series by a
+      // boolean — but it is invisible: uPlot colors a hover point with the
+      // series' fill or stroke, and a CanvasGradient is no CSS background.
+      { ...m, width: 0, points: { show: false } },
+      {
+        ...m,
+        fill: (u: uPlot) => {
+          const { left, width } = u.bbox;
+          const grad = u.ctx.createLinearGradient(left, 0, left + width, 0);
+          const stops = gradeFillStops(
+            xValues,
+            gradeCats ?? [],
+            (x) => u.valToPos(x, "x", true),
+            left,
+            width,
+          );
+          for (const st of stops) grad.addColorStop(st.offset, st.color);
+          return grad;
+        },
+      },
+    ];
 
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
@@ -288,8 +411,10 @@ function SingleChart({
                 u.over.getBoundingClientRect().left -
                 cont.getBoundingClientRect().left +
                 (u.cursor.left ?? 0);
-              const g = gradeValues?.[chartIdx];
-              // Signed grade so descents read as such.
+              // Over a painted climb the segment's average, steady across
+              // the band; elsewhere the point's own grade, signed so
+              // descents read as such.
+              const g = gradeRunGrades?.[chartIdx] ?? gradeValues?.[chartIdx];
               const gradeTxt = g != null && isFinite(g) ? ` · ${formatGrade(g)}` : "";
               setTip({ left, text: fmtVal(values[chartIdx]) + gradeTxt });
             }
@@ -355,91 +480,16 @@ function SingleChart({
             : undefined,
         },
       ],
-      series: [
-        { label: xLabel },
-        {
-          label: `${config.label} (${config.unit})`,
-          stroke: config.color,
-          fill: config.fill,
-          width: 1.5,
-          // Inverted axis: fill DOWN from the line toward the slow edge —
-          // the default 0-baseline sits above the data there and would
-          // paint the fill overhead.
-          fillTo: config.invertY ? (_u, _si, _dataMin, dataMax) => dataMax : undefined,
-          // Hypsometric bands: a sharp-stop vertical gradient paints the
-          // fill by altitude, atlas-style. Offsets clamp to the visible
-          // range, so sea-level rides are simply green.
-          ...(config.elevationBands
-            ? {
-                fill: (u: uPlot) => {
-                  const { top, height } = u.bbox;
-                  const grad = u.ctx.createLinearGradient(0, top, 0, top + height);
-                  const stops = bandGradientStops(
-                    config.elevationBands!,
-                    (v) => u.valToPos(v, "y", true),
-                    top,
-                    height,
-                  );
-                  for (const s of stops) grad.addColorStop(s.offset, s.color);
-                  return grad;
-                },
-              }
-            : {}),
-          // Grade coloring: a sharp-stop HORIZONTAL gradient paints the
-          // line by climb steepness (flat teal → warm ramp), the sibling of
-          // the vertical fill gradient above. A hair wider than the default
-          // 1.5 — the color IS the information here.
-          ...(gradeValues
-            ? {
-                width: 2,
-                stroke: (u: uPlot) => {
-                  const { left, width } = u.bbox;
-                  const grad = u.ctx.createLinearGradient(left, 0, left + width, 0);
-                  const stops = gradeGradientStops(
-                    xValues,
-                    gradeValues,
-                    (x) => u.valToPos(x, "x", true),
-                    left,
-                    width,
-                  );
-                  for (const s of stops) grad.addColorStop(s.offset, s.color);
-                  return grad;
-                },
-              }
-            : {}),
-          // Design HRChart: rounded bars, each colored by the zone its
-          // value falls into, at the design's 0.88 opacity ("e0" alpha).
-          ...(barZones
-            ? {
-                width: 0,
-                points: { show: false },
-                paths: uPlot.paths.bars!({
-                  size: [0.8, 100],
-                  radius: 0.25,
-                  disp: {
-                    fill: {
-                      unit: 3,
-                      // Array.from, NOT .map: u.data[1] is a Float64Array,
-                      // whose .map would coerce the color strings to NaN.
-                      values: (u) =>
-                        Array.from(
-                          u.data[1] as ArrayLike<number>,
-                          (v) => `${zoneColorFor(v ?? 0, barZones)}e0`,
-                        ),
-                    },
-                  },
-                }),
-              }
-            : {}),
-        },
-      ],
+      series: [{ label: xLabel }, ...(climbs ? gradeLayers(main) : [main])],
       legend: { show: false },
     };
 
-    const data: uPlot.AlignedData = [
-      new Float64Array(xValues),
-      new Float64Array(values),
-    ];
+    // The elevation profile with a climb is two series over one column of
+    // values (the altitude fill, then the grade fill with the line).
+    const column = new Float64Array(values);
+    const data: uPlot.AlignedData = climbs
+      ? [new Float64Array(xValues), column, column]
+      : [new Float64Array(xValues), column];
 
     plotRef.current = new uPlot(opts, data, containerRef.current);
 
@@ -491,7 +541,7 @@ function SingleChart({
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, avgValue]);
+  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue]);
 
   // Sync selection FROM external sources (segment-effort click) → chart:
   // draw uPlot's select box over the published trackpoint range. The box is
@@ -770,6 +820,19 @@ export function ChartPanel({
     () => gradeSeries(trackpoints.distance_m, trackpoints.altitude_m),
     [trackpoints],
   );
+  // What the line and the fill paint: the category owning most of the
+  // road around each point cuts the track into runs, and every run is
+  // colored by the category of its own average grade — the number the
+  // tooltip shows for it, so color and label always agree. A run with no
+  // average (no graded sample inside) paints flat.
+  const gradeRunAll = useMemo(() => {
+    const dominant = gradeCategories(trackpoints.distance_m, grades);
+    return gradeRunAverages(trackpoints.distance_m, grades, dominant);
+  }, [trackpoints, grades]);
+  const gradeCatsAll = useMemo(
+    () => gradeRunAll.map((g) => (g == null ? 0 : gradeCategory(g))),
+    [gradeRunAll],
+  );
 
   const chartData = useMemo(() => {
     if (available.length === 0) return null;
@@ -779,6 +842,8 @@ export function ChartPanel({
     const reverseMap = new Map<number, number>();
     const chartValues = new Map<ChartType, number[]>();
     const gradeValues: (number | null)[] = [];
+    const gradeCats: number[] = [];
+    const gradeRunGrades: (number | null)[] = [];
     for (const config of available) chartValues.set(config.key, []);
 
     // Reuse the series already materialized for the `available` filter — no
@@ -810,11 +875,13 @@ export function ChartPanel({
         chartValues.get(config.key)!.push(data[i] ?? 0);
       }
       gradeValues.push(grades[i] ?? null);
+      gradeCats.push(gradeCatsAll[i] ?? 0);
+      gradeRunGrades.push(gradeRunAll[i] ?? null);
     }
 
     if (xValues.length === 0) return null;
-    return { xValues, indexMap, reverseMap, chartValues, gradeValues };
-  }, [trackpoints, xAxis, available, seriesByKey, grades]);
+    return { xValues, indexMap, reverseMap, chartValues, gradeValues, gradeCats, gradeRunGrades };
+  }, [trackpoints, xAxis, available, seriesByKey, grades, gradeCatsAll, gradeRunAll]);
 
   // Bar counts follow the panel's real width (~14px per bar, see
   // zoneBarCount), per SLOT: the full-width first card fits ~2× the bars of
@@ -906,7 +973,7 @@ export function ChartPanel({
 
   if (!chartData) return null;
 
-  const { xValues, indexMap, reverseMap, chartValues, gradeValues } = chartData;
+  const { xValues, indexMap, reverseMap, chartValues, gradeValues, gradeCats, gradeRunGrades } = chartData;
   // Grade only makes sense when it actually varies — an indoor session with
   // constant (or absent) altitude keeps the plain teal line.
   const hasGrades = gradeValues.some((g) => g != null && g !== 0);
@@ -983,6 +1050,8 @@ export function ChartPanel({
               barRange={barCharts.get(config.key)?.range}
               barStep={barCharts.get(config.key)?.step}
               gradeValues={config.key === "elevation" && hasGrades ? gradeValues : undefined}
+              gradeCats={config.key === "elevation" && hasGrades ? gradeCats : undefined}
+              gradeRunGrades={config.key === "elevation" && hasGrades ? gradeRunGrades : undefined}
               selectionStats={
                 config.key === "elevation" && hasGrades ? elevationSelectionStats : undefined
               }

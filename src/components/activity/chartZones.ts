@@ -288,18 +288,41 @@ export function speedVisRange(dMin: number, dMax: number): [number, number] {
   return [lo, hi];
 }
 
-/** Grade category ceilings in percent — a product decision like the ride
- * speed bounds (Strava/Komoot pick their own): below 4% reads as rolling,
- * 16%+ is wall territory. Descents and flats share the base color — the
+/** Climbs at or above this grade count as climbs: the line leaves its flat
+ * teal and the profile gets a fill under it (the cycling-app look where a
+ * climb's steepness shows as a colored band). A product constant like the
+ * ride speed bounds: 2% is where a road stops reading as flat to the legs
+ * (3% left the last 400 m of a climb's summit, an 8 m rise, unpainted
+ * while the profile plainly still went up). Below it, and on every
+ * descent, the line is teal and the altitude fill stands alone — the
  * chart colors EFFORT, and effort lives uphill. */
-export const GRADE_BOUNDS_PCT = [4, 8, 12, 16];
+export const GRADE_FILL_MIN_PCT = 2;
+
+/** Grade category ceilings in percent — the first is the climb threshold
+ * above, so the line's first warm step and the fill's first band start at
+ * the same sample (one rule for both, the chart-and-card invariant); 5%
+ * splits the gentle approach from the real drag (a 2% run-in and a 7%
+ * grind should not wear one color); 16%+ is wall territory. */
+export const GRADE_BOUNDS_PCT = [GRADE_FILL_MIN_PCT, 5, 8, 12, 16];
 
 /** Grade palette, flat → wall. Index 0 is the elevation line's own teal so
- * flat terrain looks unchanged; the climb steps reuse the HR warm ramp.
- * Neighbors differ in lightness, not just hue (the standing a11y rule). */
+ * flat terrain looks unchanged; the climb steps darken monotonically from
+ * gold to wall red (CIE L* ≈ 77 → 70 → 62 → 45 → 31: the two gentle steps
+ * 7–8 apart and shifting hue from yellow to orange as well, the hard ones
+ * at least 14 apart), so neighbors differ in lightness, not just hue (the
+ * standing a11y rule) — and now that the fill paints them as blocks, the
+ * rule carries the whole area, not a 2 px line. Honest caveat: to a
+ * dichromat the yellow-to-orange hue turn is invisible and the gentle
+ * steps shrink to ≈4 of L*, so 2–5, 5–8 and 8–12 % read as one band; six
+ * steps cannot fit between 77 and 31 any wider — gold cannot go lighter
+ * (1.74:1 on the light card already) and amber cannot go darker without
+ * landing on orange. The tooltip's number is the ground truth for the
+ * gentle steps (#126). Plain #rrggbb only: the zone bars append an alpha
+ * suffix and the fill uses the entries verbatim. */
 export const GRADE_COLORS = [
-  "#0e7490", // < 4%: flat / descent (the elevation line color)
-  "#c9941a", // 4–8%: noticeable
+  "#0e7490", // < GRADE_FILL_MIN_PCT (2%): flat / descent (the elevation line color)
+  "#e5b83f", // 2–5%: gentle
+  "#e39c3b", // 5–8%: noticeable
   "#e07c3a", // 8–12%: hard
   "#c0392b", // 12–16%: steep
   "#8e1a0e", // 16%+: wall
@@ -322,6 +345,11 @@ export const GRADE_WINDOW_M = 30;
 /** A window that collapsed below this span (standing still, track ends)
  * yields no trustworthy grade — better a gap than a spike. */
 const MIN_GRADE_SPAN_M = 5;
+
+/** No road or trail is steeper than this; a grade beyond it is noise — a
+ * barometer drifting 5 m during a stop while the GPS wandered 6 m read as
+ * 93% on a real ride — and becomes a gap rather than a wall. */
+export const GRADE_MAX_ABS_PCT = 40;
 
 /**
  * Smoothed grade (%) per trackpoint from cumulative distance + altitude,
@@ -364,7 +392,8 @@ export function gradeSeries(
     }
     const span = distM[idx[wHi]]! - distM[idx[wLo]]!;
     if (span >= MIN_GRADE_SPAN_M) {
-      out[idx[j]] = ((altM[idx[wHi]]! - altM[idx[wLo]]!) / span) * 100;
+      const g = ((altM[idx[wHi]]! - altM[idx[wLo]]!) / span) * 100;
+      if (Math.abs(g) <= GRADE_MAX_ABS_PCT) out[idx[j]] = g;
     }
   }
   return out;
@@ -468,6 +497,183 @@ export function selectionGrade(
   return { distanceM: span, deltaM: delta, gradePct: (delta / span) * 100, durationS };
 }
 
+/** The line and the fill paint the category that owns most of the road
+ * around a point, not the point's own: rough ground and GPS jitter flip
+ * the sample category every few meters (one mountain ride had 1180 runs,
+ * 670 shorter than 20 m), and a fill painted per flip is a barcode, not a
+ * profile. The window is a fixed length of road: a real pitch is a few
+ * hundred meters at least, whatever the ride's length — 1 % of an 86 km
+ * ride (860 m) outvoted every 300 m ledge of a 66 km one. */
+export const GRADE_PAINT_WINDOW_M = 300;
+
+/** The steepness of a climb is judged over a wider stretch than whether it
+ * is a climb: the 2 % edge of a pitch is a sharp thing on the road, but the
+ * ground inside one rolls between 6 and 10 % every few dozen meters, and a
+ * color per roll is the barcode again. Three climb windows, on the rides
+ * this was tuned on, halved the stripes without moving a single edge. */
+export const GRADE_STEEPNESS_WINDOW_M = 3 * GRADE_PAINT_WINDOW_M;
+
+/** The category each sample carries a `weight` of road for, or null. */
+type Vote = { cat: number | null; weight: number };
+
+/** The category holding the most road inside a window of `windowM`
+ * centered on each of `votes` (positions `dist`, ascending), among `bins`
+ * categories. One pass with a running histogram, O(n). A null category
+ * casts no vote; a window with no votes is 0. Ties go to the sample's own
+ * category, else to the higher one. */
+function dominantCategory(dist: number[], votes: Vote[], windowM: number, bins: number): number[] {
+  const m = votes.length;
+  const out = new Array<number>(m).fill(0);
+  const half = windowM / 2;
+  const hist = new Array<number>(bins).fill(0);
+  let lo = 0;
+  let hi = -1;
+  for (let k = 0; k < m; k++) {
+    while (hi + 1 < m && dist[hi + 1] <= dist[k] + half) {
+      hi++;
+      const c = votes[hi].cat;
+      if (c != null) hist[c] += votes[hi].weight;
+    }
+    while (dist[lo] < dist[k] - half) {
+      const c = votes[lo].cat;
+      if (c != null) hist[c] -= votes[lo].weight;
+      lo++;
+    }
+    let best = 0;
+    for (const v of hist) if (v > best) best = v;
+    if (best <= 0) continue;
+    const own = votes[k].cat;
+    let chosen = -1;
+    for (let c = bins - 1; c >= 0; c--) {
+      if (hist[c] >= best * (1 - 1e-9)) {
+        if (chosen === -1) chosen = c;
+        if (c === own) chosen = c;
+      }
+    }
+    out[k] = chosen;
+  }
+  return out;
+}
+
+/**
+ * The grade category per trackpoint that the line and the fill paint,
+ * decided in two votes over the road centered on each point, every sample
+ * weighted by the road it stands for (halfway to its neighbors). First,
+ * inside `windowM`, is this a climb at all — the climb samples against
+ * the rest, so a 5 % pitch whose jitter dips under the threshold every
+ * few meters still wins as a whole. Then, inside the wider `steepWindowM`
+ * and among the climb samples only, which steepness holds the most road —
+ * so a flat stretch never outvotes the steepness of a climb it borders,
+ * and the rolls inside a climb don't stripe it. Both passes are O(n) with
+ * a running histogram, and neither depends on order: a climb chopped by
+ * jitter stays a climb, a blip inside a flat vanishes, and alternating
+ * pitches keep alternating rather than collapsing into whichever came
+ * first. A sample without a grade (a gap, a capped spike) casts no vote;
+ * a point without a distance keeps its raw category. Ties go to the
+ * point's own category, else to the steeper one. These categories only
+ * cut the road into runs: the color a run finally wears is the category
+ * of its own average (see gradeRunAverages), so a lone run with no
+ * average paints flat.
+ */
+export function gradeCategories(
+  distM: (number | null)[],
+  grades: (number | null)[],
+  windowM: number = GRADE_PAINT_WINDOW_M,
+  steepWindowM: number = (windowM * GRADE_STEEPNESS_WINDOW_M) / GRADE_PAINT_WINDOW_M,
+): number[] {
+  const n = grades.length;
+  const raw = grades.map((g) => (g == null ? null : gradeCategory(g)));
+  const out: number[] = raw.map((c) => c ?? 0);
+  // The samples that carry a distance, in order.
+  const idx: number[] = [];
+  for (let i = 0; i < n; i++) if (distM[i] != null) idx.push(i);
+  const m = idx.length;
+  if (m === 0) return out;
+  const dist = idx.map((i) => distM[i]!);
+  // The road each sample stands for: halfway to the neighbors on both sides.
+  const weightAt = (k: number) => {
+    const left = k > 0 ? (dist[k - 1] + dist[k]) / 2 : dist[k];
+    const right = k < m - 1 ? (dist[k] + dist[k + 1]) / 2 : dist[k];
+    return right - left;
+  };
+  const cats = idx.map((i) => raw[i]);
+  const weights = idx.map((_, k) => weightAt(k));
+  const climbVotes: Vote[] = cats.map((c, k) => ({ cat: c == null ? null : c > 0 ? 1 : 0, weight: weights[k] }));
+  const isClimb = dominantCategory(dist, climbVotes, windowM, 2);
+  const steepVotes: Vote[] = cats.map((c, k) => ({ cat: c == null || c === 0 ? null : c, weight: weights[k] }));
+  const steepness = dominantCategory(dist, steepVotes, steepWindowM, GRADE_COLORS.length);
+  for (let k = 0; k < m; k++) {
+    // A climb by the first vote always has a steepness vote in reach while
+    // steepWindowM covers windowM (the climb sample that won the first vote
+    // sits inside the second window too); the floor only matters to a
+    // caller that narrows the steepness window, and keeps such a climb
+    // painted in the lowest category rather than flat.
+    out[idx[k]] = isClimb[k] === 1 ? Math.max(1, steepness[k]) : 0;
+  }
+  return out;
+}
+
+/**
+ * The average grade of the painted climb each trackpoint sits in, in
+ * percent, and null on the flat category. What the tooltip shows over a
+ * filled segment: one number for the whole band, not a value that moves
+ * with the cursor, and the number the run is colored by, so a band and
+ * its label always agree. It is the distance-weighted mean of the smoothed,
+ * capped per-sample grades inside the run — the average grade a rider
+ * expects (rise over run), but not measured between the run's two end
+ * samples, because the ends are exactly where a stop's barometer drift
+ * lives: a drifted end sample moves the mean only in proportion to the
+ * road it owns, a few meters of a run at least a couple hundred long,
+ * where rise over run would take the whole drift. (A median would ignore
+ * the drift entirely but is not an average grade: a run half 5 % and half
+ * 12 % would read 5 or 12 rather than 8.5.) A sample without a grade or a
+ * distance carries no weight; a run with no weight at all has no average.
+ * Two neighboring runs whose averages land in one category paint as one
+ * band that answers with two numbers, both inside that category.
+ */
+export function gradeRunAverages(
+  distM: (number | null)[],
+  grades: (number | null)[],
+  cats: number[],
+): (number | null)[] {
+  const n = cats.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  let start = 0;
+  for (let i = 1; i <= n; i++) {
+    if (i < n && cats[i] === cats[start]) continue;
+    if (cats[start] > 0) {
+      let sum = 0;
+      let weight = 0;
+      for (let k = start; k < i; k++) {
+        const g = grades[k];
+        const d = distM[k];
+        if (g == null || d == null) continue;
+        // The road this sample stands for, halfway to its graded neighbors
+        // inside the run; a lone sample stands for a point of road, so a
+        // run of one graded sample takes its grade outright.
+        let prev = k - 1;
+        while (prev >= start && (grades[prev] == null || distM[prev] == null)) prev--;
+        let next = k + 1;
+        while (next < i && (grades[next] == null || distM[next] == null)) next++;
+        const left = prev >= start ? (distM[prev]! + d) / 2 : d;
+        const right = next < i ? (d + distM[next]!) / 2 : d;
+        const w = right - left;
+        if (w > 0) {
+          sum += g * w;
+          weight += w;
+        } else if (weight === 0 && prev < start && next >= i) {
+          sum = g;
+          weight = 1;
+        }
+      }
+      const avg = weight > 0 ? sum / weight : null;
+      for (let k = start; k < i; k++) out[k] = avg;
+    }
+    start = i;
+  }
+  return out;
+}
+
 /**
  * Horizontal gradient stops (offset 0 = plot left, 1 = right) painting the
  * elevation LINE by grade category with sharp transitions — the vertical
@@ -478,28 +684,78 @@ export function selectionGrade(
  */
 export function gradeGradientStops(
   xs: number[],
-  grades: (number | null)[],
+  cats: number[],
+  xPosOf: (x: number) => number,
+  left: number,
+  width: number,
+): { offset: number; color: string }[] {
+  return sharpStops(xs, (i) => GRADE_COLORS[cats[i] ?? 0], xPosOf, left, width);
+}
+
+/** The fill's "nothing here" — a stop that paints nothing. */
+export const GRADE_FILL_NONE = "rgba(0, 0, 0, 0)";
+
+/** The fill palette by grade category: nothing for the flat category (the
+ * altitude fill stays), the line's own color, OPAQUE, for every climb step.
+ * Not a tint over the hypsometric bands: a translucent fill halved the
+ * lightness step between neighboring categories and let the altitude band
+ * underneath move the lightness more than the category did — the
+ * colorblind rule in the palette's header was gone. Under a climb the
+ * grade replaces the altitude tint outright. Built once — the stops walk
+ * every sample of the track on every redraw. */
+const GRADE_FILL_COLORS = GRADE_COLORS.map((c, i) => (i === 0 ? GRADE_FILL_NONE : c));
+
+/** Fill color under one grade sample: the line's category, so the band
+ * under the line starts and ends exactly where the line changes color. */
+export function gradeFillColor(pct: number | null): string {
+  return GRADE_FILL_COLORS[gradeCategory(pct)];
+}
+
+/**
+ * Horizontal gradient stops painting the FILL under the elevation line by
+ * grade category — the sibling of gradeGradientStops for the line,
+ * transparent wherever the category is the flat one.
+ */
+export function gradeFillStops(
+  xs: number[],
+  cats: number[],
+  xPosOf: (x: number) => number,
+  left: number,
+  width: number,
+): { offset: number; color: string }[] {
+  return sharpStops(xs, (i) => GRADE_FILL_COLORS[cats[i] ?? 0], xPosOf, left, width);
+}
+
+/**
+ * Sharp-stop horizontal gradient over the samples: one color per run of
+ * equal `colorAt`, the change at the midpoint between neighbors. Offsets
+ * are clamped and kept monotonic with a NaN guard (a poisoned offset would
+ * make addColorStop throw and kill the chart).
+ */
+function sharpStops(
+  xs: number[],
+  colorAt: (i: number) => string,
   xPosOf: (x: number) => number,
   left: number,
   width: number,
 ): { offset: number; color: string }[] {
   const stops: { offset: number; color: string }[] = [];
   if (xs.length === 0) return stops;
-  let cat = gradeCategory(grades[0] ?? null);
+  let color = colorAt(0);
   let prev = 0;
   for (let i = 1; i < xs.length; i++) {
-    const c = gradeCategory(grades[i] ?? null);
-    if (c === cat) continue;
+    const c = colorAt(i);
+    if (c === color) continue;
     const midX = (xs[i - 1] + xs[i]) / 2;
     const raw = (xPosOf(midX) - left) / width;
     const t = Number.isNaN(raw) ? prev : Math.min(1, Math.max(prev, raw));
-    stops.push({ offset: prev, color: GRADE_COLORS[cat] });
-    stops.push({ offset: t, color: GRADE_COLORS[cat] });
+    stops.push({ offset: prev, color });
+    stops.push({ offset: t, color });
     prev = t;
-    cat = c;
+    color = c;
   }
-  stops.push({ offset: prev, color: GRADE_COLORS[cat] });
-  stops.push({ offset: 1, color: GRADE_COLORS[cat] });
+  stops.push({ offset: prev, color });
+  stops.push({ offset: 1, color });
   return stops;
 }
 

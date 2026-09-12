@@ -9,7 +9,16 @@ import {
   GRADE_BOUNDS_PCT,
   GRADE_COLORS,
   gradeCategory,
+  gradeCategories,
+  gradeFillColor,
+  gradeFillStops,
   gradeGradientStops,
+  GRADE_FILL_MIN_PCT,
+  GRADE_FILL_NONE,
+  GRADE_MAX_ABS_PCT,
+  GRADE_PAINT_WINDOW_M,
+  GRADE_STEEPNESS_WINDOW_M,
+  gradeRunAverages,
   gradeSeries,
   HR_FALLBACK_COLOR,
   nearestIdx,
@@ -366,16 +375,21 @@ describe("gradeCategory", () => {
     expect(gradeCategory(NaN)).toBe(0);
     expect(gradeCategory(-12)).toBe(0); // descents share the flat color
     expect(gradeCategory(0)).toBe(0);
-    expect(gradeCategory(3.9)).toBe(0);
-    expect(gradeCategory(4)).toBe(1);
-    expect(gradeCategory(8)).toBe(2);
-    expect(gradeCategory(12)).toBe(3);
-    expect(gradeCategory(16)).toBe(4);
-    expect(gradeCategory(45)).toBe(4);
+    expect(gradeCategory(GRADE_FILL_MIN_PCT - 0.1)).toBe(0);
+    expect(gradeCategory(GRADE_FILL_MIN_PCT)).toBe(1);
+    expect(gradeCategory(5)).toBe(2);
+    expect(gradeCategory(8)).toBe(3);
+    expect(gradeCategory(12)).toBe(4);
+    expect(gradeCategory(16)).toBe(5);
+    expect(gradeCategory(45)).toBe(5);
   });
 
   it("has one color per category", () => {
     expect(GRADE_COLORS.length).toBe(GRADE_BOUNDS_PCT.length + 1);
+    // Plain #rrggbb only: the zone bars append an alpha suffix to a color
+    // and the fill palette reuses these verbatim — an rgba() entry would
+    // make one of them an invalid color and addColorStop would throw.
+    for (const c of GRADE_COLORS) expect(c).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
 
@@ -475,12 +489,159 @@ describe("selectionGrade", () => {
   });
 });
 
+describe("gradeSeries cap and gradeCategories", () => {
+  it("turns a grade beyond the physical cap into a gap", () => {
+    // 5 m of altitude over a 6 m span (a stop with barometer drift) is not a road.
+    const dist = [0, 3, 6, 9, 12, 15, 18];
+    const alt = [100, 100, 100, 105, 105, 105, 105];
+    const g = gradeSeries(dist, alt, 6);
+    expect(g.some((v) => v != null && Math.abs(v) > GRADE_MAX_ABS_PCT)).toBe(false);
+    expect(g.filter((v) => v == null).length).toBeGreaterThan(0);
+    // A steep but real pitch survives.
+    const steep = gradeSeries([0, 10, 20, 30], [0, 3, 6, 9], 20);
+    expect(steep[1]).toBeCloseTo(30);
+  });
+
+  it("paints the category that owns most of the road around a point", () => {
+    const step = 10; // meters between samples
+    const dist = Array.from({ length: 60 }, (_, i) => i * step);
+    const W = 100;
+    // Flat, a 3-sample blip of 10%, flat, then a real 10% climb of 20 samples.
+    const grades = dist.map((_, i) => (i >= 5 && i < 8 ? 10 : i >= 30 && i < 50 ? 10 : 0));
+    const cats = gradeCategories(dist, grades, W);
+    expect(cats.slice(0, 30).every((c) => c === 0)).toBe(true);
+    expect(cats.slice(32, 48).every((c) => c === 3)).toBe(true);
+    // A flat gap inside a climb is the climb's.
+    const gap = dist.map((_, i) => (i >= 20 && i < 23 ? 0 : 10));
+    expect(gradeCategories(dist, gap, W).every((c) => c === 3)).toBe(true);
+    // Equal-length alternation (40 m of 10%, 40 m of flat, over and over)
+    // never collapses into the flat that came first: the climb keeps its
+    // share, and the steeper pitch of a 10%/14% alternation stays too.
+    const rough = dist.map((_, i) => (i < 10 ? 0 : (i - 10) % 8 < 4 ? 10 : 0));
+    const roughCats = gradeCategories(dist, rough, W);
+    expect(roughCats.slice(0, 8).every((c) => c === 0)).toBe(true);
+    expect(roughCats.slice(10).filter((c) => c === 3).length).toBeGreaterThan(15);
+    const two = dist.map((_, i) => ((i % 8) < 4 ? 10 : 14));
+    const twoCats = gradeCategories(dist, two, W);
+    expect(twoCats.every((c) => c === 3 || c === 4)).toBe(true);
+    expect(twoCats.some((c) => c === 4)).toBe(true);
+    // A sample without a grade (a capped spike, a gap) casts no vote and is
+    // painted like its surroundings; a point without a distance keeps its
+    // raw category; a window with no votes at all is flat.
+    const holed = dist.map((_, i) => (i === 40 ? null : i >= 30 && i < 50 ? 10 : 0));
+    expect(gradeCategories(dist, holed, W)[40]).toBe(3);
+    expect(gradeCategories([null, null, null], [10, 0, 10])).toEqual([3, 0, 3]);
+    expect(gradeCategories([0, 10, 20], [null, null, null], W)).toEqual([0, 0, 0]);
+    expect(gradeCategories([], [])).toEqual([]);
+    // A tiny best vote never lets an empty bin win the tie-break.
+    expect(gradeCategories([0, 1e-10, 2e-10, 500], [null, 5, null, null], 100)).toEqual([2, 2, 2, 0]);
+  });
+
+  it("decides climb-or-not first, so a pitch dipping under the threshold every few meters still wins", () => {
+    const dist = Array.from({ length: 60 }, (_, i) => i * 10);
+    // A 300 m 5 % pitch whose jitter reads 1 % (under the threshold) on
+    // every third sample: the 5–8 % bin alone holds less road than the flat
+    // bin around it, but the climb samples together hold more than the rest.
+    const grades = dist.map((_, i) => (i >= 20 && i < 50 ? (i % 3 === 0 ? 1 : 5) : 0));
+    const cats = gradeCategories(dist, grades, 100);
+    expect(cats.slice(24, 47).every((c) => c === 2)).toBe(true);
+    expect(cats.slice(0, 20).every((c) => c === 0)).toBe(true);
+    // Inside a climb the steepness vote is among climb samples only, over
+    // the wider steepness window: a 12 % pitch bordered by a long flat is
+    // still 12 %, not the flat's 0, and a 60 m roll of 5 % inside 300 m of
+    // 10 % takes the climb's steepness rather than its own.
+    const steep = dist.map((_, i) => (i >= 34 && i < 46 ? 12 : 0));
+    expect(gradeCategories(dist, steep, 100)[40]).toBe(4);
+    const roll = dist.map((_, i) => (i >= 10 && i < 40 ? (i >= 24 && i < 30 ? 5 : 10) : 0));
+    expect(gradeCategories(dist, roll, 100, 300)[27]).toBe(3);
+    expect(gradeCategories(dist, roll, 100, 100)[27]).toBe(2);
+    // The default windows are fixed lengths of road, a few pixels of any
+    // ride: a lone 30 m blip is outvoted by the 300 m around it.
+    expect(GRADE_PAINT_WINDOW_M).toBe(300);
+    expect(GRADE_STEEPNESS_WINDOW_M).toBe(900);
+    const blip = dist.map((_, i) => (i >= 30 && i < 33 ? 10 : 0));
+    expect(gradeCategories(dist, blip).every((c) => c === 0)).toBe(true);
+  });
+
+  it("gives every point of a painted climb the climb's own average grade", () => {
+    const dist = [0, 100, 200, 300, 400, 500, 600];
+    const grades = [0, 0, 8, 10, 12, 0, 0];
+    const cats = [0, 0, 2, 2, 2, 0, 0];
+    // Distance-weighted mean of the run's own samples: 8·50 + 10·100 + 12·50
+    // over 200 m = 10, the same number across the band; flats get null.
+    expect(gradeRunAverages(dist, grades, cats)).toEqual([null, null, 10, 10, 10, null, null]);
+    // Rise over run between the ends would read a barometer drift on the
+    // last sample as the climb's grade; the smoothed, capped samples don't.
+    const drift = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 25, 30, 37, null];
+    const d2 = drift.map((_, i) => i * 5);
+    const avg = gradeRunAverages(d2, drift, drift.map(() => 1));
+    expect(avg[0]).toBeCloseTo(10.9, 1);
+    expect(avg.every((v) => v === avg[0])).toBe(true);
+    // Samples without a grade or a distance carry no weight; a run of one
+    // graded sample takes its grade; a run with none has no average.
+    expect(gradeRunAverages([0, null, 200], [10, null, 10], [2, 2, 2])).toEqual([10, 10, 10]);
+    expect(gradeRunAverages([0, 100], [null, 10], [2, 2])).toEqual([10, 10]);
+    expect(gradeRunAverages([0, 100], [null, null], [2, 2])).toEqual([null, null]);
+    expect(gradeRunAverages([], [], [])).toEqual([]);
+  });
+});
+
+describe("gradeFillStops", () => {
+  const xPosOf = (x: number) => x;
+  const climb = (pct: number) => gradeFillColor(pct);
+
+  it("paints nothing below the threshold, on descents and on unknown grades", () => {
+    expect(gradeFillColor(0)).toBe(GRADE_FILL_NONE);
+    expect(gradeFillColor(GRADE_FILL_MIN_PCT - 0.1)).toBe(GRADE_FILL_NONE);
+    expect(gradeFillColor(-12)).toBe(GRADE_FILL_NONE);
+    expect(gradeFillColor(null)).toBe(GRADE_FILL_NONE);
+    expect(gradeFillColor(NaN)).toBe(GRADE_FILL_NONE);
+    const stops = gradeFillStops([0, 50, 100], [1, 1.5, -5].map(gradeCategory), xPosOf, 0, 100);
+    expect(stops).toEqual([
+      { offset: 0, color: GRADE_FILL_NONE },
+      { offset: 1, color: GRADE_FILL_NONE },
+    ]);
+  });
+
+  it("uses the line's own category color, opaque, changing where the line does", () => {
+    expect(climb(GRADE_FILL_MIN_PCT)).toBe(GRADE_COLORS[1]);
+    expect(climb(4)).toBe(climb(GRADE_FILL_MIN_PCT));
+    expect(climb(10)).toBe(GRADE_COLORS[3]);
+    expect(climb(20)).toBe(GRADE_COLORS[5]);
+    expect(climb(10)).not.toBe(GRADE_COLORS[0]);
+    // One rule for the line and the fill: the same sample flips both.
+    for (const pct of [2.9, 3, 7.9, 8, 15.9, 16]) {
+      expect(climb(pct) === GRADE_FILL_NONE).toBe(gradeCategory(pct) === 0);
+    }
+  });
+
+  it("puts a sharp double-stop where a climb starts and ends", () => {
+    const stops = gradeFillStops([0, 40, 60, 80, 100], [1, 1, 10, 10, 1].map(gradeCategory), xPosOf, 0, 100);
+    expect(stops).toEqual([
+      { offset: 0, color: GRADE_FILL_NONE },
+      { offset: 0.5, color: GRADE_FILL_NONE },
+      { offset: 0.5, color: climb(10) },
+      { offset: 0.9, color: climb(10) },
+      { offset: 0.9, color: GRADE_FILL_NONE },
+      { offset: 1, color: GRADE_FILL_NONE },
+    ]);
+  });
+
+  it("keeps offsets monotonic in [0,1] with a NaN-proof position", () => {
+    const stops = gradeFillStops([0, 50, 100], [5, 12, 5].map(gradeCategory), (x) => (x === 75 ? NaN : x * 2), 0, 100);
+    const offsets = stops.map((s) => s.offset);
+    expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+    expect(offsets.every((o) => o >= 0 && o <= 1)).toBe(true);
+    expect(gradeFillStops([], [].map(gradeCategory), xPosOf, 0, 100)).toEqual([]);
+  });
+});
+
 describe("gradeGradientStops", () => {
   // Identity-ish mapping: x 0..100 → px 0..100 over a 100px plot.
   const xPosOf = (x: number) => x;
 
   it("paints one flat color when the category never changes", () => {
-    const stops = gradeGradientStops([0, 50, 100], [1, 2, 1], xPosOf, 0, 100);
+    const stops = gradeGradientStops([0, 50, 100], [1, 1.5, 1].map(gradeCategory), xPosOf, 0, 100);
     expect(stops).toEqual([
       { offset: 0, color: GRADE_COLORS[0] },
       { offset: 1, color: GRADE_COLORS[0] },
@@ -488,20 +649,18 @@ describe("gradeGradientStops", () => {
   });
 
   it("puts a sharp double-stop at the midpoint of a category change", () => {
-    const stops = gradeGradientStops([0, 40, 60, 100], [0, 0, 10, 10], xPosOf, 0, 100);
+    const stops = gradeGradientStops([0, 40, 60, 100], [0, 0, 10, 10].map(gradeCategory), xPosOf, 0, 100);
     // Flat until mid(40,60)=50 → 0.5, then the 8–12% color to the end.
     expect(stops).toEqual([
       { offset: 0, color: GRADE_COLORS[0] },
       { offset: 0.5, color: GRADE_COLORS[0] },
-      { offset: 0.5, color: GRADE_COLORS[2] },
-      { offset: 1, color: GRADE_COLORS[2] },
+      { offset: 0.5, color: GRADE_COLORS[3] },
+      { offset: 1, color: GRADE_COLORS[3] },
     ]);
   });
 
   it("treats null grades as flat and keeps offsets monotonic in [0,1]", () => {
-    const stops = gradeGradientStops(
-      [0, 25, 50, 75, 100],
-      [null, 20, null, 5, null],
+    const stops = gradeGradientStops([0, 25, 50, 75, 100], [null, 20, null, 5, null].map(gradeCategory),
       xPosOf,
       0,
       100,
@@ -516,18 +675,18 @@ describe("gradeGradientStops", () => {
   });
 
   it("returns no stops for an empty series", () => {
-    expect(gradeGradientStops([], [], xPosOf, 0, 100)).toEqual([]);
+    expect(gradeGradientStops([], [].map(gradeCategory), xPosOf, 0, 100)).toEqual([]);
   });
 
   it("collapses a NaN position to the previous stop instead of poisoning", () => {
     // addColorStop throws on NaN offsets and kills the chart — the guard
     // must swallow a NaN projection (e.g. an unmeasured plot).
-    const stops = gradeGradientStops([0, 50, 100], [0, 10, 10], () => NaN, 0, 100);
+    const stops = gradeGradientStops([0, 50, 100], [0, 10, 10].map(gradeCategory), () => NaN, 0, 100);
     expect(stops).toEqual([
       { offset: 0, color: GRADE_COLORS[0] },
       { offset: 0, color: GRADE_COLORS[0] },
-      { offset: 0, color: GRADE_COLORS[2] },
-      { offset: 1, color: GRADE_COLORS[2] },
+      { offset: 0, color: GRADE_COLORS[3] },
+      { offset: 1, color: GRADE_COLORS[3] },
     ]);
   });
 });

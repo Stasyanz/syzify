@@ -6,6 +6,27 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- The elevation profile fills the area under a climb with the grade's
+  color (#125): from 2 % up, the steeper the warmer, in the line's own
+  palette and changing where the line does; flats and descents keep the
+  altitude tints. Over a filled segment the tooltip shows the segment's
+  average grade, one number for the whole band, and the band wears the
+  color of that same number.
+
+### Fixed
+- A stop with a drifting barometer no longer reads as a 90 % grade on the
+  elevation profile (#125): grades beyond 40 % are gaps, and the line and
+  the fill paint the grade that owns most of the surrounding 300 m of
+  road — a rough descent is no longer a barcode of colors, and a short
+  pitch still counts as one.
+
+### Changed
+- The elevation line's first climb color now starts at 2 % (was 4 %), the
+  same threshold as the new fill, that first step is a lighter gold, and a
+  new amber step at 5 % separates a gentle run-in from a real drag (#125)
+  — every imported activity's profile picks this up.
+
 ## [0.6.0] - 2026-09-09
 
 ### Added
