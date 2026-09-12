@@ -16,7 +16,7 @@ type SeriesOpts = { label?: string; stroke?: string | Painter; fill?: string | P
 type PlotOpts = { series: SeriesOpts[]; height?: number; hooks?: { setCursor?: ((u: unknown) => void)[] } };
 const built: { opts: PlotOpts; data: unknown[] }[] = [];
 /** Every setSize the panel asked of a plot, in order. */
-const sizes: { width: number; height: number }[] = [];
+const sizes: { width: number; height: number; label?: string }[] = [];
 /** The bar-path configs handed to uPlot.paths.bars — their fill painter. */
 const barCfgs: { disp: { fill: { values: (u: unknown) => string[] } } }[] = [];
 
@@ -31,12 +31,18 @@ vi.mock("uplot", () => ({
     };
     over = document.createElement("div");
     cursor = { idx: null };
+    height: number;
+    label?: string;
     constructor(opts: unknown, data: unknown, target: HTMLElement) {
-      built.push({ opts: opts as PlotOpts, data: data as unknown[] });
+      const o = opts as PlotOpts;
+      built.push({ opts: o, data: data as unknown[] });
+      this.height = o.height ?? 0;
+      this.label = o.series[1]?.label;
       target.appendChild(this.over);
     }
     setSize(s: { width: number; height: number }) {
-      sizes.push(s);
+      this.height = s.height;
+      sizes.push({ ...s, label: this.label });
     }
     setCursor() {}
     valToPos() {
@@ -301,7 +307,21 @@ describe("first-slot grip", () => {
     // happy-dom has no pointer capture; the handlers call it unconditionally
     // (WKWebView needs it or the drag dies at the handle's edge).
     HTMLElement.prototype.setPointerCapture = vi.fn();
+    HTMLElement.prototype.hasPointerCapture = vi.fn(() => true);
     HTMLElement.prototype.releasePointerCapture = vi.fn();
+  });
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+  const original = {
+    set: proto.setPointerCapture,
+    has: proto.hasPointerCapture,
+    release: proto.releasePointerCapture,
+  };
+  afterEach(() => {
+    proto.setPointerCapture = original.set;
+    proto.hasPointerCapture = original.has;
+    proto.releasePointerCapture = original.release;
+    // A failed waitFor must not leak a per-test getSetting into the next.
+    vi.mocked(api.getSetting).mockImplementation(async () => null);
   });
 
   it("clamps a dragged or persisted height into [default, +50 %], NaN to the default", () => {
@@ -320,12 +340,17 @@ describe("first-slot grip", () => {
     expect(cards.length).toBeGreaterThan(1);
     expect(cards[0].querySelector('[data-testid="wide-chart-grip"]')).not.toBeNull();
     expect(cards[1].querySelector('[data-testid="wide-chart-grip"]')).toBeNull();
-    // Every plot starts at the shared default height.
+    // Every plot starts at the shared default height, and none is resized
+    // on mount: uPlot's setSize is a full recommit even for equal sizes.
     expect(built.every((b) => b.opts.height === CHART_HEIGHT_PX)).toBe(true);
+    expect(sizes).toHaveLength(0);
     const plotsBefore = built.length;
 
     const g = grip(container);
     fireEvent.pointerDown(g, { pointerId: 1, clientY: 10 });
+    // The grip's pointerdown stops before the card's reorder drag: no
+    // card turns into the dragging ghost.
+    expect(container.querySelector(".opacity-40")).toBeNull();
     fireEvent.pointerMove(g, { pointerId: 1, clientY: 70 });
     // +60 px on the first plot, no rebuild, the others untouched.
     expect(sizes[sizes.length - 1].height).toBe(CHART_HEIGHT_PX + 60);
@@ -361,10 +386,28 @@ describe("first-slot grip", () => {
     expect(api.setSetting).not.toHaveBeenCalled();
   });
 
+  it("binds the height to the slot, not to the chart: another order puts it on the chart now first", async () => {
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) =>
+      key === "chart_wide_height" ? "300" : key === "chart_order" ? JSON.stringify(["hr", "elevation"]) : null,
+    );
+    renderPanel(track(), vi.fn());
+    // Heart rate is a bar chart: moving into the wide slot changes its bar
+    // window, so it is rebuilt there rather than resized — and the rebuild
+    // reads the slot's height. Either way the plot ends up at 300.
+    const heightOf = (prefix: string) => {
+      const plots = built.filter((b) => b.opts.series[1]?.label?.startsWith(prefix));
+      const last = plots[plots.length - 1];
+      const resized = sizes.filter((s) => s.label?.startsWith(prefix));
+      return resized.length > 0 ? resized[resized.length - 1].height : last?.opts.height;
+    };
+    await waitFor(() => expect(heightOf("Heart")).toBe(300));
+    expect(heightOf("Elevation")).toBe(CHART_HEIGHT_PX);
+    expect(sizes.some((s) => s.label?.startsWith("Elevation") && s.height !== CHART_HEIGHT_PX)).toBe(false);
+  });
+
   it("restores the persisted height, clamped", async () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => (key === "chart_wide_height" ? "9999" : null));
     renderPanel(track(), vi.fn());
     await waitFor(() => expect(sizes.some((s) => s.height === WIDE_CHART_MAX_HEIGHT_PX)).toBe(true));
-    vi.mocked(api.getSetting).mockImplementation(async () => null);
   });
 });

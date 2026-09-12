@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, PopupAt, useMap, useMapEvents } from "../map/leaflet";
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { useActivityStore } from "../../stores/activityStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { api, isTauri } from "../../lib/tauri";
+import { useResizeGrip } from "./useResizeGrip";
 import { protocolBase } from "../../lib/protocolUrl";
 
 interface Props {
@@ -338,14 +339,10 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
     queryKey: ["setting", "map_layer"],
     queryFn: () => api.getSetting("map_layer"),
   });
-  const { data: savedHeight } = useQuery({
-    queryKey: ["setting", "map_height"],
-    queryFn: () => api.getSetting("map_height"),
-  });
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [layer, setLayer] = useState<LayerId>("osm");
-  const [height, setHeight] = useState(MAP_DEFAULT_HEIGHT_PX);
+  const { height, grip } = useResizeGrip(MAP_DEFAULT_HEIGHT_PX, clampMapHeight, "map_height");
   // Right-click on the route: the snapped track point the menu was opened on.
   const [menuPoint, setMenuPoint] = useState<[number, number] | null>(null);
 
@@ -367,35 +364,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
     }
   }, [savedLayer]);
 
-  useEffect(() => {
-    if (savedHeight != null) setHeight(clampMapHeight(Number(savedHeight)));
-  }, [savedHeight]);
 
-  // Drag state for the bottom-right resize grip; pointer capture keeps the
-  // drag alive even when the cursor leaves the 20×20 handle.
-  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
-
-  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { startY: e.clientY, startHeight: height };
-  }, [height]);
-
-  const handleResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    setHeight(clampMapHeight(drag.startHeight + (e.clientY - drag.startY)));
-  }, []);
-
-  const handleResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setHeight((h) => {
-      api.setSetting("map_height", String(h)).catch(() => {});
-      return h;
-    });
-  }, []);
 
   useEffect(() => {
     if (!isFullscreen) return;
@@ -487,10 +456,7 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
         // outside the map anyway — the ns-resize cursor is the affordance.
         <div
           className="absolute bottom-0 right-0 z-[1000] h-5 w-5 cursor-ns-resize touch-none text-muted hover:text-ink"
-          onPointerDown={handleResizeStart}
-          onPointerMove={handleResizeMove}
-          onPointerUp={handleResizeEnd}
-          onPointerCancel={handleResizeEnd}
+          {...grip}
         >
           <svg
             width="10"

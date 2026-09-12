@@ -53,6 +53,7 @@ import {
   type SummaryAverages,
 } from "./chartConfigs";
 import { api } from "../../lib/tauri";
+import { useResizeGrip } from "./useResizeGrip";
 import { formatGrade, formatSelectionStats } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
 import {
@@ -549,10 +550,14 @@ function SingleChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [xValues, values, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue]);
 
-  // A new height resizes the live plot in place.
+  // A new height resizes the live plot in place. Effects all run on mount,
+  // and uPlot's setSize is not a no-op for equal sizes (it drops every
+  // series path and recommits), so only a real change gets through — the
+  // freshly built plot already has this height.
   useEffect(() => {
-    if (plotRef.current && containerRef.current) {
-      plotRef.current.setSize({ width: containerRef.current.clientWidth, height });
+    const plot = plotRef.current;
+    if (plot && containerRef.current && plot.height !== height) {
+      plot.setSize({ width: containerRef.current.clientWidth, height });
     }
   }, [height]);
 
@@ -772,39 +777,7 @@ export function ChartPanel({
 
   // The first slot's height: persisted like the map's, owned by the slot
   // rather than by whichever chart a reorder puts there.
-  const { data: savedWideHeight } = useQuery({
-    queryKey: ["setting", WIDE_HEIGHT_KEY],
-    queryFn: () => api.getSetting(WIDE_HEIGHT_KEY),
-  });
-  const [wideHeight, setWideHeight] = useState(CHART_HEIGHT_PX);
-  useEffect(() => {
-    if (savedWideHeight != null) setWideHeight(clampWideChartHeight(Number(savedWideHeight)));
-  }, [savedWideHeight]);
-  // Pointer capture keeps the drag alive when the cursor leaves the 20×20 grip.
-  const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
-  const onResizeStart = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      resizeRef.current = { startY: e.clientY, startHeight: wideHeight };
-    },
-    [wideHeight],
-  );
-  const onResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = resizeRef.current;
-    if (!drag) return;
-    setWideHeight(clampWideChartHeight(drag.startHeight + (e.clientY - drag.startY)));
-  }, []);
-  const onResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizeRef.current) return;
-    resizeRef.current = null;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setWideHeight((h) => {
-      api.setSetting(WIDE_HEIGHT_KEY, String(h)).catch(() => {});
-      return h;
-    });
-  }, []);
+  const { height: wideHeight, grip } = useResizeGrip(CHART_HEIGHT_PX, clampWideChartHeight, WIDE_HEIGHT_KEY);
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null);
 
   const persistOrder = (next: ChartType[]) => {
@@ -1084,7 +1057,7 @@ export function ChartPanel({
             key={config.key}
             data-chart-key={config.key}
             style={{ padding: "12px 14px" }}
-            className={`dash-card relative transition ${i === 0 ? "col-span-2" : ""} ${
+            className={`dash-card transition ${i === 0 ? "relative col-span-2" : ""} ${
               draggingKey === config.key ? "opacity-40" : ""
             } ${overKey === config.key ? "ring-2 ring-accent" : ""}`}
           >
@@ -1130,10 +1103,7 @@ export function ChartPanel({
               <div
                 data-testid="wide-chart-grip"
                 className="absolute bottom-0 right-0 z-10 h-5 w-5 cursor-ns-resize touch-none text-muted hover:text-ink"
-                onPointerDown={onResizeStart}
-                onPointerMove={onResizeMove}
-                onPointerUp={onResizeEnd}
-                onPointerCancel={onResizeEnd}
+                {...grip}
               >
                 <svg
                   width="10"
