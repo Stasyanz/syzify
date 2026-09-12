@@ -166,6 +166,12 @@ function SingleChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  // The height is read through a ref by the plot effect and the resize
+  // observer, and applied by its own effect: a dragged grip changes it on
+  // every pointer move, and rebuilding the plot (with its selection and
+  // tooltip) per move is the wrong price for a resize.
+  const heightRef = useRef(height);
+  heightRef.current = height;
   // The contextmenu listener lives as long as the plot, which outlives any
   // single render — read the callback through a ref so it can never go
   // stale, independent of the plot effect's dependency list.
@@ -333,7 +339,7 @@ function SingleChart({
 
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
-      height,
+      height: heightRef.current,
       cursor: {
         // setScale:false keeps drag as pure selection — the default would
         // ZOOM the x scale on release.
@@ -520,7 +526,7 @@ function SingleChart({
 
     const onResize = () => {
       if (plotRef.current && containerRef.current) {
-        plotRef.current.setSize({ width: containerRef.current.clientWidth, height });
+        plotRef.current.setSize({ width: containerRef.current.clientWidth, height: heightRef.current });
       }
     };
     window.addEventListener("resize", onResize);
@@ -541,7 +547,14 @@ function SingleChart({
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xValues, values, height, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue]);
+  }, [xValues, values, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue]);
+
+  // A new height resizes the live plot in place.
+  useEffect(() => {
+    if (plotRef.current && containerRef.current) {
+      plotRef.current.setSize({ width: containerRef.current.clientWidth, height });
+    }
+  }, [height]);
 
   // Sync selection FROM external sources (segment-effort click) → chart:
   // draw uPlot's select box over the published trackpoint range. The box is
@@ -631,6 +644,19 @@ function SingleChart({
       )}
     </div>
   );
+}
+
+/** Every chart card is this tall; the first, full-width slot can be
+ * stretched by its bottom-right grip, like the map, up to +50 %. */
+export const CHART_HEIGHT_PX = 210;
+export const WIDE_CHART_MAX_HEIGHT_PX = CHART_HEIGHT_PX * 1.5;
+const WIDE_HEIGHT_KEY = "chart_wide_height";
+
+/** Clamp a dragged/persisted first-slot height into [default, default × 1.5].
+ * Exported pure for tests; NaN (a corrupted setting) falls back to the default. */
+export function clampWideChartHeight(px: number): number {
+  if (!Number.isFinite(px)) return CHART_HEIGHT_PX;
+  return Math.min(WIDE_CHART_MAX_HEIGHT_PX, Math.max(CHART_HEIGHT_PX, Math.round(px)));
 }
 
 const DEFAULT_ORDER: ChartType[] = ["elevation", "hr", "pace", "speed", "cadence", "power"];
@@ -743,6 +769,42 @@ export function ChartPanel({
   const dragKey = useRef<ChartType | null>(null);
   const [overKey, setOverKey] = useState<ChartType | null>(null);
   const [draggingKey, setDraggingKey] = useState<ChartType | null>(null);
+
+  // The first slot's height: persisted like the map's, owned by the slot
+  // rather than by whichever chart a reorder puts there.
+  const { data: savedWideHeight } = useQuery({
+    queryKey: ["setting", WIDE_HEIGHT_KEY],
+    queryFn: () => api.getSetting(WIDE_HEIGHT_KEY),
+  });
+  const [wideHeight, setWideHeight] = useState(CHART_HEIGHT_PX);
+  useEffect(() => {
+    if (savedWideHeight != null) setWideHeight(clampWideChartHeight(Number(savedWideHeight)));
+  }, [savedWideHeight]);
+  // Pointer capture keeps the drag alive when the cursor leaves the 20×20 grip.
+  const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const onResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      resizeRef.current = { startY: e.clientY, startHeight: wideHeight };
+    },
+    [wideHeight],
+  );
+  const onResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = resizeRef.current;
+    if (!drag) return;
+    setWideHeight(clampWideChartHeight(drag.startHeight + (e.clientY - drag.startY)));
+  }, []);
+  const onResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setWideHeight((h) => {
+      api.setSetting(WIDE_HEIGHT_KEY, String(h)).catch(() => {});
+      return h;
+    });
+  }, []);
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null);
 
   const persistOrder = (next: ChartType[]) => {
@@ -1022,7 +1084,7 @@ export function ChartPanel({
             key={config.key}
             data-chart-key={config.key}
             style={{ padding: "12px 14px" }}
-            className={`dash-card transition ${i === 0 ? "col-span-2" : ""} ${
+            className={`dash-card relative transition ${i === 0 ? "col-span-2" : ""} ${
               draggingKey === config.key ? "opacity-40" : ""
             } ${overKey === config.key ? "ring-2 ring-accent" : ""}`}
           >
@@ -1045,7 +1107,7 @@ export function ChartPanel({
               values={barCharts.get(config.key)?.values ?? chartValues.get(config.key)!}
               indexMap={barCharts.get(config.key)?.indexMap ?? indexMap}
               reverseMap={barCharts.get(config.key)?.reverseMap ?? reverseMap}
-              height={210}
+              height={i === 0 ? wideHeight : CHART_HEIGHT_PX}
               barZones={barCharts.get(config.key)?.zones}
               barRange={barCharts.get(config.key)?.range}
               barStep={barCharts.get(config.key)?.step}
@@ -1062,6 +1124,27 @@ export function ChartPanel({
               }
               avgValue={averages.get(config.key)}
             />
+            {i === 0 && (
+              // The map's grip, verbatim: no data-tip (its position rule beats
+              // the absolute utility), the ns-resize cursor is the affordance.
+              <div
+                data-testid="wide-chart-grip"
+                className="absolute bottom-0 right-0 z-10 h-5 w-5 cursor-ns-resize touch-none text-muted hover:text-ink"
+                onPointerDown={onResizeStart}
+                onPointerMove={onResizeMove}
+                onPointerUp={onResizeEnd}
+                onPointerCancel={onResizeEnd}
+              >
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  className="pointer-events-none absolute bottom-1 right-1"
+                >
+                  <path d="M9 1L1 9M9 5L5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </div>
+            )}
           </div>
         ))}
         {/* The lone half-width slot at the end takes the caller's card. */}

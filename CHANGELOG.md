@@ -7,6 +7,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 ## [Unreleased]
 
 ### Added
+- The first, full-width chart card under the map can be stretched by its
+  bottom-right grip, like the map, up to half again its height (#128); the
+  height is remembered and belongs to the slot, so reordering charts keeps
+  it.
 - The elevation profile fills the area under a climb with the grade's
   color (#125): from 2 % up, the steeper the warmer, in the line's own
   palette and changing where the line does; flats and descents keep the

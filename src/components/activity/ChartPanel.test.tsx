@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, act } from "@testing-library/react";
+import { render, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TrackPointColumns } from "../../lib/types";
 
@@ -13,8 +13,10 @@ vi.mock("../../lib/tauri", () => ({
 /** Every uPlot built by the panel, for the layer tests below. */
 type Painter = (u: unknown) => unknown;
 type SeriesOpts = { label?: string; stroke?: string | Painter; fill?: string | Painter; width?: number };
-type PlotOpts = { series: SeriesOpts[]; hooks?: { setCursor?: ((u: unknown) => void)[] } };
+type PlotOpts = { series: SeriesOpts[]; height?: number; hooks?: { setCursor?: ((u: unknown) => void)[] } };
 const built: { opts: PlotOpts; data: unknown[] }[] = [];
+/** Every setSize the panel asked of a plot, in order. */
+const sizes: { width: number; height: number }[] = [];
 /** The bar-path configs handed to uPlot.paths.bars — their fill painter. */
 const barCfgs: { disp: { fill: { values: (u: unknown) => string[] } } }[] = [];
 
@@ -33,7 +35,9 @@ vi.mock("uplot", () => ({
       built.push({ opts: opts as PlotOpts, data: data as unknown[] });
       target.appendChild(this.over);
     }
-    setSize() {}
+    setSize(s: { width: number; height: number }) {
+      sizes.push(s);
+    }
     setCursor() {}
     valToPos() {
       return 0;
@@ -43,7 +47,8 @@ vi.mock("uplot", () => ({
 }));
 vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 
-import { ChartPanel } from "./ChartPanel";
+import { ChartPanel, clampWideChartHeight, CHART_HEIGHT_PX, WIDE_CHART_MAX_HEIGHT_PX } from "./ChartPanel";
+import { api } from "../../lib/tauri";
 import { GRADE_COLORS } from "./chartZones";
 
 /** A trackpoint column set with every column null-filled to `n`, then the
@@ -280,5 +285,66 @@ describe("ChartPanel filler slot", () => {
     );
     expect(empty.container.innerHTML).toBe("");
     expect(placed).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("first-slot grip", () => {
+  const N = 20;
+  const track = () =>
+    columns(N, { distance_m: seq((i) => i * 100), altitude_m: seq((i) => 100 + i), hr: seq((i) => 120 + i) });
+  const grip = (c: HTMLElement) => c.querySelector('[data-testid="wide-chart-grip"]') as HTMLElement;
+
+  beforeEach(() => {
+    built.splice(0);
+    sizes.splice(0);
+    vi.mocked(api.setSetting).mockClear();
+    // happy-dom has no pointer capture; the handlers call it unconditionally
+    // (WKWebView needs it or the drag dies at the handle's edge).
+    HTMLElement.prototype.setPointerCapture = vi.fn();
+    HTMLElement.prototype.releasePointerCapture = vi.fn();
+  });
+
+  it("clamps a dragged or persisted height into [default, +50 %], NaN to the default", () => {
+    expect(clampWideChartHeight(250)).toBe(250);
+    expect(clampWideChartHeight(250.4)).toBe(250);
+    expect(clampWideChartHeight(10)).toBe(CHART_HEIGHT_PX);
+    expect(clampWideChartHeight(10_000)).toBe(WIDE_CHART_MAX_HEIGHT_PX);
+    expect(WIDE_CHART_MAX_HEIGHT_PX).toBe(CHART_HEIGHT_PX * 1.5);
+    expect(clampWideChartHeight(NaN)).toBe(CHART_HEIGHT_PX);
+    expect(clampWideChartHeight(Infinity)).toBe(CHART_HEIGHT_PX);
+  });
+
+  it("only the full-width first card has the grip, and dragging it resizes that plot in place", () => {
+    const { container } = renderPanel(track(), vi.fn());
+    const cards = container.querySelectorAll("[data-chart-key]");
+    expect(cards.length).toBeGreaterThan(1);
+    expect(cards[0].querySelector('[data-testid="wide-chart-grip"]')).not.toBeNull();
+    expect(cards[1].querySelector('[data-testid="wide-chart-grip"]')).toBeNull();
+    // Every plot starts at the shared default height.
+    expect(built.every((b) => b.opts.height === CHART_HEIGHT_PX)).toBe(true);
+    const plotsBefore = built.length;
+
+    const g = grip(container);
+    fireEvent.pointerDown(g, { pointerId: 1, clientY: 10 });
+    fireEvent.pointerMove(g, { pointerId: 1, clientY: 70 });
+    // +60 px on the first plot, no rebuild, the others untouched.
+    expect(sizes[sizes.length - 1].height).toBe(CHART_HEIGHT_PX + 60);
+    expect(built.length).toBe(plotsBefore);
+    fireEvent.pointerMove(g, { pointerId: 1, clientY: 900 });
+    expect(sizes[sizes.length - 1].height).toBe(WIDE_CHART_MAX_HEIGHT_PX);
+    expect(api.setSetting).not.toHaveBeenCalled();
+    fireEvent.pointerUp(g, { pointerId: 1, clientY: 900 });
+    expect(api.setSetting).toHaveBeenCalledWith("chart_wide_height", String(WIDE_CHART_MAX_HEIGHT_PX));
+    // A move after release is not a drag.
+    const n = sizes.length;
+    fireEvent.pointerMove(g, { pointerId: 1, clientY: 10 });
+    expect(sizes.length).toBe(n);
+  });
+
+  it("restores the persisted height, clamped", async () => {
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => (key === "chart_wide_height" ? "9999" : null));
+    renderPanel(track(), vi.fn());
+    await waitFor(() => expect(sizes.some((s) => s.height === WIDE_CHART_MAX_HEIGHT_PX)).toBe(true));
+    vi.mocked(api.getSetting).mockImplementation(async () => null);
   });
 });
