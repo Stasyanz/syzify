@@ -341,6 +341,26 @@ describe("first-slot grip", () => {
     expect(sizes.length).toBe(n);
   });
 
+  it("refits to the container on window resize at the slot's current height, and ignores a release with no drag", () => {
+    const { container } = renderPanel(track(), vi.fn());
+    const g = grip(container);
+    fireEvent.pointerDown(g, { pointerId: 1, clientY: 0 });
+    fireEvent.pointerMove(g, { pointerId: 1, clientY: 40 });
+    fireEvent.pointerUp(g, { pointerId: 1, clientY: 40 });
+    const n = sizes.length;
+    // The resize listener reads the height through the ref, not a stale
+    // closure from when the plot was built.
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(sizes.length).toBeGreaterThan(n);
+    expect(sizes.slice(n).some((s) => s.height === CHART_HEIGHT_PX + 40)).toBe(true);
+    // A pointer-up that no drag started writes nothing.
+    vi.mocked(api.setSetting).mockClear();
+    fireEvent.pointerUp(g, { pointerId: 2, clientY: 400 });
+    expect(api.setSetting).not.toHaveBeenCalled();
+  });
+
   it("restores the persisted height, clamped", async () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => (key === "chart_wide_height" ? "9999" : null));
     renderPanel(track(), vi.fn());
