@@ -291,12 +291,31 @@ export function speedVisRange(dMin: number, dMax: number): [number, number] {
 /** Climbs at or above this grade count as climbs: the line leaves its flat
  * teal and the profile gets a fill under it (the cycling-app look where a
  * climb's steepness shows as a colored band). A product constant like the
- * ride speed bounds: 2% is where a road stops reading as flat to the legs
- * (3% left the last 400 m of a climb's summit, an 8 m rise, unpainted
- * while the profile plainly still went up). Below it, and on every
- * descent, the line is teal and the altitude fill stands alone — the
- * chart colors EFFORT, and effort lives uphill. */
-export const GRADE_FILL_MIN_PCT = 2;
+ * ride speed bounds: 1.5% is where a road stops reading as flat to the
+ * legs (3% left the last 400 m of a climb's summit unpainted while the
+ * profile plainly still went up; 2% left a 900 m rise from the sea to
+ * 20 m — 1.9% steady — teal). Below it, and on every descent, the line
+ * is teal and the altitude fill stands alone — the chart colors EFFORT,
+ * and effort lives uphill. */
+export const GRADE_FILL_MIN_PCT = 1.5;
+
+/** A band shorter than this much road is not a band: the vote can flip
+ * for a few samples where its histogram sits near even, and painting a
+ * 10 m sliver says nothing about the climb. Measured between the run's
+ * first and last sample with a distance. On a mountain ride this alone
+ * took the stripe count from 66 to 49 without losing a climb. */
+export const GRADE_MIN_BAND_M = 100;
+
+/** The climb-or-not vote counts a sample as climbing from three quarters
+ * of the fill threshold, not from the threshold itself: a 2.5 % rise
+ * jitters across 2 % on half its samples, and a vote held at the
+ * threshold flips like a coin along it, chopping one climb into a barcode
+ * (a 780 m 2.3 % rise came out as six slivers). The paint threshold still
+ * holds — a run is filled only if its own average reaches
+ * GRADE_FILL_MIN_PCT — and the lower bar only decides where runs start
+ * and end. Lower still (1 %) lets runs swallow their false-flat approaches
+ * and dilutes the average below the threshold: real climbs vanish. */
+export const GRADE_VOTE_MIN_PCT = GRADE_FILL_MIN_PCT * 0.75;
 
 /** Grade category ceilings in percent — the first is the climb threshold
  * above, so the line's first warm step and the fill's first band start at
@@ -320,8 +339,8 @@ export const GRADE_BOUNDS_PCT = [GRADE_FILL_MIN_PCT, 5, 8, 12, 16];
  * gentle steps (#126). Plain #rrggbb only: the zone bars append an alpha
  * suffix and the fill uses the entries verbatim. */
 export const GRADE_COLORS = [
-  "#0e7490", // < GRADE_FILL_MIN_PCT (2%): flat / descent (the elevation line color)
-  "#e5b83f", // 2–5%: gentle
+  "#0e7490", // < GRADE_FILL_MIN_PCT (1.5%): flat / descent (the elevation line color)
+  "#e5b83f", // 1.5–5%: gentle
   "#e39c3b", // 5–8%: noticeable
   "#e07c3a", // 8–12%: hard
   "#c0392b", // 12–16%: steep
@@ -559,9 +578,11 @@ function dominantCategory(dist: number[], votes: Vote[], windowM: number, bins: 
  * The grade category per trackpoint that the line and the fill paint,
  * decided in two votes over the road centered on each point, every sample
  * weighted by the road it stands for (halfway to its neighbors). First,
- * inside `windowM`, is this a climb at all — the climb samples against
- * the rest, so a 5 % pitch whose jitter dips under the threshold every
- * few meters still wins as a whole. Then, inside the wider `steepWindowM`
+ * inside `windowM`, is this a climb at all — the samples at or above
+ * GRADE_VOTE_MIN_PCT against the rest, so a pitch whose jitter dips under
+ * the fill threshold every few meters still wins as a whole (the fill
+ * threshold itself is enforced later, on the run's average). Then, inside
+ * the wider `steepWindowM`
  * and among the climb samples only, which steepness holds the most road —
  * so a flat stretch never outvotes the steepness of a climb it borders,
  * and the rolls inside a climb don't stripe it. Both passes are O(n) with
@@ -596,18 +617,29 @@ export function gradeCategories(
     const right = k < m - 1 ? (dist[k] + dist[k + 1]) / 2 : dist[k];
     return right - left;
   };
-  const cats = idx.map((i) => raw[i]);
   const weights = idx.map((_, k) => weightAt(k));
-  const climbVotes: Vote[] = cats.map((c, k) => ({ cat: c == null ? null : c > 0 ? 1 : 0, weight: weights[k] }));
+  const climbVotes: Vote[] = idx.map((i, k) => {
+    const g = grades[i];
+    return { cat: g == null ? null : g >= GRADE_VOTE_MIN_PCT ? 1 : 0, weight: weights[k] };
+  });
   const isClimb = dominantCategory(dist, climbVotes, windowM, 2);
-  const steepVotes: Vote[] = cats.map((c, k) => ({ cat: c == null || c === 0 ? null : c, weight: weights[k] }));
+  // Steepness is judged among the same samples the first vote counts as
+  // climbing, at the lowest climb category if their own grade is under
+  // the fill threshold — otherwise the minority above 2 % would decide
+  // the steepness of a 2.3 % climb, and a couple of 8 % spikes in it
+  // would cut the run where neither the color nor the average agrees.
+  const steepVotes: Vote[] = idx.map((i, k) => {
+    const g = grades[i];
+    return { cat: g == null || g < GRADE_VOTE_MIN_PCT ? null : Math.max(1, gradeCategory(g)), weight: weights[k] };
+  });
   const steepness = dominantCategory(dist, steepVotes, steepWindowM, GRADE_COLORS.length);
   for (let k = 0; k < m; k++) {
-    // A climb by the first vote always has a steepness vote in reach while
-    // steepWindowM covers windowM (the climb sample that won the first vote
-    // sits inside the second window too); the floor only matters to a
-    // caller that narrows the steepness window, and keeps such a climb
-    // painted in the lowest category rather than flat.
+    // Both votes count the same samples, so a climb by the first vote
+    // always has a steepness vote in reach while steepWindowM covers
+    // windowM (the sample that won the first vote sits inside the second
+    // window too); the floor only matters to a caller that narrows the
+    // steepness window, and keeps such a climb in the lowest category
+    // rather than flat.
     out[idx[k]] = isClimb[k] === 1 ? Math.max(1, steepness[k]) : 0;
   }
   return out;
@@ -627,9 +659,13 @@ export function gradeCategories(
  * where rise over run would take the whole drift. (A median would ignore
  * the drift entirely but is not an average grade: a run half 5 % and half
  * 12 % would read 5 or 12 rather than 8.5.) A sample without a grade or a
- * distance carries no weight; a run with no weight at all has no average.
+ * distance carries no weight; a run with no weight at all has no average,
+ * and neither has a run shorter than GRADE_MIN_BAND_M of road.
  * Two neighboring runs whose averages land in one category paint as one
- * band that answers with two numbers, both inside that category.
+ * band that answers with two numbers, both inside that category. A run
+ * the vote formed but whose average stays under the fill threshold is
+ * not a band at all — null, so the tooltip falls back to the point's own
+ * grade there, the same rule the fill follows.
  */
 export function gradeRunAverages(
   distM: (number | null)[],
@@ -641,7 +677,7 @@ export function gradeRunAverages(
   let start = 0;
   for (let i = 1; i <= n; i++) {
     if (i < n && cats[i] === cats[start]) continue;
-    if (cats[start] > 0) {
+    if (cats[start] > 0 && runLengthM(distM, start, i) >= GRADE_MIN_BAND_M) {
       let sum = 0;
       let weight = 0;
       for (let k = start; k < i; k++) {
@@ -666,12 +702,23 @@ export function gradeRunAverages(
           weight = 1;
         }
       }
-      const avg = weight > 0 ? sum / weight : null;
+      const mean = weight > 0 ? sum / weight : null;
+      const avg = mean != null && gradeCategory(mean) > 0 ? mean : null;
       for (let k = start; k < i; k++) out[k] = avg;
     }
     start = i;
   }
   return out;
+}
+
+/** The road a run covers: between its first and last sample that carry a
+ * distance; none → 0. */
+function runLengthM(distM: (number | null)[], start: number, end: number): number {
+  let a = start;
+  while (a < end && distM[a] == null) a++;
+  let b = end - 1;
+  while (b > a && distM[b] == null) b--;
+  return a < b ? distM[b]! - distM[a]! : 0;
 }
 
 /**

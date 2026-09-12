@@ -18,6 +18,8 @@ import {
   GRADE_MAX_ABS_PCT,
   GRADE_PAINT_WINDOW_M,
   GRADE_STEEPNESS_WINDOW_M,
+  GRADE_VOTE_MIN_PCT,
+  GRADE_MIN_BAND_M,
   gradeRunAverages,
   gradeSeries,
   HR_FALLBACK_COLOR,
@@ -537,6 +539,40 @@ describe("gradeSeries cap and gradeCategories", () => {
     expect(gradeCategories([0, 1e-10, 2e-10, 500], [null, 5, null, null], 100)).toEqual([2, 2, 2, 0]);
   });
 
+  it("votes from below the fill threshold, so a climb jittering across 2 % stays one run", () => {
+    expect(GRADE_VOTE_MIN_PCT).toBe(GRADE_FILL_MIN_PCT * 0.75);
+    const dist = Array.from({ length: 100 }, (_, i) => i * 10);
+    // A 500 m rise averaging 2.4 %, read as 1.2 / 3.6 on alternate samples
+    // — half of them under the fill threshold, all of them above the vote bar.
+    const grades = dist.map((_, i) => (i >= 30 && i < 80 ? (i % 2 ? 1.2 : 3.6) : 0));
+    const cats = gradeCategories(dist, grades);
+    const painted = cats.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
+    expect(painted.length).toBeGreaterThan(40);
+    expect(painted[painted.length - 1] - painted[0] + 1).toBe(painted.length); // one contiguous run
+    const avg = gradeRunAverages(dist, grades, cats);
+    expect(avg[50]).toBeCloseTo(2.4, 1);
+    // A 1 % false flat is below the vote bar: not even a run. A 1.3 %
+    // one forms a run but stays under the fill threshold: no average, so
+    // the tooltip shows each point's own grade there, like the fill.
+    const flat = dist.map((_, i) => (i >= 30 && i < 80 ? 1.0 : 0));
+    expect(gradeCategories(dist, flat).every((c) => c === 0)).toBe(true);
+    const gentle = dist.map((_, i) => (i >= 30 && i < 80 ? 1.3 : 0));
+    const gentleCats = gradeCategories(dist, gentle);
+    expect(gentleCats[50]).toBe(1);
+    expect(gradeRunAverages(dist, gentle, gentleCats).every((g) => g == null)).toBe(true);
+    // Steepness is judged among the same samples: two 9 % spikes inside a
+    // 2.4 % climb do not cut it — the majority around them is the lowest
+    // climb category either way.
+    const spiky = grades.map((g, i) => (i === 50 || i === 51 ? 9 : g));
+    const spikyCats = gradeCategories(dist, spiky);
+    expect(spikyCats.slice(32, 78).every((c) => c === 1)).toBe(true);
+    // A run shorter than GRADE_MIN_BAND_M of road is no band: no average.
+    expect(GRADE_MIN_BAND_M).toBe(100);
+    const shortRun = [0, 0, 0, 3, 3, 3, 0, 0];
+    expect(gradeRunAverages([0, 10, 20, 30, 40, 50, 60, 70], [0, 0, 0, 4, 4, 4, 0, 0], shortRun).every((g) => g == null)).toBe(true);
+    expect(gradeRunAverages([0, 100, 200, 300], [0, 4, 4, 0], [0, 3, 3, 0])[1]).toBe(4);
+  });
+
   it("decides climb-or-not first, so a pitch dipping under the threshold every few meters still wins", () => {
     const dist = Array.from({ length: 60 }, (_, i) => i * 10);
     // A 300 m 5 % pitch whose jitter reads 1 % (under the threshold) on
@@ -573,7 +609,7 @@ describe("gradeSeries cap and gradeCategories", () => {
     // Rise over run between the ends would read a barometer drift on the
     // last sample as the climb's grade; the smoothed, capped samples don't.
     const drift = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 25, 30, 37, null];
-    const d2 = drift.map((_, i) => i * 5);
+    const d2 = drift.map((_, i) => i * 10); // 130 m: a band, not a sliver
     const avg = gradeRunAverages(d2, drift, drift.map(() => 1));
     expect(avg[0]).toBeCloseTo(10.9, 1);
     expect(avg.every((v) => v === avg[0])).toBe(true);
@@ -596,7 +632,7 @@ describe("gradeFillStops", () => {
     expect(gradeFillColor(-12)).toBe(GRADE_FILL_NONE);
     expect(gradeFillColor(null)).toBe(GRADE_FILL_NONE);
     expect(gradeFillColor(NaN)).toBe(GRADE_FILL_NONE);
-    const stops = gradeFillStops([0, 50, 100], [1, 1.5, -5].map(gradeCategory), xPosOf, 0, 100);
+    const stops = gradeFillStops([0, 50, 100], [1, 1.2, -5].map(gradeCategory), xPosOf, 0, 100);
     expect(stops).toEqual([
       { offset: 0, color: GRADE_FILL_NONE },
       { offset: 1, color: GRADE_FILL_NONE },
@@ -641,7 +677,7 @@ describe("gradeGradientStops", () => {
   const xPosOf = (x: number) => x;
 
   it("paints one flat color when the category never changes", () => {
-    const stops = gradeGradientStops([0, 50, 100], [1, 1.5, 1].map(gradeCategory), xPosOf, 0, 100);
+    const stops = gradeGradientStops([0, 50, 100], [1, 1.2, 1].map(gradeCategory), xPosOf, 0, 100);
     expect(stops).toEqual([
       { offset: 0, color: GRADE_COLORS[0] },
       { offset: 1, color: GRADE_COLORS[0] },
