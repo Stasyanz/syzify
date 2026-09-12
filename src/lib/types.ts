@@ -1,5 +1,8 @@
 export interface Activity {
   id: string;
+  /** The location point (typed, picked, or a suggestion), if any. */
+  start_lat?: number | null;
+  start_lon?: number | null;
   start_time: string;
   timezone_offset: number | null;
   sport_type: string;
@@ -256,7 +259,20 @@ export interface ActivityUpdate {
 
 export interface LocationUpdateResult {
   geocoded: boolean;
+  /** Not geocoded because geocoding is off in Settings: a choice, not a failure. */
+  geocoding_off: boolean;
   location_name: string;
+}
+
+/** One suggestion under the Location field: the short name that gets
+ * stored, a context line to tell namesakes apart, and the coordinates a
+ * pick writes without a second geocoding round trip. */
+export interface LocationHit {
+  name: string;
+  detail: string;
+  lat: number;
+  lon: number;
+  kind: string;
 }
 
 export interface ImportResult {

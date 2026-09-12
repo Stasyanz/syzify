@@ -22,6 +22,7 @@ import type {
   UpdateCheck,
   EncryptionScopes,
   LocationUpdateResult,
+  LocationHit,
   Photo,
   AttachPhotosResult,
   PowerCurveData,
@@ -103,6 +104,11 @@ export const api = {
 
   setActivityLocationPoint: (id: string, lat: number, lon: number) =>
     invoke<LocationUpdateResult>("set_activity_location_point", { id, lat, lon }),
+
+  searchLocations: (query: string) => invoke<LocationHit[]>("search_locations", { query }),
+
+  setActivityLocationNamed: (id: string, name: string, lat: number, lon: number) =>
+    invoke<LocationUpdateResult>("set_activity_location_named", { id, name, lat, lon }),
 
   getActivityLocations: (filters?: ActivityFilters) =>
     invoke<ActivityLocation[]>("get_activity_locations", { filters: filters ?? null }),

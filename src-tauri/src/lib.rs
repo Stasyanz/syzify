@@ -534,6 +534,8 @@ pub fn run() {
             commands::activities::search_activities,
             commands::activities::update_activity_location,
             commands::activities::set_activity_location_point,
+            commands::activities::search_locations,
+            commands::activities::set_activity_location_named,
             commands::activities::get_activity_locations,
             commands::activities::get_adjacent_activities,
             commands::activities::get_activity_record_badges,

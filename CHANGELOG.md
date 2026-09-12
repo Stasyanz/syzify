@@ -7,6 +7,17 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 ## [Unreleased]
 
 ### Added
+- Edit Activity suggests locations while you type (#131): after a short
+  pause and three characters, up to five matches with a context line to
+  tell namesakes apart; arrow keys and Enter, or a click, pick one, and the
+  pick saves its coordinates without a second lookup. A street or a
+  housing complex is stored with its town ("Cebeci 7, Mahmutlar"), a town
+  by its name alone; an empty answer says "No matches". Text saved without
+  picking is filed under the locality of its best match with its parent
+  ("Mahmutlar cebeci 6" → "Mahmutlar, Alanya"), where it used to take the
+  match's own name ("Cebeci Towers"). Only with geocoding
+  enabled in Settings — off, the field stays plain text as before; with no
+  network or the service down, a warning says so once.
 - The first, full-width chart card under the map can be stretched by its
   bottom-right grip, like the map, up to half again its height (#128); the
   height is remembered and belongs to the slot, so reordering charts keeps

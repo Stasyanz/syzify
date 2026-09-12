@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { X, MapPin, Trash2 } from "lucide-react";
+import { X, MapPin, Trash2, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
-import { SPORT_LABELS, SPORT_TYPES, MAX_TAGS_PER_ACTIVITY, MAX_TITLE_LENGTH, type Activity } from "../../lib/types";
+import {
+  SPORT_LABELS,
+  SPORT_TYPES,
+  MAX_TAGS_PER_ACTIVITY,
+  MAX_TITLE_LENGTH,
+  type Activity,
+  type LocationHit,
+} from "../../lib/types";
 import { Select } from "../ui/Select";
 import { SportIcon } from "../brand/SportIcon";
 import { useToastStore } from "../../stores/toastStore";
@@ -23,6 +30,22 @@ export function toggleTagSelection(selected: number[], id: number, max: number):
   return [...selected, id];
 }
 
+/** The Location field asks for suggestions this long after the last
+ * keystroke — and never for fewer characters than this. Nominatim allows
+ * one request a second, so the pause is a full second: the backend queues
+ * anything faster, and a queue of searches whose answers the field would
+ * throw away is only a wait. */
+export const LOCATION_SEARCH_DEBOUNCE_MS = 1000;
+export const LOCATION_SEARCH_MIN_CHARS = 3;
+
+/** The next highlighted row after an arrow key: wraps, and -1 (nothing
+ * highlighted) steps to the first or the last row. Exported for tests. */
+export function stepHighlight(current: number, count: number, delta: 1 | -1): number {
+  if (count === 0) return -1;
+  if (current < 0) return delta > 0 ? 0 : count - 1;
+  return (current + delta + count) % count;
+}
+
 export function EditActivityModal({ activity, currentTags, onClose, onSaved, onDeleted }: Props) {
   const addToast = useToastStore((s) => s.addToast);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -31,6 +54,110 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
   const [notes, setNotes] = useState(activity.notes ?? "");
   const [sportType, setSportType] = useState(activity.sport_type);
   const [locationText, setLocationText] = useState(activity.location_name ?? "");
+  // The suggestion picked from the list, if the text still is its name: the
+  // save then writes its coordinates instead of geocoding the text again.
+  const [picked, setPicked] = useState<LocationHit | null>(null);
+  // Set by the first keystroke: opening the modal on a saved name must not
+  // fire a request, but retyping that same name to pick its namesake must.
+  const [locationDirty, setLocationDirty] = useState(false);
+  const [hits, setHits] = useState<LocationHit[]>([]);
+  // A request is in flight for the text as it stands now — not during the
+  // debounce pause, and not once a newer keystroke has superseded it.
+  const [searching, setSearching] = useState(false);
+  // The last answer for the text as it stands was empty: say so under the
+  // field, or silence reads as a broken feature.
+  const [noMatches, setNoMatches] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  // Only the latest query may fill the list — a slow earlier answer is dropped.
+  const searchSeq = useRef(0);
+  // One warning per outage, not one per keystroke: set on a failed search,
+  // cleared by the next answer that gets through.
+  const searchWarned = useRef(false);
+  const locationBoxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const q = locationText.trim();
+    // Nothing to ask for: the field is untouched, a pick just landed, or
+    // the text is too short to mean anything.
+    if (!locationDirty || picked || q.length < LOCATION_SEARCH_MIN_CHARS) {
+      searchSeq.current += 1;
+      setHits([]);
+      setListOpen(false);
+      setSearching(false);
+      setNoMatches(false);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      let found: LocationHit[] | null = null;
+      try {
+        found = await api.searchLocations(q);
+      } catch {
+        found = null;
+      }
+      // A superseded query — or a modal already closed — says nothing:
+      // no list, and no warning about a field that is not there.
+      if (seq !== searchSeq.current) return;
+      setSearching(false);
+      if (found == null) {
+        // No network or Nominatim down (the toggle off is an empty answer,
+        // not an error): say so once, and keep the list away.
+        if (!searchWarned.current) {
+          searchWarned.current = true;
+          addToast("warning", "Location suggestions unavailable: no network or the geocoding service is down.");
+        }
+        found = [];
+      } else {
+        searchWarned.current = false;
+      }
+      setHits(found);
+      setHighlight(-1);
+      setListOpen(found.length > 0);
+      setNoMatches(found.length === 0 && !searchWarned.current);
+    }, LOCATION_SEARCH_DEBOUNCE_MS);
+    return () => {
+      // Unmount or a newer keystroke: whatever this query answers is stale,
+      // and nothing is in flight for the new text yet.
+      clearTimeout(timer);
+      searchSeq.current += 1;
+      setSearching(false);
+      setNoMatches(false);
+    };
+  }, [locationText, picked, locationDirty, addToast]);
+
+  // Click outside the field and its list closes the list.
+  useEffect(() => {
+    if (!listOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (locationBoxRef.current?.contains(e.target as Node)) return;
+      setListOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [listOpen]);
+
+  const pickHit = (hit: LocationHit) => {
+    setPicked(hit);
+    setLocationText(hit.name);
+    setListOpen(false);
+    setHits([]);
+  };
+
+  const onLocationKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!listOpen) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => stepHighlight(h, hits.length, e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Enter" && highlight >= 0 && highlight < hits.length) {
+      e.preventDefault();
+      pickHit(hits[highlight]);
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      setListOpen(false);
+    }
+  };
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [newTagName, setNewTagName] = useState("");
 
@@ -59,11 +186,26 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
       await api.setActivityTags(activity.id, selectedTagIds);
 
       // Handle location separately (forward geocoding)
-      const locChanged = (locationText.trim() || "") !== (activity.location_name || "");
+      // A namesake picked from the list keeps the name and changes only the
+      // coordinates — that is a change too.
+      const locChanged =
+        (locationText.trim() || "") !== (activity.location_name || "") ||
+        (picked != null && (picked.lat !== activity.start_lat || picked.lon !== activity.start_lon));
       if (locChanged) {
-        const result = await api.updateActivityLocation(activity.id, locationText);
-        if (locationText.trim() && !result.geocoded) {
-          addToast("warning", "Could not geocode location (network issue). Saved as text only.");
+        if (picked && picked.name === locationText.trim()) {
+          // A picked suggestion carries its coordinates: no second lookup.
+          await api.setActivityLocationNamed(activity.id, picked.name, picked.lat, picked.lon);
+        } else {
+          const result = await api.updateActivityLocation(activity.id, locationText);
+          // Geocoding off is the user's choice and gets no warning; a
+          // failed lookup does — and says that the map point, if the
+          // activity had one, is still the old one.
+          if (locationText.trim() && !result.geocoded && !result.geocoding_off) {
+            addToast(
+              "warning",
+              "Could not geocode location (network issue). Saved as text; the map point is unchanged.",
+            );
+          }
         }
       }
     },
@@ -154,16 +296,70 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
         {/* Location */}
         <div>
           <label className="text-xs text-muted block mb-1">Location</label>
-          <div className="relative">
+          <div ref={locationBoxRef} className="relative">
             <MapPin size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+            {searching && (
+              // A live region, so assistive tech announces the search
+              // starting; a bare SVG with a label would not be read.
+              <span
+                role="status"
+                aria-label="Searching locations"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint"
+              >
+                <Loader2 size={14} className="animate-spin" />
+              </span>
+            )}
             <input
               type="text"
               value={locationText}
-              onChange={(e) => setLocationText(e.target.value)}
+              onChange={(e) => {
+                setLocationText(e.target.value);
+                setPicked(null);
+                setLocationDirty(true);
+              }}
+              onKeyDown={onLocationKeyDown}
               placeholder="City, address..."
-              className="w-full text-sm border border-border rounded px-3 py-2 pl-8"
+              role="combobox"
+              aria-expanded={listOpen}
+              aria-controls="location-suggestions"
+              aria-autocomplete="list"
+              className="w-full text-sm border border-border rounded px-3 py-2 pl-8 pr-8"
             />
+            {listOpen && hits.length > 0 && (
+              <ul
+                id="location-suggestions"
+                role="listbox"
+                aria-label="Location suggestions"
+                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border border-border bg-card py-1 shadow-lg"
+              >
+                {hits.map((hit, i) => (
+                  <li
+                    key={`${hit.name}|${hit.detail}`}
+                    role="option"
+                    aria-selected={i === highlight}
+                    // mousedown, not click: the input keeps focus and the
+                    // outside-click closer sees the list as inside.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pickHit(hit);
+                    }}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={`cursor-pointer px-3 py-1.5 text-sm ${
+                      i === highlight ? "bg-accent-soft text-accent-2" : "text-ink hover:bg-card-2"
+                    }`}
+                  >
+                    <div className="truncate">{hit.name}</div>
+                    {hit.detail && <div className="truncate text-xs text-muted">{hit.detail}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+          {noMatches && (
+            <p role="status" className="mt-1 text-xs text-muted">
+              No matches — try a town or a street name, without house numbers.
+            </p>
+          )}
         </div>
 
         {/* Sport type */}

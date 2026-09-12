@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::db;
 use crate::models::activity::{
@@ -10,6 +10,7 @@ use crate::models::lap::Lap;
 use crate::models::swim_length::SwimLength;
 use crate::models::time_in_zone::TimeInZone;
 use crate::models::trackpoint::TrackPointColumns;
+use crate::geocoding::LocationHit;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -242,24 +243,41 @@ pub fn get_activity_locations(
 #[derive(serde::Serialize)]
 pub struct LocationUpdateResult {
     pub geocoded: bool,
+    /// Not geocoded because the user keeps geocoding off — a choice, not
+    /// a failure, and the UI must not call it a network problem.
+    pub geocoding_off: bool,
     pub location_name: String,
 }
 
+/// Waits for the shared Nominatim slot and then blocks on HTTP, so it runs
+/// on the blocking pool: neither the main thread nor an async worker (a
+/// sync fn marked `async` would run inline on one) sits through it.
 #[tauri::command]
-pub fn update_activity_location(
+pub async fn update_activity_location(
     id: String,
     location_text: String,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<LocationUpdateResult, String> {
-    update_activity_location_core(&state, &id, &location_text)
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        update_activity_location_core(&state, &id, &location_text, crate::geocoding::forward_geocode)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// The State-free part of the location update, testable against a bare
-/// [`AppState`].
+/// Free text typed into the Location field without picking a suggestion
+/// is filed under the locality of its best match — "Mahmutlar cebeci 6"
+/// becomes "Mahmutlar, Alanya" with that match's coordinates — not under
+/// the match's own name ("Cebeci Towers" is not what was meant) and not
+/// the raw text (a house address is no library label). Picking from the
+/// list is the way to store a precise name, see set_activity_location_named.
+/// The State-free part, testable against a bare [`AppState`].
 pub(crate) fn update_activity_location_core(
     state: &AppState,
     id: &str,
     location_text: &str,
+    geocode: impl Fn(&str) -> Result<(f64, f64, String), String>,
 ) -> Result<LocationUpdateResult, String> {
     let trimmed = location_text.trim().to_string();
     if trimmed.is_empty() {
@@ -268,6 +286,7 @@ pub(crate) fn update_activity_location_core(
         db::activities::clear_location(&conn, id).map_err(|e| e.to_string())?;
         return Ok(LocationUpdateResult {
             geocoded: false,
+            geocoding_off: false,
             location_name: String::new(),
         });
     }
@@ -281,31 +300,29 @@ pub(crate) fn update_activity_location_core(
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         crate::import::geocoding::geocoding_enabled(&conn)
     };
-    let resolved = if allowed {
-        crate::geocoding::forward_geocode(&trimmed).ok()
-    } else {
-        None
-    };
+    let resolved = if allowed { geocode(&trimmed).ok() } else { None };
 
     match resolved {
-        Some((lat, lon, resolved_name)) => {
+        Some((lat, lon, locality)) => {
             let conn = state.db.lock().map_err(|e| e.to_string())?;
             let updates = ActivityUpdate {
                 title: None,
                 notes: None,
                 sport_type: None,
-                location_name: Some(resolved_name.clone()),
+                location_name: Some(locality.clone()),
                 start_lat: Some(lat),
                 start_lon: Some(lon),
             };
             db::activities::update_activity(&conn, id, &updates).map_err(|e| e.to_string())?;
             Ok(LocationUpdateResult {
                 geocoded: true,
-                location_name: resolved_name,
+                geocoding_off: false,
+                location_name: locality,
             })
         }
         None => {
-            // Geocoding off or network failure — save text as-is, no coordinates.
+            // Geocoding off or network failure — save the text as-is; the
+            // coordinates already on the row, if any, stay (None = untouched).
             let conn = state.db.lock().map_err(|e| e.to_string())?;
             let updates = ActivityUpdate {
                 title: None,
@@ -318,20 +335,27 @@ pub(crate) fn update_activity_location_core(
             db::activities::update_activity(&conn, id, &updates).map_err(|e| e.to_string())?;
             Ok(LocationUpdateResult {
                 geocoded: false,
+                geocoding_off: !allowed,
                 location_name: trimmed,
             })
         }
     }
 }
 
+/// Network-bound like update_activity_location: on the blocking pool.
 #[tauri::command]
-pub fn set_activity_location_point(
+pub async fn set_activity_location_point(
     id: String,
     lat: f64,
     lon: f64,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<LocationUpdateResult, String> {
-    set_activity_location_point_core(&state, &id, lat, lon)
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        set_activity_location_point_core(&state, &id, lat, lon)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// "Set as destination point" on the route map: a picked trackpoint becomes
@@ -383,7 +407,106 @@ pub(crate) fn set_activity_location_point_core(
     db::activities::update_activity(&conn, id, &updates).map_err(|e| e.to_string())?;
     Ok(LocationUpdateResult {
         geocoded,
+        geocoding_off: !allowed,
         location_name: name,
+    })
+}
+
+/// A location query shorter than this is not worth a network round trip;
+/// one longer than this is not a place name, and is not sent either.
+pub(crate) const LOCATION_SEARCH_MIN_CHARS: usize = 3;
+pub(crate) const LOCATION_SEARCH_MAX_CHARS: usize = 200;
+
+/// The search sleeps for its Nominatim slot and then blocks on HTTP — on
+/// the main thread that would freeze the UI mid-typing, and a sync fn
+/// marked `#[tauri::command(async)]` would run inline on a tokio worker,
+/// where `reqwest::blocking` panics in debug builds (it builds and drops a
+/// throwaway runtime, which tokio forbids inside a runtime context) and
+/// Tauri has no catch_unwind: the invoke promise then never settles. RULE:
+/// every command that touches `reqwest::blocking` is an `async fn` that
+/// does the work in `spawn_blocking`; the `(async)` attribute is not that.
+#[tauri::command]
+pub async fn search_locations(query: String, app: AppHandle) -> Result<Vec<LocationHit>, String> {
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        search_locations_core(&state, &query, crate::geocoding::search_locations)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// The suggestion list under the Location field: the typed text → hits to
+/// pick from. Sends the text to nominatim.openstreetmap.org, so it sits
+/// behind the same Settings toggle as every other lookup (PRD §16); toggle
+/// off, or a query too short to mean anything, is an empty list and no
+/// request. The toggle is read and the lock dropped BEFORE `fetch`. State-
+/// free part with the network call injected, testable against a bare
+/// [`AppState`].
+pub(crate) fn search_locations_core(
+    state: &AppState,
+    query: &str,
+    fetch: impl Fn(&str) -> Result<Vec<LocationHit>, String>,
+) -> Result<Vec<LocationHit>, String> {
+    let trimmed = query.trim();
+    let len = trimmed.chars().count();
+    if !(LOCATION_SEARCH_MIN_CHARS..=LOCATION_SEARCH_MAX_CHARS).contains(&len) {
+        return Ok(Vec::new());
+    }
+    let allowed = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::import::geocoding::geocoding_enabled(&conn)
+    };
+    if !allowed {
+        return Ok(Vec::new());
+    }
+    fetch(trimmed)
+}
+
+#[tauri::command]
+pub fn set_activity_location_named(
+    id: String,
+    name: String,
+    lat: f64,
+    lon: f64,
+    state: State<AppState>,
+) -> Result<LocationUpdateResult, String> {
+    set_activity_location_named_core(&state, &id, &name, lat, lon)
+}
+
+/// A suggestion picked from the list becomes the activity's location: the
+/// same (location_name, start_lat, start_lon) triple manual text entry
+/// writes, with the coordinates the search already returned — no second
+/// geocoding round trip, no network at all. State-free part, testable
+/// against a bare [`AppState`].
+pub(crate) fn set_activity_location_named_core(
+    state: &AppState,
+    id: &str,
+    name: &str,
+    lat: f64,
+    lon: f64,
+) -> Result<LocationUpdateResult, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("empty location name".to_string());
+    }
+    if !(lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon))
+    {
+        return Err(format!("invalid coordinates: {lat}, {lon}"));
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let updates = ActivityUpdate {
+        title: None,
+        notes: None,
+        sport_type: None,
+        location_name: Some(name.to_string()),
+        start_lat: Some(lat),
+        start_lon: Some(lon),
+    };
+    db::activities::update_activity(&conn, id, &updates).map_err(|e| e.to_string())?;
+    Ok(LocationUpdateResult {
+        geocoded: true,
+        geocoding_off: false,
+        location_name: name.to_string(),
     })
 }
 
@@ -414,6 +537,133 @@ mod tests {
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
         }
+    }
+
+    fn state_with_activity() -> AppState {
+        let vault = std::env::temp_dir().join(format!("syz_locsearch_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let state = test_state(&vault);
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO activity (id, start_time) VALUES ('act-1', '2026-01-01T10:00:00+00:00')",
+                [],
+            )
+            .unwrap();
+        }
+        state
+    }
+
+    fn hit(name: &str) -> LocationHit {
+        LocationHit {
+            name: name.to_string(),
+            place: name.to_string(),
+            detail: "Alanya, Türkiye".to_string(),
+            lat: 36.49,
+            lon: 32.09,
+            kind: "suburb".to_string(),
+        }
+    }
+
+    /// The suggestion search never touches the network for a query too short
+    /// to mean anything or with the geocoding toggle off; with it on, the
+    /// trimmed query goes out and the hits come back as they are.
+    #[test]
+    fn search_locations_core_gates_on_length_and_the_toggle() {
+        let state = state_with_activity();
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let fetch = |q: &str| {
+            calls.borrow_mut().push(q.to_string());
+            Ok(vec![hit("Mahmutlar")])
+        };
+
+        assert!(search_locations_core(&state, "  ma ", fetch).unwrap().is_empty());
+        assert!(search_locations_core(&state, "mah", fetch).unwrap().is_empty(), "toggle off");
+        assert!(calls.borrow().is_empty(), "no request without the opt-in");
+
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::settings::set_setting(&conn, crate::import::geocoding::GEOCODING_SETTING, "true").unwrap();
+        }
+        let hits = search_locations_core(&state, "  mahmutlar ", fetch).unwrap();
+        assert_eq!(hits, vec![hit("Mahmutlar")]);
+        assert_eq!(calls.borrow().as_slice(), ["mahmutlar"], "trimmed, sent once");
+        // A short query is still short with the toggle on; a novel is not a place.
+        assert!(search_locations_core(&state, "ма", fetch).unwrap().is_empty());
+        assert!(search_locations_core(&state, &"x".repeat(LOCATION_SEARCH_MAX_CHARS + 1), fetch).unwrap().is_empty());
+        assert_eq!(calls.borrow().len(), 1);
+        // Network failure surfaces as Err — the UI decides to stay quiet.
+        let failing = |_: &str| Err("Nominatim request failed".to_string());
+        assert!(search_locations_core(&state, "mah", failing).is_err());
+    }
+
+    /// Free text is filed under the locality the geocoder resolves it to,
+    /// with its coordinates — not the raw text, not the match's own name.
+    #[test]
+    fn update_activity_location_core_files_free_text_under_the_resolved_locality() {
+        let state = state_with_activity();
+        {
+            let conn = state.db.lock().unwrap();
+            crate::db::settings::set_setting(&conn, crate::import::geocoding::GEOCODING_SETTING, "true").unwrap();
+        }
+        let geocode = |q: &str| {
+            assert_eq!(q, "Mahmutlar cebeci 6", "trimmed text goes out");
+            Ok((36.49, 32.09, "Mahmutlar, Alanya".to_string()))
+        };
+        let result = update_activity_location_core(&state, "act-1", " Mahmutlar cebeci 6 ", geocode).unwrap();
+        assert!(result.geocoded);
+        assert_eq!(result.location_name, "Mahmutlar, Alanya");
+        let conn = state.db.lock().unwrap();
+        let (name, lat, lon): (String, f64, f64) = conn
+            .query_row(
+                "SELECT location_name, start_lat, start_lon FROM activity WHERE id='act-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), lat, lon), ("Mahmutlar, Alanya", 36.49, 32.09));
+        drop(conn);
+        // A failed lookup saves the text alone; the coordinates already on
+        // the row stay (a None in ActivityUpdate leaves a column untouched),
+        // so a network blip does not knock the activity off the map.
+        let failing = |_: &str| Err("Nominatim request failed".to_string());
+        let result = update_activity_location_core(&state, "act-1", "Nowhere", failing).unwrap();
+        assert!(!result.geocoded);
+        assert!(!result.geocoding_off, "a network failure is not an opt-out");
+        let conn = state.db.lock().unwrap();
+        let (name, lat): (String, Option<f64>) = conn
+            .query_row("SELECT location_name, start_lat FROM activity WHERE id='act-1'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((name.as_str(), lat), ("Nowhere", Some(36.49)));
+    }
+
+    /// A picked suggestion writes the same triple manual entry writes, from
+    /// the coordinates the search returned — no network, no toggle needed.
+    #[test]
+    fn set_activity_location_named_core_writes_the_triple_without_geocoding() {
+        let state = state_with_activity();
+        let result = set_activity_location_named_core(&state, "act-1", "  Mahmutlar ", 36.49, 32.09).unwrap();
+        assert!(result.geocoded);
+        assert_eq!(result.location_name, "Mahmutlar");
+        let conn = state.db.lock().unwrap();
+        let (name, lat, lon): (String, f64, f64) = conn
+            .query_row(
+                "SELECT location_name, start_lat, start_lon FROM activity WHERE id='act-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), lat, lon), ("Mahmutlar", 36.49, 32.09));
+        drop(conn);
+
+        assert!(set_activity_location_named_core(&state, "act-1", "   ", 1.0, 1.0).is_err());
+        assert!(set_activity_location_named_core(&state, "act-1", "X", 91.0, 1.0).is_err());
+        assert!(set_activity_location_named_core(&state, "act-1", "X", 1.0, f64::NAN).is_err());
+        let conn = state.db.lock().unwrap();
+        let name: String = conn
+            .query_row("SELECT location_name FROM activity WHERE id='act-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "Mahmutlar", "rejected writes leave the row alone");
     }
 
     /// Deleting an activity must free its raw file's dedup hash and remove the
@@ -489,8 +739,10 @@ mod tests {
             .unwrap();
         }
 
-        let result = update_activity_location_core(&state, "act-1", "  Berlin  ").unwrap();
+        let never = |_: &str| -> Result<(f64, f64, String), String> { panic!("no network without the opt-in") };
+        let result = update_activity_location_core(&state, "act-1", "  Berlin  ", never).unwrap();
         assert!(!result.geocoded, "toggle off must not geocode");
+        assert!(result.geocoding_off, "and says so — it is a choice, not a network failure");
         assert_eq!(result.location_name, "Berlin");
 
         let conn = state.db.lock().unwrap();
