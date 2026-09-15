@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-15
+
 ### Added
 - Edit Activity suggests locations while you type (#131): after a short
   pause and three characters, up to five matches with a context line to
