@@ -321,6 +321,9 @@ pub struct ActivitySummary {
     pub avg_speed_mps: Option<f64>,
     pub avg_hr: Option<f64>,
     pub location_name: Option<String>,
+    /// The recording device as the file named it (see `describeDevice` in
+    /// the frontend for the display form).
+    pub source_device: Option<String>,
     pub tags: Vec<String>,
 }
 

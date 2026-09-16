@@ -6,7 +6,7 @@ import { api } from "../../lib/tauri";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
-import { ActivityListItem } from "./ActivityListItem";
+import { ActivityListItem, LIBRARY_SHOW_DEVICE_KEY, showDeviceFromSetting } from "./ActivityListItem";
 import { ImportDialog } from "../import/ImportDialog";
 import { SPORT_LABELS, triathlonDiscipline, type ActivitySummary, type SportType } from "../../lib/types";
 
@@ -94,6 +94,14 @@ export function ActivityList() {
   });
 
   const pageSize = pageSizeSetting ? Number(pageSizeSetting) : DEFAULT_PAGE_SIZE;
+
+  const { data: showDeviceSetting, isPending: showDevicePending } = useQuery({
+    queryKey: ["setting", LIBRARY_SHOW_DEVICE_KEY],
+    queryFn: () => api.getSetting(LIBRARY_SHOW_DEVICE_KEY),
+  });
+  // Hidden until the setting answers: devices appearing a frame late is
+  // calmer than drawn ones vanishing for someone who switched them off.
+  const showDevice = showDevicePending ? false : showDeviceFromSetting(showDeviceSetting);
   const [loadedCount, setLoadedCount] = useState(pageSize);
 
   // Reset loaded count when filters or pageSize change
@@ -177,7 +185,7 @@ export function ActivityList() {
                 {selected.has(activity.id) && <Check size={13} />}
               </span>
               <span className="flex-1 min-w-0 pointer-events-none">
-                <ActivityListItem activity={activity} onClick={() => {}} />
+                <ActivityListItem activity={activity} onClick={() => {}} showDevice={showDevice} />
               </span>
             </button>
           ) : (
@@ -185,6 +193,7 @@ export function ActivityList() {
               key={activity.id}
               activity={activity}
               onClick={() => navigate(`/activity/${activity.id}`)}
+              showDevice={showDevice}
             />
           ),
         )}

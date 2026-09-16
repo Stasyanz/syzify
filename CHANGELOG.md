@@ -18,6 +18,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   vaults included.
 
 ### Added
+- The library list names the recording device in each row's meta line —
+  a small silhouette and the model next to the date and location, the
+  full name on hover (#147). The vault setting `library_show_device`
+  set to "0" hides it (a Settings toggle is to follow).
 - The activity header shows which device recorded the activity: a chip in
   the middle with a silhouette of its kind and the model — "fenix 6X Pro",
   "Edge 840", "Forerunner 265S" — and the full name on hover (#141). Every

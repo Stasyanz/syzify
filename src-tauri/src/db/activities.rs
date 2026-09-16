@@ -124,7 +124,7 @@ const ACTIVITY_COLUMNS: &str = "id, start_time, timezone_offset, sport_type, tit
 /// Canonical column list for an [`ActivitySummary`] (aliased `a`), in the order
 /// [`row_to_summary`] reads.
 const SUMMARY_COLUMNS: &str = "a.id, a.start_time, a.sport_type, a.title, a.distance_m, \
-     a.duration_s, a.elev_gain_m, a.avg_speed_mps, a.avg_hr, a.location_name";
+     a.duration_s, a.elev_gain_m, a.avg_speed_mps, a.avg_hr, a.location_name, a.source_device";
 
 /// Build a full [`Activity`] from a row selected with [`ACTIVITY_COLUMNS`].
 fn row_to_activity(row: &rusqlite::Row) -> Result<Activity> {
@@ -220,6 +220,7 @@ fn row_to_summary(row: &rusqlite::Row) -> Result<ActivitySummary> {
         avg_speed_mps: row.get(7)?,
         avg_hr: row.get(8)?,
         location_name: row.get(9)?,
+        source_device: row.get(10)?,
         tags: Vec::new(),
     })
 }
@@ -2015,5 +2016,22 @@ mod tests {
             start_time_nearest(&conn, 1_788_246_000).unwrap().as_deref(),
             Some("2026-09-01T07:00:00")
         );
+    }
+
+    /// The list row names the recording device (#147): summaries carry
+    /// source_device as stored, null included.
+    #[test]
+    fn summaries_carry_the_source_device() {
+        let conn = db::test_db();
+        let mut a = sample_activity("with-dev");
+        a.source_device = Some("Garmin fenix6x".into());
+        insert_activity(&conn, &a).unwrap();
+        let mut none = sample_activity("no-dev");
+        none.source_device = None;
+        insert_activity(&conn, &none).unwrap();
+        let rows = get_activities(&conn, &ActivityFilters::default()).unwrap();
+        let dev = |id: &str| rows.iter().find(|r| r.id == id).unwrap().source_device.clone();
+        assert_eq!(dev("with-dev").as_deref(), Some("Garmin fenix6x"));
+        assert_eq!(dev("no-dev"), None);
     }
 }

@@ -91,6 +91,7 @@ export interface ActivitySummary {
   avg_speed_mps: number | null;
   avg_hr: number | null;
   location_name: string | null;
+  source_device: string | null;
   tags: string[];
 }
 

@@ -28,6 +28,7 @@ const summary = (i: number): ActivitySummary => ({
   avg_speed_mps: 2.8,
   avg_hr: 150,
   location_name: null,
+  source_device: null,
   tags: [],
 });
 
@@ -122,5 +123,22 @@ describe("ActivityList merge mode (Ctrl+M)", () => {
     fireEvent.keyDown(document.body, { key: "m", metaKey: true });
     fireEvent.keyDown(document.body, { key: "m", ctrlKey: true, metaKey: true });
     expect(screen.queryByText(/selected/)).toBeNull();
+  });
+});
+
+describe("ActivityList device line setting", () => {
+  it("hides the device line when library_show_device is \"0\" and shows it otherwise", async () => {
+    const withDevice = [{ ...summary(0), source_device: "Garmin edge_840" }];
+    vi.mocked(api.getActivities).mockResolvedValue(withDevice);
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => (key === "library_show_device" ? "0" : null));
+    renderList();
+    await screen.findByText("Run #0");
+    await waitFor(() => expect(vi.mocked(api.getSetting)).toHaveBeenCalledWith("library_show_device"));
+    expect(screen.queryByTestId("row-device")).toBeNull();
+    cleanup();
+
+    vi.mocked(api.getSetting).mockImplementation(async () => null);
+    renderList();
+    expect((await screen.findByTestId("row-device")).textContent).toBe("Edge 840");
   });
 });
