@@ -264,6 +264,13 @@ export interface LocationUpdateResult {
   location_name: string;
 }
 
+/** What correcting an activity's FTP wrote back. */
+export interface FtpUpdateResult {
+  threshold_power_w: number;
+  intensity_factor: number;
+  training_stress_score: number;
+}
+
 /** One suggestion under the Location field: the short name that gets
  * stored, a context line to tell namesakes apart, and the coordinates a
  * pick writes without a second geocoding round trip. */

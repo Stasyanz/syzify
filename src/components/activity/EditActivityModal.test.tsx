@@ -25,6 +25,7 @@ vi.mock("../../lib/tauri", () => ({
     updateActivityLocation: vi.fn().mockResolvedValue({ geocoded: true, geocoding_off: false, location_name: "" }),
     searchLocations: vi.fn().mockResolvedValue([]),
     setActivityLocationNamed: vi.fn().mockResolvedValue({ geocoded: true, geocoding_off: false, location_name: "" }),
+    setActivityFtp: vi.fn().mockResolvedValue({ threshold_power_w: 238, intensity_factor: 0.7, training_stress_score: 60 }),
     deleteActivity: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -319,5 +320,66 @@ describe("location suggestions", () => {
     await waitFor(() => expect(api.searchLocations).toHaveBeenCalledTimes(3));
     type(input, "mahmut");
     await waitFor(() => expect(addToast).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("FTP correction", () => {
+  afterEach(() => vi.mocked(api.setActivityFtp).mockClear());
+
+  function renderWith(over: Partial<Activity>) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <EditActivityModal
+          activity={{ ...activity, ...over } as Activity}
+          currentTags={[]}
+          onClose={() => {}}
+          onSaved={() => {}}
+          onDeleted={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("offers the field only for activities with normalized power, prefilled with the file's FTP", () => {
+    const none = renderWith({ normalized_power_w: null, threshold_power_w: null });
+    expect(none.queryByLabelText("FTP (W)")).toBeNull();
+    cleanup();
+    const ride = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
+    expect((ride.getByLabelText("FTP (W)") as HTMLInputElement).value).toBe("200");
+    expect((ride.getByLabelText("FTP (W)") as HTMLInputElement).disabled).toBe(false);
+    cleanup();
+    // Power but no duration: shown, disabled, and it says why.
+    const noDur = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: null });
+    expect((noDur.getByLabelText("FTP (W)") as HTMLInputElement).disabled).toBe(true);
+    expect(noDur.getByText(/no recorded duration/)).toBeTruthy();
+  });
+
+  it("reports a refused FTP by name and still saves the rest", async () => {
+    vi.mocked(api.setActivityFtp).mockRejectedValueOnce("this activity has no normalized power, so IF and TSS cannot be recomputed");
+    const { getByLabelText, getByText } = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
+    fireEvent.change(getByLabelText("FTP (W)"), { target: { value: "238" } });
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", expect.stringContaining("FTP not changed: this activity has no normalized power")));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Activity updated (FTP unchanged)"));
+  });
+
+  it("saves a changed FTP through the dedicated command, and an unchanged or empty one not at all", async () => {
+    const { getByLabelText, getByText } = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
+    const input = getByLabelText("FTP (W)") as HTMLInputElement;
+    // Unchanged: no call.
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.updateActivity).toHaveBeenCalled());
+    expect(api.setActivityFtp).not.toHaveBeenCalled();
+    // Changed: one call with the number.
+    fireEvent.change(input, { target: { value: "238" } });
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.setActivityFtp).toHaveBeenCalledWith("act-1", 238));
+    // Emptied: nothing written.
+    vi.mocked(api.setActivityFtp).mockClear();
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.click(getByText("Save"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(api.setActivityFtp).not.toHaveBeenCalled();
   });
 });

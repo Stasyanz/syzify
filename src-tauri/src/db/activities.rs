@@ -493,6 +493,22 @@ pub fn get_record_badges(conn: &Connection, id: &str) -> Result<Vec<crate::model
 /// Title length cap in CHARS — mirrors MAX_TITLE_LENGTH in src/lib/types.ts.
 const MAX_TITLE_CHARS: usize = 100;
 
+/// The FTP an activity is filed under and the two numbers derived from it
+/// — written together, because one without the others is a lie.
+pub fn set_power_metrics(
+    conn: &Connection,
+    id: &str,
+    threshold_power_w: f64,
+    intensity_factor: f64,
+    training_stress_score: f64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE activity SET threshold_power_w = ?1, intensity_factor = ?2, training_stress_score = ?3 WHERE id = ?4",
+        params![threshold_power_w, intensity_factor, training_stress_score, id],
+    )?;
+    Ok(())
+}
+
 pub fn update_activity(conn: &Connection, id: &str, updates: &ActivityUpdate) -> Result<()> {
     let mut sets: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();

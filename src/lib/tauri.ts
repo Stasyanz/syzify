@@ -23,6 +23,7 @@ import type {
   EncryptionScopes,
   LocationUpdateResult,
   LocationHit,
+  FtpUpdateResult,
   Photo,
   AttachPhotosResult,
   PowerCurveData,
@@ -109,6 +110,8 @@ export const api = {
 
   setActivityLocationNamed: (id: string, name: string, lat: number, lon: number) =>
     invoke<LocationUpdateResult>("set_activity_location_named", { id, name, lat, lon }),
+
+  setActivityFtp: (id: string, ftpW: number) => invoke<FtpUpdateResult>("set_activity_ftp", { id, ftpW }),
 
   getActivityLocations: (filters?: ActivityFilters) =>
     invoke<ActivityLocation[]>("get_activity_locations", { filters: filters ?? null }),

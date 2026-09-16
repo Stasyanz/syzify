@@ -6,6 +6,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Edit Activity can correct the FTP an activity was recorded with (#137):
+  for activities with power, an FTP field prefilled with the file's value;
+  changing it recomputes IF and TSS by the device's own formula on the
+  timer time and rebuilds the power zones from the track — the file itself
+  stays as recorded. A Garmin Edge still at an old FTP no longer leaves a
+  ride with the wrong load for good.
+
 ## [0.7.0] - 2026-09-15
 
 ### Added

@@ -47,6 +47,16 @@ pub fn get_time_in_zones(conn: &Connection, activity_id: &str) -> Result<Vec<Tim
 // Symmetric per-table delete. Activity removal cascades via ON DELETE CASCADE,
 // so this targeted helper is currently exercised only by tests.
 #[allow(dead_code)]
+/// Drop one zone type's rows (a rebuild of the power zones must not touch
+/// the heart-rate ones the device wrote).
+pub fn delete_time_in_zones_of_type(conn: &Connection, activity_id: &str, zone_type: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM time_in_zone WHERE activity_id = ?1 AND zone_type = ?2",
+        params![activity_id, zone_type],
+    )?;
+    Ok(())
+}
+
 pub fn delete_time_in_zones(conn: &Connection, activity_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM time_in_zone WHERE activity_id = ?1",

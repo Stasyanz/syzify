@@ -54,6 +54,13 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
   const [notes, setNotes] = useState(activity.notes ?? "");
   const [sportType, setSportType] = useState(activity.sport_type);
   const [locationText, setLocationText] = useState(activity.location_name ?? "");
+  // The FTP the activity was recorded with — editable when the file carried
+  // normalized power, since IF and TSS are recomputed from it.
+  const hasPower = activity.normalized_power_w != null;
+  // TSS needs a duration; a file with power but no timer time cannot be
+  // corrected, and the field says so instead of failing on save.
+  const canCorrectFtp = hasPower && activity.duration_s != null && activity.duration_s > 0;
+  const [ftpText, setFtpText] = useState(activity.threshold_power_w != null ? String(Math.round(activity.threshold_power_w)) : "");
   // The suggestion picked from the list, if the text still is its name: the
   // save then writes its coordinates instead of geocoding the text again.
   const [picked, setPicked] = useState<LocationHit | null>(null);
@@ -177,13 +184,30 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
   }, [allTags, currentTags]);
 
   const updateMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<{ ftpRefused: boolean }> => {
+      let ftpRefused = false;
       await api.updateActivity(activity.id, {
         title: title || undefined,
         notes: notes || undefined,
         sport_type: sportType,
       });
       await api.setActivityTags(activity.id, selectedTagIds);
+
+      // A changed FTP rewrites IF, TSS and the power zones on the backend.
+      // Its own failure is reported by name and does not undo the rest of
+      // the save — the title and tags above are already written.
+      if (canCorrectFtp) {
+        const ftp = Number(ftpText.trim());
+        const before = activity.threshold_power_w != null ? Math.round(activity.threshold_power_w) : null;
+        if (ftpText.trim() !== "" && Number.isFinite(ftp) && ftp !== before) {
+          try {
+            await api.setActivityFtp(activity.id, ftp);
+          } catch (err) {
+            ftpRefused = true;
+            addToast("error", `FTP not changed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
 
       // Handle location separately (forward geocoding)
       // A namesake picked from the list keeps the name and changes only the
@@ -208,9 +232,12 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
           }
         }
       }
+      return { ftpRefused };
     },
-    onSuccess: () => {
-      addToast("success", "Activity updated");
+    onSuccess: ({ ftpRefused }) => {
+      // The last toast on screen must not read as "everything saved"
+      // when the FTP was refused a moment earlier.
+      addToast("success", ftpRefused ? "Activity updated (FTP unchanged)" : "Activity updated");
       onSaved();
     },
     onError: (err: Error) => {
@@ -361,6 +388,33 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
             </p>
           )}
         </div>
+
+        {/* FTP — only for activities with power */}
+        {hasPower && (
+          <div>
+            <label className="text-xs text-muted block mb-1" htmlFor="activity-ftp">
+              FTP (W)
+            </label>
+            <input
+              id="activity-ftp"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={2000}
+              step={1}
+              value={ftpText}
+              onChange={(e) => setFtpText(e.target.value)}
+              placeholder="e.g. 238"
+              disabled={!canCorrectFtp}
+              className="w-full text-sm border border-border rounded px-3 py-2 disabled:opacity-60"
+            />
+            <p className="mt-1 text-xs text-muted">
+              {canCorrectFtp
+                ? "The FTP this activity was recorded with. Changing it recomputes IF, TSS and the power zones; the file is not touched."
+                : "This activity has power but no recorded duration, so TSS cannot be recomputed and the FTP stays as recorded."}
+            </p>
+          </div>
+        )}
 
         {/* Sport type */}
         <div>

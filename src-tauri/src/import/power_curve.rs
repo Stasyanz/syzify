@@ -23,7 +23,7 @@ pub const WINDOWS_S: &[i64] = &[
 
 /// Longest recording gap a sample is held across. Smart recording stays well
 /// under this; anything longer reads as a pause, not a slow recorder.
-const MAX_HOLD_S: usize = 10;
+pub(crate) const MAX_HOLD_S: usize = 10;
 
 /// Timestamps farther than this from the median are corrupt (a single glitch
 /// point days away must not stretch the grid and zero out long windows).
