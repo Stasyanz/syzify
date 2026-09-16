@@ -519,7 +519,12 @@ pub struct PreviousPower {
     pub source_device: Option<String>,
 }
 
-/// How many earlier rides the FTP hint looks back over.
+/// How many earlier rides the FTP hint looks back over. The hint compares
+/// a ride against the FTP most of these carry, which assumes an FTP that
+/// holds still between rides — true when the device's auto-detection is
+/// off, as it is meant to be. With auto-detection on, the value drifts
+/// almost every ride, no three agree, the majority degenerates to the
+/// newest neighbor, and the hint would show all the time.
 pub const RECENT_POWER_RIDES: usize = 3;
 
 /// The newest `limit` activities with an FTP that started before `id`,
@@ -990,10 +995,13 @@ mod tests {
         let mut b = sample_activity("b"); b.start_time = "2026-09-12T08:00:00+00:00".into(); b.threshold_power_w = None;
         let mut c = sample_activity("c"); c.start_time = "2026-09-16T08:00:00+00:00".into(); c.threshold_power_w = Some(200.0); c.source_device = Some("Edge 840".into());
         let mut d = sample_activity("d"); d.start_time = "2026-09-18T08:00:00+00:00".into(); d.threshold_power_w = Some(250.0);
-        for x in [&a0, &a1, &a, &b, &c, &d] { insert_activity(&conn, x).unwrap(); }
+        // A leg of a merged triathlon carries an FTP but is not a ride of its own.
+        let mut leg = sample_activity("leg"); leg.start_time = "2026-09-11T08:00:00+00:00".into(); leg.threshold_power_w = Some(199.0); leg.parent_id = Some("tri".into());
+        let mut tri = sample_activity("tri"); tri.start_time = "2026-09-11T07:00:00+00:00".into(); tri.threshold_power_w = None;
+        for x in [&a0, &a1, &a, &b, &c, &d, &tri, &leg] { insert_activity(&conn, x).unwrap(); }
         let recent = recent_power_activities(&conn, "c", 3).unwrap();
         let ids: Vec<&str> = recent.iter().map(|r| r.activity_id.as_str()).collect();
-        assert_eq!(ids, ["a", "a1", "a0"], "b has no FTP, d is later; newest first, capped at 3");
+        assert_eq!(ids, ["a", "a1", "a0"], "b has no FTP, d is later, the leg is a leg; newest first, capped at 3");
         assert_eq!(recent[0].threshold_power_w, 238.0);
         assert_eq!(recent[0].source_device.as_deref(), Some("fenix 7"));
         assert!(recent_power_activities(&conn, "a0", 3).unwrap().is_empty(), "nothing earlier");
