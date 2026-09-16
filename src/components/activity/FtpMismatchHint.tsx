@@ -1,4 +1,12 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { X } from "lucide-react";
+import { api } from "../../lib/tauri";
 import type { Activity, PreviousPower } from "../../lib/types";
+
+/** The setting under which a dismissed hint is remembered, per activity —
+ * in the vault, so it survives restarts and travels with the library. */
+export const ftpHintDismissedKey = (activityId: string) => `ftp_hint_dismissed.${activityId}`;
 
 /** The FTP the rider's recent rides agree on: the value most of the given
  * rides (newest first) carry, the newest winning a tie — and the newest
@@ -53,12 +61,24 @@ export function FtpMismatchHint({
   recent,
   onCorrect,
 }: {
-  activity: Pick<Activity, "threshold_power_w" | "source_device">;
+  activity: Pick<Activity, "id" | "threshold_power_w" | "source_device">;
   recent: PreviousPower[] | null | undefined;
   onCorrect: () => void;
 }) {
   const m = ftpMismatch(activity, recent);
-  if (!m) return null;
+  const key = ftpHintDismissedKey(activity.id);
+  const { data: saved, isPending } = useQuery({
+    queryKey: ["setting", key],
+    queryFn: () => api.getSetting(key),
+    enabled: m != null,
+  });
+  // Hidden the moment the cross is clicked, whatever the write's timing.
+  const [dismissed, setDismissed] = useState(false);
+  if (!m || dismissed || isPending || saved === "1") return null;
+  const dismiss = () => {
+    setDismissed(true);
+    api.setSetting(key, "1").catch(() => {});
+  };
   const on = m.thisDevice ? ` on ${m.thisDevice}` : "";
   const with_ = m.recentDevice ? ` (${m.recentDevice})` : "";
   return (
@@ -73,6 +93,14 @@ export function FtpMismatchHint({
       </span>
       <button type="button" onClick={onCorrect} className="text-accent-2 underline hover:no-underline">
         Correct FTP
+      </button>
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Dismiss"
+        className="ml-auto grid h-6 w-6 place-items-center rounded text-faint hover:bg-card-2 hover:text-ink"
+      >
+        <X size={14} />
       </button>
     </div>
   );

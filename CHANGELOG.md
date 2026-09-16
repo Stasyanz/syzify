@@ -13,7 +13,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   into the fix (#139). "Recent" is what most of the last three rides with
   power used, so a device left at an old FTP stands out, old rides
   recorded under the FTP of their day are left alone, and a deliberate
-  change is mentioned once or twice and then becomes the norm.
+  change is mentioned once or twice and then becomes the norm. A cross
+  dismisses the hint for that ride, and the vault remembers it.
 - Edit Activity can correct the FTP an activity was recorded with (#137):
   for activities with power, an FTP field prefilled with the file's value;
   changing it recomputes IF and TSS by the device's own formula on the
