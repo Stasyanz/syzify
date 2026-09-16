@@ -121,7 +121,7 @@ describe("describeDevice", () => {
     expect(describeDevice("Suunto 9 Peak")).toMatchObject({ form: "watch_multi" });
     expect(describeDevice("Polar Vantage V2")).toMatchObject({ form: "watch_round" });
     expect(describeDevice("Apple Watch")).toMatchObject({ form: "watch_rect" });
-    expect(describeDevice("StravaGPX")).toEqual({ label: "StravaGPX", full_name: "StravaGPX", form: "generic" });
+    expect(describeDevice("Zepp Export")).toEqual({ label: "Zepp Export", full_name: "Zepp Export", form: "generic" });
   });
 
   it("turns an underscored manufacturer enum with a numeric product into the maker's name", () => {
@@ -139,11 +139,23 @@ describe("describeDevice", () => {
   });
 
   it("clips a long creator string for the chip and keeps a URL out of the tooltip", () => {
-    const d = describeDevice("Runkeeper - http://www.runkeeper.com")!;
-    expect(d.label).toBe("Runkeeper - http://www.runkeepe…");
+    const d = describeDevice("Some Tracker - http://www.example.com/a/very/long/path")!;
+    expect(d.label).toBe("Some Tracker - http://www.examp…");
     expect(d.label.length).toBeLessThanOrEqual(32);
-    expect(d.full_name).toBe("Runkeeper - http://www.runkeeper.com");
+    expect(d.full_name).toBe("Some Tracker - http://www.example.com/a/very/long/path");
     expect(describeDevice("x".repeat(300))!.full_name.length).toBe(120);
+  });
+
+  it("knows the hardware behind a recording app's creator string", () => {
+    // WorkOutDoors runs only on Apple Watch: the file names the app, the chip
+    // shows the watch and says so on hover.
+    expect(describeDevice("WorkOutDoors")).toEqual({ label: "WorkOutDoors", full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" });
+    // Phone apps get the generic silhouette and a plain label without the URL.
+    expect(describeDevice("Runkeeper - http://www.runkeeper.com")).toEqual({ label: "Runkeeper", full_name: "Runkeeper app", form: "generic" });
+    expect(describeDevice("StravaGPX")).toEqual({ label: "StravaGPX", full_name: "Strava app", form: "generic" });
+    expect(describeDevice("Komoot — iOS")).toMatchObject({ label: "Komoot", full_name: "komoot app" });
+    // The FIT fallback "<maker> <product id>" is not an app creator string.
+    expect(describeDevice("Strava 123")).toMatchObject({ label: "Strava 123", full_name: "Strava 123" });
   });
 
   it("does not let a free-text mention of Garmin or a Wahoo watch pick the wrong silhouette", () => {

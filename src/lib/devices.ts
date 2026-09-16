@@ -225,6 +225,24 @@ const OTHER_MANUFACTURERS: Record<string, string> = {
   saris: "Saris", elite: "Elite", kinetic: "Kinetic", development: "Development",
 };
 
+/** Recording apps whose creator string implies the hardware. A file made by
+ * an app names the app, not the device; where the app runs on one kind of
+ * hardware only, the chip can still show the right silhouette and say so. */
+const RECORDING_APPS: Record<string, { full_name: string; form: DeviceForm }> = {
+  workoutdoors: { full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" },
+  "apple watch workout": { full_name: "Apple Watch Workout app", form: "watch_rect" },
+  athlytic: { full_name: "Athlytic (Apple Watch app)", form: "watch_rect" },
+  // Phone apps: the recorder is a phone in a pocket, no watch silhouette.
+  stravagpx: { full_name: "Strava app", form: "generic" },
+  strava: { full_name: "Strava app", form: "generic" },
+  runkeeper: { full_name: "Runkeeper app", form: "generic" },
+  komoot: { full_name: "komoot app", form: "generic" },
+};
+
+/** Where an app's creator string stops naming the app: "Runkeeper - http://…",
+ * "Komoot — iOS", "Strava (Android)". */
+const APP_NAME_END = /\s[-–—(]/;
+
 /** Keyword classifier for devices outside the Garmin grammar. */
 const FORM_KEYWORDS: Array<[RegExp, DeviceForm]> = [
   [/\belemnt rival\b/i, "watch_round"], // Wahoo's one watch, before its head units
@@ -282,6 +300,11 @@ export function describeDevice(source: string | null | undefined): DeviceInfo | 
     const maker = manufacturerName(enumProduct[1]);
     return { label: maker, full_name: `${maker} (product ${enumProduct[2]})`, form: classify(maker) };
   }
+
+  // A recording app: keep its name as the label, say what it runs on.
+  const appName = text.split(APP_NAME_END)[0].trim();
+  const app = RECORDING_APPS[appName.toLowerCase()];
+  if (app) return { label: clip(appName, MAX_LABEL_CHARS), full_name: app.full_name, form: app.form };
 
   // A bare manufacturer enum ("Wahoo_fitness") or any free-form creator string.
   const enumOnly = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/i.exec(text);

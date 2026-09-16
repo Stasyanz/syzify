@@ -24,6 +24,7 @@ describe("DeviceChip", () => {
     ["Garmin 1620", "Garmin", "generic"],
     ["ELEMNT BOLT", "ELEMNT BOLT", "bike_computer"],
     ["StravaGPX", "StravaGPX", "generic"],
+    ["WorkOutDoors", "WorkOutDoors", "watch_rect"],
   ])("%s → chip %s with the %s silhouette", (source, label, form) => {
     render(<DeviceChip source={source} />);
     const chip = screen.getByTestId("device-chip");

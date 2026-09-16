@@ -13,7 +13,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   Garmin product the FIT profile knows is named from its enum key; other
   vendors show the name their file carries, with the silhouette picked by
   keyword (Edge, ELEMNT, Karoo → head unit; fenix, COROS, Suunto → watch).
-  The FTP mismatch hint now names devices the same way.
+  The FTP mismatch hint now names devices the same way. A file recorded
+  by an app names the app; where the app runs on one kind of hardware
+  (WorkOutDoors → Apple Watch) the chip shows that silhouette and says so
+  on hover (#143).
 - The activity page says when a ride was recorded with a different FTP
   than your recent rides — "Recorded with FTP 200 W on Edge 840 — your
   recent rides used 238 W (fenix 7)" — with a "Correct FTP" link straight
