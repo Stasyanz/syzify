@@ -742,6 +742,12 @@ body {
 .badge-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 20px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .badge-pill svg { color: var(--accent-2); flex-shrink: 0; }
 
+/* Recording-device chip in the activity header: silhouette + model label,
+   the height of the toolbar buttons. */
+.device-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 11px 0 6px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.device-chip svg { color: var(--accent-2); flex-shrink: 0; }
+.device-chip span { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
 /* Personal records rows */
 .rec { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 10px; }
 .rec.link { cursor: pointer; transition: background 0.12s; }

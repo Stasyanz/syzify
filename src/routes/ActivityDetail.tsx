@@ -32,6 +32,8 @@ import {
 import { LapsTable } from "../components/activity/LapsTable";
 import { EditActivityModal } from "../components/activity/EditActivityModal";
 import { FtpMismatchHint } from "../components/activity/FtpMismatchHint";
+import { DeviceChip } from "../components/activity/DeviceChip";
+import { describeDevice } from "../lib/devices";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
 import { ShareModal } from "../components/activity/ShareModal";
 import { PluginContributions } from "../components/plugins/PluginContributions";
@@ -308,9 +310,14 @@ export function ActivityDetailPage() {
     }
   }
 
+  const hasDevice = describeDevice(activity.source_device) != null;
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Header — fixed top bar with a bottom divider (matches the design) */}
+      {/* Header — fixed top bar with a bottom divider (matches the design).
+          With a device chip the title block and the toolbar grow 1:1 so the
+          chip sits in the middle; without one the toolbar keeps its content
+          width and the title gets everything else. */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border shrink-0">
         {/* flex-1 so the in-place title input gets real width to fill. */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -386,7 +393,9 @@ export function ActivityDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <DeviceChip source={activity.source_device} />
+
+        <div className={`flex items-center justify-end gap-2.5 ${hasDevice ? "flex-1" : "shrink-0"}`}>
           {recordBadges.length > 0 && (
             <div className="det-badges-inline">
               {recordBadges.map((b) => {

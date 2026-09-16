@@ -7,6 +7,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 ## [Unreleased]
 
 ### Added
+- The activity header shows which device recorded the activity: a chip in
+  the middle with a silhouette of its kind and the model — "fenix 6X Pro",
+  "Edge 840", "Forerunner 265S" — and the full name on hover (#141). Every
+  Garmin product the FIT profile knows is named from its enum key; other
+  vendors show the name their file carries, with the silhouette picked by
+  keyword (Edge, ELEMNT, Karoo → head unit; fenix, COROS, Suunto → watch).
+  The FTP mismatch hint now names devices the same way.
 - The activity page says when a ride was recorded with a different FTP
   than your recent rides — "Recorded with FTP 200 W on Edge 840 — your
   recent rides used 238 W (fenix 7)" — with a "Correct FTP" link straight

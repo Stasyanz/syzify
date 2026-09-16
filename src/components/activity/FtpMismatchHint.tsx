@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { deviceLabel } from "../../lib/devices";
 import type { Activity, PreviousPower } from "../../lib/types";
 
 /** The setting under which a dismissed hint is remembered, per activity —
@@ -82,8 +83,10 @@ export function FtpMismatchHint({
     setDismissedFor(activity.id);
     api.setSetting(key, "1").catch(() => {});
   };
-  const on = m.thisDevice ? ` on ${m.thisDevice}` : "";
-  const with_ = m.recentDevice ? ` (${m.recentDevice})` : "";
+  const thisLabel = deviceLabel(m.thisDevice);
+  const recentLabel = deviceLabel(m.recentDevice);
+  const on = thisLabel ? ` on ${thisLabel}` : "";
+  const with_ = recentLabel ? ` (${recentLabel})` : "";
   return (
     <div
       role="note"
