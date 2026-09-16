@@ -771,6 +771,15 @@ pub fn get_activity_year_range(conn: &Connection) -> Result<Option<(i32, i32)>> 
     )
 }
 
+/// Overwrite the recording device an activity names (the #144 backfill).
+pub fn set_source_device(conn: &Connection, id: &str, device: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE activity SET source_device = ?1 WHERE id = ?2",
+        params![device, id],
+    )?;
+    Ok(())
+}
+
 pub fn get_detected_devices(conn: &Connection) -> Result<Vec<DeviceStats>> {
     let mut stmt = conn.prepare(
         "SELECT source_device, COUNT(*) as cnt, MAX(start_time) as last_time

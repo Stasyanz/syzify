@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension, Result};
 
-use crate::models::raw_file::{RawFile, RawFileKind};
+use crate::models::raw_file::{RawFile, RawFileKind, ActivityFitFile};
 
 pub fn insert_raw_file(conn: &Connection, raw: &RawFile) -> Result<()> {
     insert_raw_file_of_kind(conn, raw, RawFileKind::Activity)
@@ -135,6 +135,27 @@ pub fn delete_for_activity(conn: &Connection, activity_id: &str) -> Result<()> {
 
 /// Read helper for an activity's raw source files (delete_activity uses it to
 /// remove the files from the vault alongside the rows).
+/// Every activity's stored FIT files with the device the activity names —
+/// one row per file, ordered so the earliest-imported file of an activity
+/// comes first. Unlinked (content-duplicate) rows are not activities and
+/// are left out.
+pub fn activity_fit_files(conn: &Connection) -> Result<Vec<ActivityFitFile>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.activity_id, r.path_in_vault, a.source_device
+         FROM raw_file r JOIN activity a ON a.id = r.activity_id
+         WHERE r.format = 'fit'
+         ORDER BY r.activity_id, r.imported_at, r.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ActivityFitFile {
+            activity_id: row.get(0)?,
+            path_in_vault: row.get(1)?,
+            source_device: row.get(2)?,
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn get_raw_files_for_activity(conn: &Connection, activity_id: &str) -> Result<Vec<RawFile>> {
     let mut stmt = conn.prepare(
         "SELECT id, activity_id, path_in_vault, original_path, format,
@@ -233,6 +254,48 @@ mod tests {
         let files = get_raw_files_for_activity(&conn, "act-rf").unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].hash_sha256, "xyz789");
+    }
+
+    /// The backfill listing: FIT files only, joined to their activity's
+    /// current device, unlinked rows skipped, earliest import first.
+    #[test]
+    fn activity_fit_files_lists_linked_fit_files_with_the_current_device() {
+        let conn = db::test_db();
+        let act = |id: &str, dev: Option<&str>| crate::models::activity::Activity {
+            id: id.to_string(),
+            start_time: "2025-06-01T08:00:00+00:00".to_string(),
+            sport_type: "ride".to_string(),
+            source_device: dev.map(str::to_string),
+            ..Default::default()
+        };
+        db::activities::insert_activity(&conn, &act("a1", Some("Garmin 1620"))).unwrap();
+        db::activities::insert_activity(&conn, &act("a2", None)).unwrap();
+
+        let mut fit_late = sample_raw("rf-late", "h1");
+        fit_late.activity_id = Some("a1".into());
+        fit_late.format = "fit".into();
+        fit_late.imported_at = "2025-06-02T00:00:00+00:00".into();
+        let mut fit_early = sample_raw("rf-early", "h2");
+        fit_early.activity_id = Some("a1".into());
+        fit_early.format = "fit".into();
+        fit_early.imported_at = "2025-06-01T00:00:00+00:00".into();
+        let mut gpx = sample_raw("rf-gpx", "h3");
+        gpx.activity_id = Some("a2".into());
+        gpx.format = "gpx".into();
+        let mut unlinked = sample_raw("rf-none", "h4");
+        unlinked.format = "fit".into();
+        for r in [&fit_late, &fit_early, &gpx, &unlinked] {
+            insert_raw_file(&conn, r).unwrap();
+        }
+
+        let files = activity_fit_files(&conn).unwrap();
+        assert_eq!(
+            files,
+            vec![
+                ActivityFitFile { activity_id: "a1".into(), path_in_vault: fit_early.path_in_vault.clone(), source_device: Some("Garmin 1620".into()) },
+                ActivityFitFile { activity_id: "a1".into(), path_in_vault: fit_late.path_in_vault.clone(), source_device: Some("Garmin 1620".into()) },
+            ]
+        );
     }
 
     /// delete_for_activity is scoped: other activities' rows AND unlinked

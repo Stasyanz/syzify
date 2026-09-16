@@ -103,3 +103,12 @@ pub struct RawFile {
     pub parse_status: String,
     pub failure_reason: Option<String>,
 }
+
+/// One stored FIT file of an activity with the device the activity currently
+/// names — the input of the source-device backfill (#144).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivityFitFile {
+    pub activity_id: String,
+    pub path_in_vault: String,
+    pub source_device: Option<String>,
+}

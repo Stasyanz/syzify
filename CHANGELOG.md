@@ -6,6 +6,15 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- The recording device of a FIT activity is read from the file's creator
+  (`file_id`, completed by the creator's `device_info`) instead of the
+  first `device_info` message, which can be a paired sensor — a fenix
+  ride whose file listed a peripheral first was filed as "Garmin 1620"
+  and showed a bare "Garmin" chip (#144). Existing activities are
+  corrected once at startup from their stored FIT files, encrypted
+  vaults included.
+
 ### Added
 - The activity header shows which device recorded the activity: a chip in
   the middle with a silhouette of its kind and the model — "fenix 6X Pro",

@@ -46,6 +46,103 @@ fn compose_device_name(
     }
 }
 
+/// The device-identifying fields of a `file_id` or `device_info` message.
+/// Empty and zero values are dropped: "0" is the SDK's "unknown" product.
+#[derive(Default, Debug, Clone, PartialEq)]
+struct DeviceFields {
+    product_name: Option<String>,
+    manufacturer: Option<String>,
+    product: Option<String>,
+}
+
+impl DeviceFields {
+    fn of(msg: &fitparser::FitDataRecord) -> Self {
+        let mut d = DeviceFields::default();
+        for field in msg.fields() {
+            let val = format!("{}", field.value());
+            if val.is_empty() || val == "0" {
+                continue;
+            }
+            match field.name() {
+                "product_name" => d.product_name = Some(val),
+                "manufacturer" => d.manufacturer = Some(val),
+                // The SDK resolves manufacturer-specific product enums to
+                // model names ("fenix6x", "edge_840"); unknown ids stay numeric.
+                "garmin_product" | "product" => d.product = Some(val),
+                _ => {}
+            }
+        }
+        d
+    }
+
+    fn is_empty(&self) -> bool {
+        self.product_name.is_none() && self.manufacturer.is_none() && self.product.is_none()
+    }
+
+    /// Fill what `self` lacks from `other` — the two messages describe the
+    /// same device, they just carry different subsets of its fields.
+    fn or(self, other: DeviceFields) -> DeviceFields {
+        DeviceFields {
+            product_name: self.product_name.or(other.product_name),
+            manufacturer: self.manufacturer.or(other.manufacturer),
+            product: self.product.or(other.product),
+        }
+    }
+
+    fn name(self) -> Option<String> {
+        compose_device_name(self.product_name, self.manufacturer, self.product)
+    }
+}
+
+/// The device that recorded the file, from the decoded messages.
+///
+/// `file_id` names the file's creator and is always present; the
+/// `device_info` with `device_index` = creator (index 0) is the same device
+/// with more fields (Wahoo puts `product_name` there, not in file_id), so the
+/// two are merged. Only when neither says anything does the FIRST
+/// `device_info` count — that message used to be the sole source and it can
+/// be a sensor: a paired peripheral listed before the watch turned a fenix
+/// ride into "Garmin 1620" (#144).
+pub fn source_device_of(messages: &[fitparser::FitDataRecord]) -> Option<String> {
+    let mut file_id: Option<DeviceFields> = None;
+    let mut creator: Option<DeviceFields> = None;
+    let mut first: Option<DeviceFields> = None;
+    for msg in messages {
+        match msg.kind() {
+            MesgNum::FileId if file_id.is_none() => file_id = Some(DeviceFields::of(msg)),
+            MesgNum::DeviceInfo => {
+                let fields = DeviceFields::of(msg);
+                let is_creator = msg.fields().iter().any(|f| {
+                    f.name() == "device_index" && {
+                        let v = format!("{}", f.value());
+                        v == "creator" || v == "0"
+                    }
+                });
+                if is_creator && creator.is_none() {
+                    creator = Some(fields.clone());
+                }
+                if first.is_none() {
+                    first = Some(fields);
+                }
+            }
+            _ => {}
+        }
+    }
+    let own = file_id.unwrap_or_default().or(creator.unwrap_or_default());
+    if !own.is_empty() {
+        return own.name();
+    }
+    first.and_then(DeviceFields::name)
+}
+
+/// `source_device_of` over raw file bytes — for the one-time backfill that
+/// re-reads stored FIT files (#144). Undecodable bytes give None.
+pub fn source_device_of_bytes(data: &[u8]) -> Option<String> {
+    fitparser::from_bytes(data)
+        .ok()
+        .and_then(|messages| source_device_of(&messages))
+}
+
 /// Decode a FIT left/right balance value to the RIGHT-pedal percentage.
 ///
 /// The raw value carries a flag bit saying "the payload refers to the right
@@ -132,7 +229,6 @@ pub fn parse_fit_records(
     let mut start_time: Option<String> = None;
     // From MesgNum::Sport — the fallback when the file carries no sessions.
     let mut sport_message: Option<String> = None;
-    let mut source_device: Option<String> = None;
     // One entry per Session message: (its sport, its metrics). Multisport
     // files (triathlon) carry one session PER LEG — they are resolved after
     // the loop; collapsing them here with last-wins used to file every
@@ -796,31 +892,11 @@ pub fn parse_fit_records(
                     }
                 }
             }
-            MesgNum::DeviceInfo => {
-                if source_device.is_none() {
-                    let mut product_name = None;
-                    let mut manufacturer = None;
-                    let mut product = None;
-                    for field in msg.fields() {
-                        let val = format!("{}", field.value());
-                        if val.is_empty() || val == "0" {
-                            continue;
-                        }
-                        match field.name() {
-                            "product_name" => product_name = Some(val),
-                            "manufacturer" => manufacturer = Some(val),
-                            // The SDK resolves manufacturer-specific product
-                            // enums to model names ("fenix6x", "edge_840").
-                            "garmin_product" | "product" => product = Some(val),
-                            _ => {}
-                        }
-                    }
-                    source_device = compose_device_name(product_name, manufacturer, product);
-                }
-            }
             _ => {}
         }
     }
+
+    let source_device = source_device_of(messages);
 
     let legs = sessions_to_legs(activity_id, &sessions);
     let session_sports: Vec<String> =
@@ -1000,6 +1076,62 @@ mod tests {
         assert_eq!(compose_device_name(None, s("garmin"), None), s("Garmin"));
         assert_eq!(compose_device_name(None, None, s("fenix6x")), s("fenix6x"));
         assert_eq!(compose_device_name(None, None, None), None);
+    }
+
+    fn device_msg(kind: MesgNum, fields: &[(&str, &str)]) -> fitparser::FitDataRecord {
+        use fitparser::{FitDataField, Value};
+        let mut msg = fitparser::FitDataRecord::new(kind);
+        for (i, (name, val)) in fields.iter().enumerate() {
+            msg.push(FitDataField::new(
+                (*name).to_string(),
+                i as u8,
+                Value::String((*val).to_string()),
+                String::new(),
+            ));
+        }
+        msg
+    }
+
+    /// #144: a paired sensor listed before the watch must not become the
+    /// recording device — file_id names the creator, and the creator's
+    /// device_info completes it.
+    #[test]
+    fn source_device_prefers_file_id_and_creator_over_the_first_device_info() {
+        let s = |v: &str| Some(v.to_string());
+        // The real shape of the FR920XT files: sensor first, creator later.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("type", "activity"), ("manufacturer", "garmin"), ("garmin_product", "fr920xt")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "2"), ("manufacturer", "garmin"), ("garmin_product", "1620")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "creator"), ("manufacturer", "garmin"), ("garmin_product", "fr920xt")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("Garmin fr920xt"));
+
+        // Wahoo: file_id has only the numeric product, the creator device_info
+        // carries product_name — merged, the name wins.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("manufacturer", "wahoo_fitness"), ("product", "31")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "0"), ("manufacturer", "wahoo_fitness"), ("product", "31"), ("product_name", "ELEMNT BOLT")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("ELEMNT BOLT"));
+
+        // No creator record: file_id alone is enough.
+        let msgs = vec![device_msg(MesgNum::FileId, &[("manufacturer", "garmin"), ("garmin_product", "fenix6x")])];
+        assert_eq!(source_device_of(&msgs), s("Garmin fenix6x"));
+
+        // file_id without a device (type only) and no creator: the first
+        // device_info is the last resort, as before.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("type", "activity")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "1"), ("manufacturer", "garmin"), ("garmin_product", "hrm_pro")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("Garmin hrm_pro"));
+
+        // Zero products are unknown, not a model.
+        let msgs = vec![device_msg(MesgNum::FileId, &[("manufacturer", "garmin"), ("garmin_product", "0")])];
+        assert_eq!(source_device_of(&msgs), s("Garmin"));
+
+        assert_eq!(source_device_of(&[]), None);
+        assert_eq!(source_device_of_bytes(b"not a fit file"), None);
     }
 
     /// The per-leg breakdown: multisport sessions become ordered legs with
