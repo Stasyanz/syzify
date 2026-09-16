@@ -73,10 +73,13 @@ export function FtpMismatchHint({
     enabled: m != null,
   });
   // Hidden the moment the cross is clicked, whatever the write's timing.
-  const [dismissed, setDismissed] = useState(false);
-  if (!m || dismissed || isPending || saved === "1") return null;
+  // Remembered by activity id, not as a bare flag: the activity page keeps
+  // this component mounted while the user pages to the next ride, and a
+  // hint dismissed on one ride must not stay hidden on another.
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  if (!m || dismissedFor === activity.id || isPending || saved === "1") return null;
   const dismiss = () => {
-    setDismissed(true);
+    setDismissedFor(activity.id);
     api.setSetting(key, "1").catch(() => {});
   };
   const on = m.thisDevice ? ` on ${m.thisDevice}` : "";

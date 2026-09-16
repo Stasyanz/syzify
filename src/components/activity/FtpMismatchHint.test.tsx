@@ -109,4 +109,24 @@ describe("FtpMismatchHint", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(again.queryByRole("note")).toBeNull();
   });
+
+  it("a dismissal on one ride does not hide the hint on the next ride the same mounted page shows", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (id: string) => (
+      <QueryClientProvider client={qc}>
+        <FtpMismatchHint activity={{ id, threshold_power_w: 200, source_device: null }} recent={fenix} onCorrect={() => {}} />
+      </QueryClientProvider>
+    );
+    const r = render(ui("act-1"));
+    await r.findByRole("note");
+    fireEvent.click(r.getByLabelText("Dismiss"));
+    expect(r.queryByRole("note")).toBeNull();
+    // Paging to the next activity re-renders the same component with a new id.
+    r.rerender(ui("act-2"));
+    expect(await r.findByRole("note")).toBeTruthy();
+    // And back: the first ride stays dismissed for this session.
+    r.rerender(ui("act-1"));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(r.queryByRole("note")).toBeNull();
+  });
 });
