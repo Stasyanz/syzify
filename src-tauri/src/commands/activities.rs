@@ -51,6 +51,12 @@ pub fn get_activity_detail(
     let sets = db::exercise_sets::get_exercise_sets(&conn, &id).map_err(|e| e.to_string())?;
     let time_in_zones = db::time_in_zones::get_time_in_zones(&conn, &id).map_err(|e| e.to_string())?;
     let hrv_samples = db::hrv_samples::get_hrv_samples(&conn, &id).map_err(|e| e.to_string())?;
+    let recent_power = if activity.threshold_power_w.is_some() {
+        db::activities::recent_power_activities(&conn, &id, db::activities::RECENT_POWER_RIDES)
+            .map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
 
     Ok(ActivityDetail {
         activity,
@@ -62,6 +68,7 @@ pub fn get_activity_detail(
         sets,
         time_in_zones,
         hrv_samples,
+        recent_power,
     })
 }
 
@@ -76,6 +83,9 @@ pub struct ActivityDetail {
     pub sets: Vec<ExerciseSet>,
     pub time_in_zones: Vec<TimeInZone>,
     pub hrv_samples: Vec<HrvSample>,
+    /// The newest earlier activities with an FTP, newest first, for the
+    /// "recorded with a different FTP" hint (#139); empty when none.
+    pub recent_power: Vec<db::activities::PreviousPower>,
 }
 
 #[tauri::command]

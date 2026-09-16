@@ -509,6 +509,44 @@ pub fn set_power_metrics(
     Ok(())
 }
 
+/// An earlier activity with an FTP — what a ride's FTP is compared against
+/// (#139): its FTP, device and date.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PreviousPower {
+    pub activity_id: String,
+    pub start_time: String,
+    pub threshold_power_w: f64,
+    pub source_device: Option<String>,
+}
+
+/// How many earlier rides the FTP hint looks back over.
+pub const RECENT_POWER_RIDES: usize = 3;
+
+/// The newest `limit` activities with an FTP that started before `id`,
+/// newest first. Ordered by start time, not import time: a rider thinks in
+/// ride dates, and an old file imported late belongs in the past. Legs of a
+/// multisport activity are excluded by `parent_id IS NULL`; containers
+/// carry no power metrics today, so they fall out through
+/// `threshold_power_w IS NOT NULL` — should they ever aggregate power,
+/// this query would start seeing them.
+pub fn recent_power_activities(conn: &Connection, id: &str, limit: usize) -> Result<Vec<PreviousPower>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, start_time, threshold_power_w, source_device FROM activity
+         WHERE threshold_power_w IS NOT NULL AND parent_id IS NULL AND id != ?1
+           AND start_time < (SELECT start_time FROM activity WHERE id = ?1)
+         ORDER BY start_time DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![id, limit as i64], |r| {
+        Ok(PreviousPower {
+            activity_id: r.get(0)?,
+            start_time: r.get(1)?,
+            threshold_power_w: r.get(2)?,
+            source_device: r.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn update_activity(conn: &Connection, id: &str, updates: &ActivityUpdate) -> Result<()> {
     let mut sets: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -939,6 +977,27 @@ pub fn start_time_nearest(conn: &Connection, unix_ts: i64) -> Result<Option<Stri
 mod tests {
     use super::*;
     use crate::db;
+
+    /// The hint looks back over the newest EARLIER activities with an FTP —
+    /// not later ones, not a leg of a triathlon, not itself — newest first,
+    /// capped.
+    #[test]
+    fn recent_power_activities_are_the_newest_earlier_ones_with_an_ftp() {
+        let conn = db::test_db();
+        let mut a0 = sample_activity("a0"); a0.start_time = "2026-09-01T08:00:00+00:00".into(); a0.threshold_power_w = Some(235.0);
+        let mut a1 = sample_activity("a1"); a1.start_time = "2026-09-05T08:00:00+00:00".into(); a1.threshold_power_w = Some(238.0);
+        let mut a = sample_activity("a"); a.start_time = "2026-09-10T08:00:00+00:00".into(); a.threshold_power_w = Some(238.0); a.source_device = Some("fenix 7".into());
+        let mut b = sample_activity("b"); b.start_time = "2026-09-12T08:00:00+00:00".into(); b.threshold_power_w = None;
+        let mut c = sample_activity("c"); c.start_time = "2026-09-16T08:00:00+00:00".into(); c.threshold_power_w = Some(200.0); c.source_device = Some("Edge 840".into());
+        let mut d = sample_activity("d"); d.start_time = "2026-09-18T08:00:00+00:00".into(); d.threshold_power_w = Some(250.0);
+        for x in [&a0, &a1, &a, &b, &c, &d] { insert_activity(&conn, x).unwrap(); }
+        let recent = recent_power_activities(&conn, "c", 3).unwrap();
+        let ids: Vec<&str> = recent.iter().map(|r| r.activity_id.as_str()).collect();
+        assert_eq!(ids, ["a", "a1", "a0"], "b has no FTP, d is later; newest first, capped at 3");
+        assert_eq!(recent[0].threshold_power_w, 238.0);
+        assert_eq!(recent[0].source_device.as_deref(), Some("fenix 7"));
+        assert!(recent_power_activities(&conn, "a0", 3).unwrap().is_empty(), "nothing earlier");
+    }
 
     fn sample_activity(id: &str) -> Activity {
         Activity {

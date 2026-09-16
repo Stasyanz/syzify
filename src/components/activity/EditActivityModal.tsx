@@ -20,6 +20,8 @@ interface Props {
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
+  /** Open with the FTP field focused — the "Correct FTP" hint lands here. */
+  focusFtp?: boolean;
 }
 
 /** Toggle `id` within `selected`, enforcing a maximum of `max` selections.
@@ -46,7 +48,7 @@ export function stepHighlight(current: number, count: number, delta: 1 | -1): nu
   return (current + delta + count) % count;
 }
 
-export function EditActivityModal({ activity, currentTags, onClose, onSaved, onDeleted }: Props) {
+export function EditActivityModal({ activity, currentTags, onClose, onSaved, onDeleted, focusFtp = false }: Props) {
   const addToast = useToastStore((s) => s.addToast);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -405,6 +407,7 @@ export function EditActivityModal({ activity, currentTags, onClose, onSaved, onD
               value={ftpText}
               onChange={(e) => setFtpText(e.target.value)}
               placeholder="e.g. 238"
+              autoFocus={focusFtp && canCorrectFtp}
               disabled={!canCorrectFtp}
               className="w-full text-sm border border-border rounded px-3 py-2 disabled:opacity-60"
             />

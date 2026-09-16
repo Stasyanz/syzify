@@ -31,6 +31,7 @@ import {
 } from "../components/activity/legFocus";
 import { LapsTable } from "../components/activity/LapsTable";
 import { EditActivityModal } from "../components/activity/EditActivityModal";
+import { FtpMismatchHint } from "../components/activity/FtpMismatchHint";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
 import { ShareModal } from "../components/activity/ShareModal";
 import { PluginContributions } from "../components/plugins/PluginContributions";
@@ -119,6 +120,8 @@ export function ActivityDetailPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Whether the edit modal opens on the FTP field (the mismatch hint).
+  const [editFocusFtp, setEditFocusFtp] = useState(false);
   const [sharing, setSharing] = useState<Photo | "pick" | null>(null);
   // FIT-native leg focused in place (leg_number) — windows the map/charts/laps
   // to that leg's time range. Merged legs navigate away instead.
@@ -130,6 +133,7 @@ export function ActivityDetailPage() {
   // Reset state and scroll when navigating between activities
   useEffect(() => {
     setEditing(false);
+    setEditFocusFtp(false);
     setExporting(false);
     setSharing(null);
     setFocusedLegNo(null);
@@ -490,6 +494,15 @@ export function ActivityDetailPage() {
           {/* A merged triathlon container carries no track of its own — the
               map, charts and laps live on each leg's page. Show them only for
               activities that actually have trackpoints. */}
+          <FtpMismatchHint
+            activity={activity}
+            recent={data.recent_power}
+            onCorrect={() => {
+              setEditFocusFtp(true);
+              setEditing(true);
+            }}
+          />
+
           {!isMergedContainer && (
             <>
               {/* Map/charts/laps window to the focused leg's slice: its sport
@@ -592,9 +605,14 @@ export function ActivityDetailPage() {
         <EditActivityModal
           activity={activity}
           currentTags={tags}
-          onClose={() => setEditing(false)}
+          focusFtp={editFocusFtp}
+          onClose={() => {
+            setEditing(false);
+            setEditFocusFtp(false);
+          }}
           onSaved={() => {
             setEditing(false);
+            setEditFocusFtp(false);
             queryClient.invalidateQueries({ queryKey: ["activity", id] });
             // The edit modal can change sport_type → aggregates and badges.
             invalidateActivityData(queryClient);

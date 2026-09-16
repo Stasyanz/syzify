@@ -355,6 +355,28 @@ describe("FTP correction", () => {
     expect(noDur.getByText(/no recorded duration/)).toBeTruthy();
   });
 
+  it("opens on the FTP field when asked to, but never focuses a disabled one", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mount = (over: Partial<Activity>) =>
+      render(
+        <QueryClientProvider client={qc}>
+          <EditActivityModal
+            activity={{ ...activity, ...over } as Activity}
+            currentTags={[]}
+            onClose={() => {}}
+            onSaved={() => {}}
+            onDeleted={() => {}}
+            focusFtp
+          />
+        </QueryClientProvider>,
+      );
+    const ok = mount({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
+    expect(document.activeElement).toBe(ok.getByLabelText("FTP (W)"));
+    cleanup();
+    const off = mount({ normalized_power_w: 159, threshold_power_w: 200, duration_s: null });
+    expect(document.activeElement).not.toBe(off.getByLabelText("FTP (W)"));
+  });
+
   it("reports a refused FTP by name and still saves the rest", async () => {
     vi.mocked(api.setActivityFtp).mockRejectedValueOnce("this activity has no normalized power, so IF and TSS cannot be recomputed");
     const { getByLabelText, getByText } = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });

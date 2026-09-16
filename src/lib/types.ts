@@ -125,6 +125,15 @@ export interface ActivityDetail {
   sets: ExerciseSet[];
   time_in_zones: TimeInZone[];
   hrv_samples: HrvSample[];
+  /** The newest earlier activities with an FTP, newest first, for the mismatch hint. */
+  recent_power: PreviousPower[];
+}
+
+export interface PreviousPower {
+  activity_id: string;
+  start_time: string;
+  threshold_power_w: number;
+  source_device: string | null;
 }
 
 export interface HrvSample {
