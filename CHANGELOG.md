@@ -11,8 +11,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   (`file_id`, completed by the creator's `device_info`) instead of the
   first `device_info` message, which can be a paired sensor — a fenix
   ride whose file listed a peripheral first was filed as "Garmin 1620"
-  and showed a bare "Garmin" chip (#144). Existing activities are
-  corrected once at startup from their stored FIT files, encrypted
+  and showed a bare "Garmin" chip (#144). This also means a file
+  re-created by an app (Zwift, TrainerRoad) is credited to the app, as
+  its `file_id` says, not to the watch it read from. Existing activities
+  are corrected once at startup from their stored FIT files, encrypted
   vaults included.
 
 ### Added

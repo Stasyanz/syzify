@@ -118,6 +118,12 @@ pub fn source_device_of(messages: &[fitparser::FitDataRecord]) -> Option<String>
                         v == "creator" || v == "0"
                     }
                 });
+                // A device_info can carry only a timestamp and an index (a
+                // sensor's battery report): such a message names nothing
+                // and must not take the slot from a later one that does.
+                if fields.is_empty() {
+                    continue;
+                }
                 if is_creator && creator.is_none() {
                     creator = Some(fields.clone());
                 }
@@ -1125,6 +1131,16 @@ mod tests {
             device_msg(MesgNum::DeviceInfo, &[("device_index", "1"), ("manufacturer", "garmin"), ("garmin_product", "hrm_pro")]),
         ];
         assert_eq!(source_device_of(&msgs), s("Garmin hrm_pro"));
+
+        // An empty device_info (battery report: timestamp + index only)
+        // does not take the fallback slot from the next one that names a
+        // device — the old first-wins code skipped it too.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("type", "activity")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "1"), ("battery_status", "good")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "1"), ("manufacturer", "garmin"), ("garmin_product", "fenix7")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("Garmin fenix7"));
 
         // Zero products are unknown, not a model.
         let msgs = vec![device_msg(MesgNum::FileId, &[("manufacturer", "garmin"), ("garmin_product", "0")])];
