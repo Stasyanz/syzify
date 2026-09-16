@@ -11,6 +11,7 @@ const ACTIVITY_DATA_PREFIXES: readonly string[] = [
   "calendar",
   "dashboard",
   "usedSportTypes", // sport filter options
+  "detectedDevices", // device filter options
   "recordBadges", // a new best effort can displace another activity's badge
   "adjacent", // prev/next navigation between activities
   "segment-efforts", // sport change / delete rematches segment passes

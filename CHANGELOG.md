@@ -18,6 +18,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   vaults included.
 
 ### Added
+- The library filters get a Device multi-select (#149): one option per
+  model found in the vault, with its silhouette and activity count, plus
+  "No device" for manual entries and plain GPX files. Several raw device
+  strings that name the same model are one option. The list, calendar and
+  map all honour it, and it counts toward the active-filter badge. The
+  `get_detected_devices` command now counts activities without a device
+  under an empty name and leaves merged-triathlon legs out, like the
+  library does.
 - The library list names the recording device in each row's meta line —
   a small silhouette and the model next to the date and location, the
   full name on hover (#147). The vault setting `library_show_device`

@@ -152,8 +152,12 @@ describe("describeDevice", () => {
     expect(describeDevice("WorkOutDoors")).toEqual({ label: "WorkOutDoors", full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" });
     // Phone apps get the generic silhouette and a plain label without the URL.
     expect(describeDevice("Runkeeper - http://www.runkeeper.com")).toEqual({ label: "Runkeeper", full_name: "Runkeeper app", form: "generic" });
-    expect(describeDevice("StravaGPX")).toEqual({ label: "StravaGPX", full_name: "Strava app", form: "generic" });
-    expect(describeDevice("Komoot — iOS")).toMatchObject({ label: "Komoot", full_name: "komoot app" });
+    expect(describeDevice("StravaGPX")).toEqual({ label: "Strava", full_name: "Strava app", form: "generic" });
+    expect(describeDevice("StravaGPX Consent Strip")).toEqual({ label: "Strava", full_name: "Strava app", form: "generic" });
+    expect(describeDevice("Komoot — iOS")).toMatchObject({ label: "komoot", full_name: "komoot app" });
+    // Old and new Runkeeper exports spell the creator differently; one label.
+    expect(describeDevice("RunKeeper")?.label).toBe("Runkeeper");
+    expect(describeDevice("Runkeeper - http://www.runkeeper.com")?.label).toBe("Runkeeper");
     // The FIT fallback "<maker> <product id>" is not an app creator string.
     expect(describeDevice("Strava 123")).toMatchObject({ label: "Strava 123", full_name: "Strava 123" });
   });

@@ -23,7 +23,7 @@ describe("DeviceChip", () => {
     ["Garmin venusq2", "Venu Sq 2", "watch_rect"],
     ["Garmin 1620", "Garmin", "generic"],
     ["ELEMNT BOLT", "ELEMNT BOLT", "bike_computer"],
-    ["StravaGPX", "StravaGPX", "generic"],
+    ["StravaGPX", "Strava", "generic"],
     ["WorkOutDoors", "WorkOutDoors", "watch_rect"],
   ])("%s → chip %s with the %s silhouette", (source, label, form) => {
     render(<DeviceChip source={source} />);

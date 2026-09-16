@@ -250,6 +250,9 @@ export interface ActivityFilters {
   elev_gain_min?: number;
   elev_gain_max?: number;
   tag_ids?: number[];
+  /** Match ANY of these recording devices, as stored in `source_device`
+   * (raw strings); "" means "no device". Unset/empty = all. */
+  devices?: string[];
   /** true = only with a GPS track, false = only without, unset = both. */
   has_gps?: boolean;
   sort_by?: string;

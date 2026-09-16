@@ -228,20 +228,22 @@ const OTHER_MANUFACTURERS: Record<string, string> = {
 /** Recording apps whose creator string implies the hardware. A file made by
  * an app names the app, not the device; where the app runs on one kind of
  * hardware only, the chip can still show the right silhouette and say so. */
-const RECORDING_APPS: Record<string, { full_name: string; form: DeviceForm }> = {
-  workoutdoors: { full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" },
-  "apple watch workout": { full_name: "Apple Watch Workout app", form: "watch_rect" },
-  athlytic: { full_name: "Athlytic (Apple Watch app)", form: "watch_rect" },
+// Keyed by the creator string's first word, lowercased; the label is the
+// app's canonical spelling, so "RunKeeper" and "Runkeeper - http://…" are
+// one device in the library's filter, not two.
+const RECORDING_APPS: Record<string, { label: string; full_name: string; form: DeviceForm }> = {
+  workoutdoors: { label: "WorkOutDoors", full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" },
+  athlytic: { label: "Athlytic", full_name: "Athlytic (Apple Watch app)", form: "watch_rect" },
   // Phone apps: the recorder is a phone in a pocket, no watch silhouette.
-  stravagpx: { full_name: "Strava app", form: "generic" },
-  strava: { full_name: "Strava app", form: "generic" },
-  runkeeper: { full_name: "Runkeeper app", form: "generic" },
-  komoot: { full_name: "komoot app", form: "generic" },
+  stravagpx: { label: "Strava", full_name: "Strava app", form: "generic" },
+  strava: { label: "Strava", full_name: "Strava app", form: "generic" },
+  runkeeper: { label: "Runkeeper", full_name: "Runkeeper app", form: "generic" },
+  komoot: { label: "komoot", full_name: "komoot app", form: "generic" },
 };
 
 /** Where an app's creator string stops naming the app: "Runkeeper - http://…",
- * "Komoot — iOS", "Strava (Android)". */
-const APP_NAME_END = /\s[-–—(]/;
+ * "Komoot — iOS", "Strava (Android)", "StravaGPX Consent Strip". */
+const APP_NAME_END = /\s/;
 
 /** Keyword classifier for devices outside the Garmin grammar. */
 const FORM_KEYWORDS: Array<[RegExp, DeviceForm]> = [
@@ -301,10 +303,13 @@ export function describeDevice(source: string | null | undefined): DeviceInfo | 
     return { label: maker, full_name: `${maker} (product ${enumProduct[2]})`, form: classify(maker) };
   }
 
-  // A recording app: keep its name as the label, say what it runs on.
-  const appName = text.split(APP_NAME_END)[0].trim();
-  const app = RECORDING_APPS[appName.toLowerCase()];
-  if (app) return { label: clip(appName, MAX_LABEL_CHARS), full_name: app.full_name, form: app.form };
+  // A recording app: its canonical name as the label, what it runs on in
+  // the tooltip. "Strava 123" is not the app but the FIT fallback of a
+  // maker with a bare product id, and stays as it came.
+  const words = text.split(APP_NAME_END);
+  const app = RECORDING_APPS[words[0].toLowerCase()];
+  const makerWithId = words.length === 2 && /^\d+$/.test(words[1]);
+  if (app && !makerWithId) return { label: app.label, full_name: app.full_name, form: app.form };
 
   // A bare manufacturer enum ("Wahoo_fitness") or any free-form creator string.
   const enumOnly = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/i.exec(text);

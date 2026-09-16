@@ -361,6 +361,32 @@ fn push_facet_conditions(
             ));
         }
     }
+    if let Some(ref devices) = filters.devices {
+        // Raw source_device values; "" stands for "no device" (NULL).
+        let none = devices.iter().any(|d| d.is_empty());
+        let named: Vec<&String> = devices.iter().filter(|d| !d.is_empty()).collect();
+        let mut parts: Vec<String> = Vec::new();
+        if !named.is_empty() {
+            let placeholders: Vec<String> = named
+                .iter()
+                .map(|d| {
+                    params.push(Box::new((*d).clone()));
+                    let p = format!("?{}", *idx);
+                    *idx += 1;
+                    p
+                })
+                .collect();
+            parts.push(format!("{prefix}source_device IN ({})", placeholders.join(", ")));
+        }
+        if none {
+            // The same set get_detected_devices files under "" (COALESCE):
+            // NULL and, should one ever be stored, the empty string.
+            parts.push(format!("({prefix}source_device IS NULL OR {prefix}source_device = '')"));
+        }
+        if !parts.is_empty() {
+            conditions.push(format!("({})", parts.join(" OR ")));
+        }
+    }
     if let Some(has_gps) = filters.has_gps {
         // "Has GPS" = the activity owns a route: at least one trackpoint with
         // a latitude. start_lat alone deliberately doesn't count — manual
@@ -781,13 +807,18 @@ pub fn set_source_device(conn: &Connection, id: &str, device: Option<&str>) -> R
     Ok(())
 }
 
+/// Every distinct recording device in the library with its activity count
+/// and last use, most used first. Activities without a device form one
+/// group under the empty name, so a filter can offer "No device" with a
+/// count. Merged-triathlon legs are left out, as everywhere the library is
+/// listed.
 pub fn get_detected_devices(conn: &Connection) -> Result<Vec<DeviceStats>> {
     let mut stmt = conn.prepare(
-        "SELECT source_device, COUNT(*) as cnt, MAX(start_time) as last_time
+        "SELECT COALESCE(source_device, '') AS dev, COUNT(*) as cnt, MAX(start_time) as last_time
          FROM activity
-         WHERE source_device IS NOT NULL
-         GROUP BY source_device
-         ORDER BY cnt DESC",
+         WHERE parent_id IS NULL
+         GROUP BY dev
+         ORDER BY cnt DESC, dev",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -1619,7 +1650,7 @@ mod tests {
         a3.start_time = "2025-08-01T08:00:00+00:00".to_string();
 
         let mut a4 = sample_activity("dev-4");
-        a4.source_device = None; // no device — should be excluded
+        a4.source_device = None; // no device — its own group under ""
         a4.start_time = "2025-09-01T08:00:00+00:00".to_string();
 
         insert_activity(&conn, &a1).unwrap();
@@ -1628,12 +1659,51 @@ mod tests {
         insert_activity(&conn, &a4).unwrap();
 
         let devices = get_detected_devices(&conn).unwrap();
-        assert_eq!(devices.len(), 2);
-        // Ordered by count DESC, so Garmin first
+        assert_eq!(devices.len(), 3);
+        // Ordered by count DESC, then name — so Garmin first, the empty
+        // "no device" group before Wahoo on the tie.
         assert_eq!(devices[0].device_name, "Garmin FR265");
         assert_eq!(devices[0].activity_count, 2);
-        assert_eq!(devices[1].device_name, "Wahoo ELEMNT");
+        assert_eq!(devices[1].device_name, "");
         assert_eq!(devices[1].activity_count, 1);
+        assert_eq!(devices[2].device_name, "Wahoo ELEMNT");
+        assert_eq!(devices[2].activity_count, 1);
+    }
+
+    /// The device facet matches raw source_device values; "" selects the
+    /// activities without one; both together OR; an empty list is "all".
+    #[test]
+    fn get_activities_filters_by_device() {
+        let conn = db::test_db();
+        let with = |id: &str, dev: Option<&str>| {
+            let mut a = sample_activity(id);
+            a.source_device = dev.map(str::to_string);
+            a
+        };
+        insert_activity(&conn, &with("fx", Some("Garmin fenix6x"))).unwrap();
+        insert_activity(&conn, &with("fx-asia", Some("Garmin fenix6x_asia"))).unwrap();
+        insert_activity(&conn, &with("edge", Some("Garmin edge_840"))).unwrap();
+        insert_activity(&conn, &with("none", None)).unwrap();
+        insert_activity(&conn, &with("blank", Some(""))).unwrap();
+
+        let ids = |devices: Vec<&str>| -> Vec<String> {
+            let f = ActivityFilters {
+                devices: Some(devices.into_iter().map(str::to_string).collect()),
+                sort_dir: Some("asc".into()),
+                ..Default::default()
+            };
+            let mut v: Vec<String> = get_activities(&conn, &f).unwrap().into_iter().map(|a| a.id).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(vec!["Garmin fenix6x", "Garmin fenix6x_asia"]), vec!["fx", "fx-asia"]);
+        // "" selects what get_detected_devices files under "": NULL and a
+        // stored empty string alike.
+        assert_eq!(ids(vec![""]), vec!["blank", "none"]);
+        assert_eq!(ids(vec!["Garmin edge_840", ""]), vec!["blank", "edge", "none"]);
+        assert_eq!(ids(vec![]).len(), 5);
+        // The raw string is matched exactly: a label is not a value.
+        assert!(ids(vec!["fenix 6X Pro"]).is_empty());
     }
 
     #[test]

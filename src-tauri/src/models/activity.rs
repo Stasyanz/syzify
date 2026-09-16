@@ -457,6 +457,10 @@ pub struct ActivityFilters {
     pub elev_gain_min: Option<f64>,
     pub elev_gain_max: Option<f64>,
     pub tag_ids: Option<Vec<i64>>,
+    /// Match ANY of these recording devices, as stored in `source_device`
+    /// (raw strings, e.g. "Garmin fenix6x"); an empty string means
+    /// "no device". None/empty = all devices.
+    pub devices: Option<Vec<String>>,
     /// Some(true) = only activities WITH a GPS track, Some(false) = only
     /// those without, None = both. "Has a track" means at least one
     /// trackpoint carries a latitude — see push_facet_conditions.

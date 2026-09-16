@@ -16,6 +16,8 @@ import { SportIcon } from "../brand/SportIcon";
 import { buildMonthGrid } from "../../lib/calendar";
 import { useToday } from "../../hooks/useToday";
 import { Select } from "../ui/Select";
+import { DeviceSilhouette } from "../brand/DeviceSilhouette";
+import { groupDevices, devicesForKeys, selectedDeviceKeys } from "../../lib/deviceFilter";
 import {
   useUnits,
   distanceUnit,
@@ -30,6 +32,7 @@ export function countActiveFilters(f: ActivityFilters): number {
   if (f.search && f.search.trim()) n++;
   if (f.sport_types && f.sport_types.length) n++;
   if (f.tag_ids && f.tag_ids.length) n++;
+  if (f.devices && f.devices.length) n++;
   if (f.date_from || f.date_to) n++;
   if (f.distance_min != null || f.distance_max != null) n++;
   if (f.duration_min != null || f.duration_max != null) n++;
@@ -274,6 +277,14 @@ export function FilterDrawer() {
   const shownSports = SPORT_TYPES.filter((st) => usedSet.has(st)).sort((a, b) =>
     SPORT_LABELS[a].localeCompare(SPORT_LABELS[b]),
   );
+  const { data: detectedDevices = [] } = useQuery({
+    queryKey: ["detectedDevices"],
+    queryFn: () => api.getDetectedDevices(),
+  });
+  // One option per display label: several raw strings can name the same
+  // model ("Garmin fenix6x" and "Garmin fenix6x_asia"), and the "no device"
+  // group is offered like any other.
+  const deviceGroups = groupDevices(detectedDevices);
   const activeTagIds = filters.tag_ids ?? [];
   const activeCount = countActiveFilters(filters);
 
@@ -369,6 +380,30 @@ export function FilterDrawer() {
               }))}
             />
           </div>
+
+          {/* Device */}
+          {deviceGroups.length > 1 && (
+            <div className="fgroup">
+              <div className="fh">Device</div>
+              <Select
+                multiple
+                ariaLabel="Device"
+                className="w-full"
+                values={selectedDeviceKeys(deviceGroups, filters.devices ?? [])}
+                onChange={(keys) => {
+                  const raws = devicesForKeys(deviceGroups, keys);
+                  setFilters({ devices: raws.length ? raws : undefined });
+                }}
+                placeholder="All devices"
+                clearLabel="All devices"
+                options={deviceGroups.map((g) => ({
+                  value: g.key,
+                  label: `${g.label} (${g.count})`,
+                  icon: <DeviceSilhouette form={g.form} size={18} />,
+                }))}
+              />
+            </div>
+          )}
 
           {/* GPS track */}
           <div className="fgroup">
