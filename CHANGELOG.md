@@ -25,6 +25,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   vaults included.
 
 ### Added
+- Watch folders are back, in Settings → Vault (#152): folders scanned
+  for new workout and monitoring files, Preview and Import Now, the
+  auto-import switch with the "new files found" banner, and the
+  background watcher that starts at launch and on every folder change.
+  Import Now goes through the same path as a drop import: it refuses a
+  locked vault, shows progress, recomputes monitoring once per day and
+  starts geocoding.
 - The library filters get a Device multi-select (#149): one option per
   model found in the vault, with its silhouette and activity count, plus
   "No device" for manual entries and plain GPX files. Several raw device

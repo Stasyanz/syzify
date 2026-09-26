@@ -60,6 +60,14 @@ pub async fn import_files(
     paths: Vec<String>,
     app: AppHandle,
 ) -> Result<ImportResult, String> {
+    import_paths(app, paths).await
+}
+
+/// The import of a list of paths as the UI does it — dropped files, the
+/// watcher's findings, a watch-folder scan: refuses a locked vault, expands
+/// folders, reports `import:progress`, recomputes monitoring once per
+/// touched day and starts geocoding for what came in.
+pub(crate) async fn import_paths(app: AppHandle, paths: Vec<String>) -> Result<ImportResult, String> {
     ensure_vault_unlocked(&app.state::<AppState>())?;
     let mut result = ImportResult::default();
     let mut batch = pipeline::MonitoringBatch::default();

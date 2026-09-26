@@ -27,6 +27,7 @@ import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
 import { MonitoringData } from "../components/settings/MonitoringData";
+import { WatchFolders } from "../components/settings/WatchFolders";
 import { PluginRegistry } from "../components/settings/PluginRegistry";
 import {
   DEFAULT_SETTINGS_TAB,
@@ -666,6 +667,7 @@ export function SettingsPage() {
               </div>
             </div>
             <MonitoringData />
+            <WatchFolders />
           </section>
         )}
 

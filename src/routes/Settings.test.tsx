@@ -32,6 +32,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 // only which of them a tab shows matters.
 vi.mock("../components/settings/VaultLocation", () => ({ VaultLocation: () => <div>VAULT LOCATION</div> }));
 vi.mock("../components/settings/MonitoringData", () => ({ MonitoringData: () => <div>MONITORING DATA</div> }));
+vi.mock("../components/settings/WatchFolders", () => ({ WatchFolders: () => <div>WATCH FOLDERS</div> }));
 vi.mock("../components/settings/PluginRegistry", () => ({ PluginRegistry: () => <div>PLUGIN REGISTRY</div> }));
 vi.mock("../components/settings/UpdateCheck", () => ({ UpdateCheck: () => <div>UPDATE CHECK</div> }));
 vi.mock("../components/settings/LegalModal", () => ({
@@ -153,6 +154,7 @@ describe("SettingsPage tabs", () => {
     expect(rows()).toEqual(["Encryption", "Backup & Restore"]);
     expect(screen.getByText("VAULT LOCATION")).toBeTruthy();
     expect(screen.getByText("MONITORING DATA")).toBeTruthy();
+    expect(screen.getByText("WATCH FOLDERS")).toBeTruthy();
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("tab", { name: "Plugins" }));

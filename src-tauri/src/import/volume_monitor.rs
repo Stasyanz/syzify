@@ -21,42 +21,6 @@ const DEVICE_PATHS: &[(&str, &[&str])] = &[
     ("POLAR", &["DATA"]),
 ];
 
-fn is_workout_file(path: &Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("gpx" | "fit" | "tcx") => true,
-        Some("gz") => {
-            path.file_stem()
-                .and_then(|s| Path::new(s).extension())
-                .and_then(|e| e.to_str())
-                .map(|e| ["gpx", "fit", "tcx"].contains(&e.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
-        }
-        _ => false,
-    }
-}
-
-/// Recursively scan a directory for workout files.
-fn scan_workout_files(dir: &Path) -> Vec<String> {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                files.extend(scan_workout_files(&path));
-            } else if path.is_file() && is_workout_file(&path) {
-                if let Some(s) = path.to_str() {
-                    files.push(s.to_string());
-                }
-            }
-        }
-    }
-    files
-}
-
 /// Given a newly mounted volume path, check if it matches any known device
 /// and return workout files found.
 fn check_volume_for_workouts(volume_path: &Path) -> Vec<String> {
@@ -70,7 +34,9 @@ fn check_volume_for_workouts(volume_path: &Path) -> Vec<String> {
             for sub in *sub_paths {
                 let activity_dir = volume_path.join(sub);
                 if activity_dir.is_dir() {
-                    let files = scan_workout_files(&activity_dir);
+                    // The pipeline's own bounded walk: a device folder is
+                    // never large, and the filter stays defined once.
+                    let files = crate::import::pipeline::folder_files(&activity_dir).unwrap_or_default();
                     if !files.is_empty() {
                         return files;
                     }

@@ -9,24 +9,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::state::AppState;
 
 const DEBOUNCE_SECS: u64 = 2;
-fn is_workout_file(path: &std::path::Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("gpx" | "fit" | "tcx") => true,
-        Some("gz") => {
-            // Only accept .fit.gz, .gpx.gz, .tcx.gz
-            path.file_stem()
-                .and_then(|s| std::path::Path::new(s).extension())
-                .and_then(|e| e.to_str())
-                .map(|e| ["gpx", "fit", "tcx"].contains(&e.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
-        }
-        _ => false,
-    }
-}
 
 /// Start watching the given folder paths for new workout files.
 /// Returns a `RecommendedWatcher` that must be kept alive.
@@ -88,7 +70,7 @@ pub fn start_watching(
                     let mut found_any = false;
                     let rf = recently_flushed_ev.lock().unwrap();
                     for path in &event.paths {
-                        if path.is_file() && is_workout_file(path) {
+                        if path.is_file() && crate::import::pipeline::is_importable_file(path) {
                             if let Some(s) = path.to_str() {
                                 // Skip files that were recently flushed
                                 if rf.contains_key(s) {

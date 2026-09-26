@@ -3,23 +3,6 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-fn is_workout_file(path: &Path) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("gpx" | "fit" | "tcx") => true,
-        Some("gz") => {
-            path.file_stem()
-                .and_then(|s| Path::new(s).extension())
-                .and_then(|e| e.to_str())
-                .map(|e| ["gpx", "fit", "tcx"].contains(&e.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
-        }
-        _ => false,
-    }
-}
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::crypto;
@@ -28,22 +11,6 @@ use crate::import::pipeline;
 use crate::import::watcher;
 use crate::state::AppState;
 use crate::vault;
-
-/// Recursively collect workout files from a directory.
-fn collect_workout_files(dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut files = Vec::new();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                files.extend(collect_workout_files(&path));
-            } else if path.is_file() && is_workout_file(&path) {
-                files.push(path);
-            }
-        }
-    }
-    files
-}
 
 #[tauri::command]
 pub fn get_setting(key: String, state: State<AppState>) -> Result<Option<String>, String> {
@@ -122,42 +89,48 @@ pub fn remove_watch_folder(id: i64, state: State<AppState>) -> Result<(), String
     db::watch_folders::remove(&conn, id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn scan_watch_folders(state: State<AppState>) -> Result<ScanResult, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-
-    // Get all watch folders
-    let folders = db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?;
-
-    // Find new files (recursively)
-    let mut new_files: Vec<String> = Vec::new();
-
-    for folder in &folders {
+/// The files a scan would import from the watch folders, plus the folders
+/// it could not read. A folder that is not there right now (the device is
+/// unplugged) is silently nothing; an empty one likewise.
+pub fn scan_targets(folders: &[String]) -> (Vec<String>, Vec<pipeline::FailedFile>) {
+    let mut files = Vec::new();
+    let mut failed = Vec::new();
+    for folder in folders {
         let dir = Path::new(folder);
         if !dir.is_dir() {
             continue;
         }
-        for path in collect_workout_files(dir) {
-            new_files.push(path.to_string_lossy().to_string());
+        match pipeline::folder_files(dir) {
+            Ok(found) => files.extend(found),
+            Err(reason) => failed.push(pipeline::FailedFile { path: folder.clone(), reason }),
         }
     }
+    (files, failed)
+}
 
-    if new_files.is_empty() {
-        return Ok(ScanResult {
-            new_files: Vec::new(),
-            import_result: None,
-        });
+/// "Import Now": everything importable under the watch folders, through the
+/// same path as a drop (locked-vault check, progress, monitoring batch,
+/// geocoding); the pipeline skips what the vault already holds.
+#[tauri::command]
+pub async fn scan_watch_folders(app: AppHandle) -> Result<ScanResult, String> {
+    let folders = {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?
+    };
+    let (new_files, unreadable) = tokio::task::spawn_blocking(move || scan_targets(&folders))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?;
+    if new_files.is_empty() && unreadable.is_empty() {
+        return Ok(ScanResult { new_files, import_result: None });
     }
-
-    // Import (pipeline handles dedup). Key only when the `activities` scope
-    // is on — see AppState::encryption_key_for.
-    let key = state.encryption_key_for(|s| s.activities)?;
-    let result = pipeline::import_files(&conn, &state.vault_path, &new_files, key.as_ref(), |_, _, _| {});
-
-    Ok(ScanResult {
-        new_files,
-        import_result: Some(result),
-    })
+    let mut result = if new_files.is_empty() {
+        pipeline::ImportResult::default()
+    } else {
+        crate::commands::import::import_paths(app, new_files.clone()).await?
+    };
+    result.failed.extend(unreadable);
+    Ok(ScanResult { new_files, import_result: Some(result) })
 }
 
 #[tauri::command]
@@ -393,8 +366,8 @@ pub fn preview_watch_folders(state: State<AppState>) -> Result<ScanPreview, Stri
             files: Vec::new(),
         };
 
-        for path in collect_workout_files(dir) {
-            let path_str = path.to_string_lossy().to_string();
+        for path_str in pipeline::folder_files(dir).unwrap_or_default() {
+            let path = PathBuf::from(&path_str);
             let filename = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -1040,12 +1013,6 @@ pub fn restart_watcher(
         *wh = None;
     }
 
-    // Watch folders are paused (see crate::WATCH_FOLDERS_ENABLED) — stopping
-    // above is fine, restarting is not.
-    if !crate::WATCH_FOLDERS_ENABLED {
-        return Ok(());
-    }
-
     // Read current watch folders
     let paths = watcher::get_watch_paths_from_db(&app_handle);
 
@@ -1119,6 +1086,26 @@ mod tests {
 
     fn test_state(vault: &Path) -> AppState {
         test_state_with(vault, crate::db::test_db())
+    }
+
+    /// A scan lists what its folders hold and skips a folder that is not
+    /// there (device unplugged) or holds nothing, without a failure.
+    #[test]
+    fn scan_targets_lists_files_and_skips_absent_and_empty_folders() {
+        let root = std::env::temp_dir().join(format!("syzify-scan-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("garmin/Activity")).unwrap();
+        fs::write(root.join("garmin/Activity/1.fit"), b"x").unwrap();
+        fs::write(root.join("garmin/Activity/readme.txt"), b"x").unwrap();
+        fs::create_dir_all(root.join("empty")).unwrap();
+        let folders = vec![
+            root.join("garmin").to_str().unwrap().to_string(),
+            root.join("empty").to_str().unwrap().to_string(),
+            root.join("unplugged").to_str().unwrap().to_string(),
+        ];
+        let (files, failed) = scan_targets(&folders);
+        assert_eq!(files, vec![root.join("garmin/Activity/1.fit").to_str().unwrap().to_string()]);
+        assert!(failed.is_empty());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The allowlist is the only path from a UI string to the filesystem —

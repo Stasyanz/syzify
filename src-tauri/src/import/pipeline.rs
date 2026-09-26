@@ -181,22 +181,39 @@ fn expand_paths_with(
             files.push(p.clone());
             continue;
         }
-        let mut walk = Walk { max_depth, max_files, max_entries, entries: 0, found: Vec::new() };
-        // max_depth counts the root as a level: 0 looks at nothing.
-        let outcome = if max_depth == 0 { Ok(()) } else { walk.run(path, 0) };
-        match outcome {
+        match walk_folder(path, max_depth, max_files, max_entries) {
             Err(reason) => failed.push(FailedFile { path: p.clone(), reason }),
-            Ok(()) if walk.found.is_empty() => failed.push(FailedFile {
+            Ok(found) if found.is_empty() => failed.push(FailedFile {
                 path: p.clone(),
                 reason: "No workout or monitoring files in this folder".to_string(),
             }),
-            Ok(()) => {
-                walk.found.sort();
-                files.extend(walk.found);
-            }
+            Ok(found) => files.extend(found),
         }
     }
     (files, failed)
+}
+
+/// The importable files under a folder the user chose (a watch folder, a
+/// device mount), within the app's bounds, sorted. An empty folder is an
+/// empty list, not an error — a watch folder is usually empty between
+/// rides; the drop path adds its own "nothing here" refusal on top.
+pub fn folder_files(dir: &Path) -> Result<Vec<String>, String> {
+    walk_folder(dir, FOLDER_MAX_DEPTH, FOLDER_MAX_FILES, FOLDER_MAX_ENTRIES)
+}
+
+fn walk_folder(
+    dir: &Path,
+    max_depth: usize,
+    max_files: usize,
+    max_entries: usize,
+) -> Result<Vec<String>, String> {
+    let mut walk = Walk { max_depth, max_files, max_entries, entries: 0, found: Vec::new() };
+    // max_depth counts the root as a level: 0 looks at nothing.
+    if max_depth > 0 {
+        walk.run(dir, 0)?;
+    }
+    walk.found.sort();
+    Ok(walk.found)
 }
 
 struct Walk {
@@ -261,8 +278,9 @@ impl Walk {
 }
 
 /// A workout or monitoring file by extension: gpx / fit / tcx, optionally
-/// gzipped ("ride.fit.gz"); case-insensitive.
-fn is_importable_file(path: &Path) -> bool {
+/// gzipped ("ride.fit.gz"); case-insensitive. The one such test in the app:
+/// the folder walk, the watcher and the watch-folder scan all use it.
+pub fn is_importable_file(path: &Path) -> bool {
     match gz_inner_ext(path) {
         Ok(Some(inner)) => FileFormat::from_extension(&inner).is_some(),
         Ok(None) => path
@@ -1737,6 +1755,25 @@ mod tests {
                 "/some/file.gpx"
             ]
         );
+    }
+
+    /// The watch-folder scan's view of a folder: empty is empty, files are
+    /// listed sorted from up to three levels, unreadable is an error.
+    #[test]
+    fn folder_files_lists_sorted_and_treats_empty_as_empty() {
+        let root = std::env::temp_dir().join(format!("syzify-folder-files-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        assert_eq!(folder_files(&root).unwrap(), Vec::<String>::new());
+        fs::write(root.join("z.FIT"), b"x").unwrap();
+        fs::write(root.join("a/b/m.fit.gz"), b"x").unwrap();
+        fs::write(root.join("a/notes.txt"), b"x").unwrap();
+        let found = folder_files(&root).unwrap();
+        assert_eq!(
+            found,
+            vec![root.join("a/b/m.fit.gz").to_str().unwrap().to_string(), root.join("z.FIT").to_str().unwrap().to_string()]
+        );
+        assert!(folder_files(&root.join("missing")).unwrap_err().starts_with("Failed to read folder"));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

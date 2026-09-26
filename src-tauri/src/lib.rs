@@ -259,13 +259,6 @@ pub(crate) fn plaintext_db_readable(vault_path: &Path) -> bool {
     }
 }
 
-/// Watch-folders kill switch: the Settings card is hidden (6ab5a14), and the
-/// background watcher is paused with it so folders added earlier don't keep
-/// auto-importing with no UI to manage them. Flip to true to bring the
-/// runtime back — the folder list and the auto-import setting survive in the
-/// DB untouched.
-pub(crate) const WATCH_FOLDERS_ENABLED: bool = false;
-
 /// Start the DB-dependent background services (file watcher, volume monitor,
 /// geocoding). Idempotent via `services_started`: called at boot for a
 /// plaintext vault, or after `unlock_vault` for an encrypted one — never
@@ -284,17 +277,15 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         *started = true;
     }
 
-    if WATCH_FOLDERS_ENABLED {
-        let paths = import::watcher::get_watch_paths_from_db(handle);
-        if !paths.is_empty() {
-            match import::watcher::start_watching(handle.clone(), paths) {
-                Ok(w) => {
-                    let state = handle.state::<AppState>();
-                    let mut wh = state.watcher_handle.lock().unwrap();
-                    *wh = Some(w);
-                }
-                Err(e) => eprintln!("Failed to start file watcher: {}", e),
+    let paths = import::watcher::get_watch_paths_from_db(handle);
+    if !paths.is_empty() {
+        match import::watcher::start_watching(handle.clone(), paths) {
+            Ok(w) => {
+                let state = handle.state::<AppState>();
+                let mut wh = state.watcher_handle.lock().unwrap();
+                *wh = Some(w);
             }
+            Err(e) => eprintln!("Failed to start file watcher: {}", e),
         }
     }
 
