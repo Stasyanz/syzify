@@ -173,4 +173,23 @@ describe("WatchFolders", () => {
     expect((screen.getByRole("button", { name: /Import Now/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByTestId("watch-folders")).toBeNull();
   });
+
+  it("reports every failed call as a toast", async () => {
+    vi.mocked(open).mockResolvedValue("/Users/me/rides");
+    vi.mocked(api.addWatchFolder).mockRejectedValue(new Error("not a directory"));
+    vi.mocked(api.removeWatchFolder).mockRejectedValue(new Error("gone"));
+    vi.mocked(api.previewWatchFolders).mockRejectedValue(new Error("walk failed"));
+    vi.mocked(api.scanWatchFolders).mockRejectedValue(new Error("vault locked"));
+    renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    const toast = useToastStore.getState().addToast;
+    fireEvent.click(screen.getByRole("button", { name: /Add Folder/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Could not add folder.*not a directory/)));
+    fireEvent.click(screen.getByLabelText(`Remove ${garmin.path}`));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Could not remove folder.*gone/)));
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Preview failed.*walk failed/)));
+    fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Import failed.*vault locked/)));
+  });
 });

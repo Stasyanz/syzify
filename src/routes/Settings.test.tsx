@@ -14,8 +14,12 @@ vi.mock("../lib/tauri", () => ({
     getEncryptionStatus: vi.fn(),
     clearTileCache: vi.fn(),
     enableEncryption: vi.fn(),
+    disableEncryption: vi.fn(),
+    startGeocoding: vi.fn(),
+    runImportDatasource: vi.fn(),
   },
 }));
+vi.mock("../lib/contact", () => ({ CONTACT_EMAIL: "hi@example.com", GITHUB_ISSUES_URL: "https://example.com/issues" }));
 vi.mock("../stores/toastStore", () => {
   const addToast = vi.fn(() => "t1");
   const state = { addToast, updateToast: vi.fn(), removeToast: vi.fn() };
@@ -42,6 +46,11 @@ vi.mock("../components/settings/LegalModal", () => ({
 import { SettingsPage } from "./Settings";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
+import { useThemeStore } from "../lib/theme";
+import { useUnitsStore } from "../lib/units";
+import { useFeedbackStore } from "../stores/feedbackStore";
+import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 /** Every row label on the open tab, in order — a row that drifts to another
  * tab or vanishes changes this list. */
@@ -252,5 +261,93 @@ describe("SettingsPage tabs", () => {
     renderAt("/settings?tab=nope");
     expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Theme")).toBeTruthy();
+  });
+
+  it("General writes theme, units and the geocoding opt-in through", async () => {
+    vi.mocked(api.setSetting).mockResolvedValue(undefined);
+    vi.mocked(api.startGeocoding).mockResolvedValue(undefined);
+    renderAt("/settings");
+    fireEvent.click(screen.getByRole("button", { name: "dark" }));
+    expect(useThemeStore.getState().mode).toBe("dark");
+    fireEvent.click(screen.getByRole("button", { name: "Imperial · mi" }));
+    expect(useUnitsStore.getState().mode).toBe("imperial");
+    useThemeStore.getState().setMode("system");
+    useUnitsStore.getState().setMode("metric");
+    // Off → on: stored, re-read, and existing activities get named now.
+    fireEvent.click(screen.getByLabelText("Automatic location names"));
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith("geocoding_enabled", "true"));
+    await waitFor(() => expect(api.startGeocoding).toHaveBeenCalledTimes(1));
+  });
+
+  it("runs an import data source on the file picked in the dialog and clears the tile cache", async () => {
+    vi.mocked(api.getImportDatasources).mockResolvedValue([
+      { id: "runkeeper", name: "Runkeeper", description: "Runkeeper export", extensions: ["zip"] },
+    ]);
+    vi.mocked(open).mockResolvedValueOnce(null).mockResolvedValueOnce("/x/export.zip");
+    vi.mocked(api.runImportDatasource).mockResolvedValue({ imported: 2, skipped: 1, failed: [] } as never);
+    vi.mocked(api.clearTileCache).mockResolvedValue(undefined);
+    renderAt("/settings");
+    const importBtn = await screen.findByRole("button", { name: /^Import$/ });
+    fireEvent.click(importBtn);
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(api.runImportDatasource).not.toHaveBeenCalled();
+    fireEvent.click(importBtn);
+    await waitFor(() => expect(api.runImportDatasource).toHaveBeenCalledWith("runkeeper", "/x/export.zip"));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Runkeeper — imported 2, skipped 1"),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Clear Cache/ }));
+    await waitFor(() => expect(api.clearTileCache).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Tile cache cleared"));
+  });
+
+  it("validates the encryption password dialog and lets it be cancelled", async () => {
+    renderAt("/settings?tab=vault");
+    await waitFor(() => expect(screen.getByLabelText("Enable encryption")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Enable encryption"));
+    const enable = () => fireEvent.click(screen.getByRole("button", { name: "Enable Encryption" }));
+    enable();
+    expect(screen.getByText("Password must be at least 8 characters.")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("Password (min 8 characters)"), { target: { value: "hunter2hunter2" } });
+    fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "different" } });
+    enable();
+    expect(screen.getByText("Passwords do not match.")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
+    enable();
+    expect(screen.getByText("Select at least one thing to encrypt.")).toBeTruthy();
+    expect(api.enableEncryption).not.toHaveBeenCalled();
+    // Ticking a scope and cancelling closes the dialog with nothing sent.
+    fireEvent.click(screen.getByLabelText("Photos"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByPlaceholderText("Confirm password")).toBeNull();
+    expect(api.enableEncryption).not.toHaveBeenCalled();
+  });
+
+  it("opens the disable dialog for an encrypted vault, reports a wrong password and cancels", async () => {
+    vi.mocked(api.getEncryptionStatus).mockResolvedValue({
+      enabled: true,
+      locked: false,
+      scopes: { activities: true, database: false, photos: false },
+    });
+    vi.mocked(api.disableEncryption).mockRejectedValue(new Error("bad key"));
+    renderAt("/settings?tab=vault");
+    await waitFor(() => expect(screen.getByLabelText("Disable encryption")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Disable encryption"));
+    fireEvent.change(screen.getByPlaceholderText("Current password"), { target: { value: "nope" } });
+    fireEvent.click(screen.getByRole("button", { name: "Disable Encryption" }));
+    await waitFor(() => expect(screen.getByText(/Wrong password or error/)).toBeTruthy());
+    // The Vault tab is still open: the dialog shows it, no toast.
+    expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByPlaceholderText("Current password")).toBeNull();
+  });
+
+  it("About opens the feedback form and routes the email link through the opener", async () => {
+    vi.mocked(openUrl).mockResolvedValue(undefined);
+    renderAt("/settings?tab=about");
+    fireEvent.click(screen.getByLabelText("Send feedback"));
+    expect(useFeedbackStore.getState().isOpen).toBe(true);
+    fireEvent.click(screen.getByText("hi@example.com"));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("mailto:hi@example.com"));
   });
 });

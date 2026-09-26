@@ -113,7 +113,7 @@ pub fn scan_targets(folders: &[String]) -> (Vec<String>, Vec<pipeline::FailedFil
 /// same path as a drop (locked-vault check, progress, monitoring batch,
 /// geocoding); the pipeline skips what the vault already holds.
 #[tauri::command]
-pub async fn scan_watch_folders(app: AppHandle) -> Result<ScanResult, String> {
+pub async fn scan_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanResult, String> {
     let folders = {
         let state = app.state::<AppState>();
         // Checked here as well as in import_paths: a scan that finds only
@@ -380,7 +380,7 @@ pub fn preview_files(folders: &[String]) -> Vec<(String, Vec<PreviewFile>)> {
 /// new or already in the vault. Files are read and hashed off the runtime
 /// and without the DB lock; only the hash lookups take it.
 #[tauri::command]
-pub async fn preview_watch_folders(app: AppHandle) -> Result<ScanPreview, String> {
+pub async fn preview_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanPreview, String> {
     let folders = {
         let state = app.state::<AppState>();
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -1096,6 +1096,44 @@ mod tests {
             assert!(failed[0].reason.starts_with("Failed to read folder"), "{}", failed[0].reason);
         }
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The two watch-folder commands end to end on a mock app: a scan of
+    /// an empty folder imports nothing; a preview marks a file the vault
+    /// does not hold as new; a scan reports a file it cannot parse.
+    #[test]
+    fn watch_folder_commands_scan_and_preview_on_a_mock_app() {
+        let vault = std::env::temp_dir().join(format!("syzify-watch-cmds-{}", uuid::Uuid::new_v4()));
+        let watched = vault.join("watched");
+        fs::create_dir_all(&watched).unwrap();
+        let state = test_state(&vault);
+        {
+            let conn = state.db.lock().unwrap();
+            db::watch_folders::add(&conn, watched.to_str().unwrap()).unwrap();
+        }
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let handle = app.handle().clone();
+
+        let empty = tauri::async_runtime::block_on(scan_watch_folders(handle.clone())).unwrap();
+        assert!(empty.new_files.is_empty());
+        assert!(empty.import_result.is_none());
+
+        fs::write(watched.join("ride.fit"), b"not a fit file").unwrap();
+        let preview = tauri::async_runtime::block_on(preview_watch_folders(handle.clone())).unwrap();
+        assert_eq!((preview.total_files, preview.new_files), (1, 1));
+        assert_eq!(preview.folders[0].files[0].filename, "ride.fit");
+        assert!(preview.folders[0].files[0].is_new);
+
+        let scanned = tauri::async_runtime::block_on(scan_watch_folders(handle)).unwrap();
+        assert_eq!(scanned.new_files.len(), 1);
+        let result = scanned.import_result.unwrap();
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0].path.ends_with("ride.fit"), "{}", result.failed[0].path);
+        fs::remove_dir_all(&vault).unwrap();
     }
 
     /// A preview hashes what it can read and leaves the unreadable marked

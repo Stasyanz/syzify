@@ -67,7 +67,10 @@ pub async fn import_files(
 /// watcher's findings, a watch-folder scan: refuses a locked vault, expands
 /// folders, reports `import:progress`, recomputes monitoring once per
 /// touched day and starts geocoding for what came in.
-pub(crate) async fn import_paths(app: AppHandle, paths: Vec<String>) -> Result<ImportResult, String> {
+pub(crate) async fn import_paths<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    paths: Vec<String>,
+) -> Result<ImportResult, String> {
     ensure_vault_unlocked(&app.state::<AppState>())?;
     let mut result = ImportResult::default();
     let mut batch = pipeline::MonitoringBatch::default();
