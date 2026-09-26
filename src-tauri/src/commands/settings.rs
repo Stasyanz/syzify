@@ -1061,7 +1061,7 @@ pub fn restart_watcher(
     Ok(())
 }
 
-/// Manual update check (Settings → General). The only network call happens
+/// Manual update check (Settings → About). The only network call happens
 /// on the user's click — see `crate::updates` for the privacy contract.
 #[tauri::command]
 pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, String> {

@@ -3,17 +3,17 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { api } from "../lib/tauri";
-import type { PluginInfo } from "../lib/types";
-import { PluginsPage, secretsDisclosure, secretsSealed } from "./Plugins";
+import { api } from "../../lib/tauri";
+import type { PluginInfo } from "../../lib/types";
+import { PluginRegistry, secretsDisclosure, secretsSealed } from "./PluginRegistry";
 
-vi.mock("../lib/tauri", () => ({
+vi.mock("../../lib/tauri", () => ({
   api: {
     getPlugins: vi.fn(),
     getEncryptionStatus: vi.fn(),
   },
 }));
-vi.mock("../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
+vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
 
 const mocked = vi.mocked(api);
 
@@ -39,7 +39,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <PluginsPage />
+        <PluginRegistry />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -65,7 +65,7 @@ describe("secretsDisclosure", () => {
   });
 });
 
-describe("PluginsPage", () => {
+describe("PluginRegistry", () => {
   it("opens the sync page of an enabled plugin contributing sync.source", async () => {
     mocked.getPlugins.mockResolvedValue([
       plugin({ id: "com.test.sync", contributes: ["sync.source"] }),
@@ -80,9 +80,9 @@ describe("PluginsPage", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/plugins"]}>
+        <MemoryRouter initialEntries={["/settings?tab=plugins"]}>
           <Routes>
-            <Route path="/plugins" element={<PluginsPage />} />
+            <Route path="/settings" element={<PluginRegistry />} />
             <Route path="/plugin/:pluginId/sync" element={<div>SYNC PAGE</div>} />
           </Routes>
         </MemoryRouter>

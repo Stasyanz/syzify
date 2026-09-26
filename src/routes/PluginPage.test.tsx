@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { PluginInfo, ViewSpec } from "../lib/types";
 import { api } from "../lib/tauri";
 import { PluginPage } from "./PluginPage";
@@ -32,13 +32,20 @@ const view = (more: boolean): ViewSpec => ({
   continue: more ? "go" : null,
 });
 
+/** Stands in for Settings and shows where exactly the page landed: the tab
+ * is in the query, which a route match alone ignores. */
+function SettingsProbe() {
+  const { pathname, search } = useLocation();
+  return <div>PLUGINS LIST {pathname + search}</div>;
+}
+
 function renderAt(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/plugins" element={<div>PLUGINS LIST</div>} />
+          <Route path="/settings" element={<SettingsProbe />} />
           <Route path="/plugin/:pluginId" element={<PluginPage />} />
           <Route path="/plugin/:pluginId/sync" element={<PluginPage point="sync.source" />} />
         </Routes>
@@ -80,6 +87,6 @@ describe("PluginPage", () => {
     await waitFor(() => expect(mocked.renderPluginView).toHaveBeenCalledTimes(3));
     expect(mocked.renderPluginView.mock.calls[0][1]).toBe("sync.source");
     fireEvent.click(screen.getByText("Plugins"));
-    await waitFor(() => expect(screen.getByText("PLUGINS LIST")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("PLUGINS LIST /settings?tab=plugins")).toBeTruthy());
   });
 });

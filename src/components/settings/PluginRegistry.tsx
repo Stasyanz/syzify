@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { confirmDialog } from "../stores/confirmStore";
+import { confirmDialog } from "../../stores/confirmStore";
 import { Puzzle, Plus, Trash2, Globe, ShieldCheck, Fingerprint } from "lucide-react";
-import type { EncryptionStatus, PluginInfo } from "../lib/types";
-import { api } from "../lib/tauri";
-import { useToastStore } from "../stores/toastStore";
+import type { EncryptionStatus, PluginInfo } from "../../lib/types";
+import { api } from "../../lib/tauri";
+import { useToastStore } from "../../stores/toastStore";
 
 // Human-readable label for a raw permission string.
 function permissionLabel(perm: string): string {
@@ -29,7 +29,7 @@ function permissionLabel(perm: string): string {
  * of a lock — and `null` while it is still unknown (nothing is shown then). */
 export function secretsDisclosure(permissions: string[], sealed: boolean | null): string | null {
   if (sealed !== false || !permissions.includes("data:secret")) return null;
-  return "Secrets are stored unencrypted until vault encryption is on (Settings → Encryption).";
+  return "Secrets are stored unencrypted until vault encryption is on (Settings → Vault → Encryption).";
 }
 
 /** Whether plugin secrets are sealed, from the encryption status: any scope
@@ -40,7 +40,10 @@ export function secretsSealed(status: EncryptionStatus | undefined, failed: bool
   return failed ? false : null;
 }
 
-export function PluginsPage() {
+/** The plugin registry, as the Plugins tab of Settings: sideload, enable,
+ * review permissions, open a plugin's page or sync. Plugins install disabled
+ * and every network host they ask for is listed on their card. */
+export function PluginRegistry() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
@@ -114,35 +117,19 @@ export function PluginsPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-6 space-y-6">
-        <div>
-          <button
-            onClick={() => navigate("/settings")}
-            className="text-sm text-faint hover:text-muted mb-2 inline-block"
-          >
-            &larr; Back to settings
-          </button>
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-ink flex items-center gap-2">
-              <Puzzle size={22} className="text-faint" />
-              Plugins
-            </h1>
-            <button
-              onClick={handleInstall}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent-2"
-            >
-              <Plus size={15} />
-              Install plugin
-            </button>
-          </div>
-          <p className="text-xs text-faint mt-2">
-            Plugins extend Syzify locally. They run with only the access you grant and
-            are disabled until you turn them on. No plugin can reach the network unless
-            its requested hosts are shown below.
-          </p>
-        </div>
-
+    <section className="card">
+      <div className="flex items-center justify-between gap-4">
+        <p className="sd !mt-0">
+          Plugins extend Syzify locally. They run with only the access you grant and
+          are disabled until you turn them on. No plugin can reach the network unless
+          its requested hosts are shown below.
+        </p>
+        <button onClick={handleInstall} className="btn primary shrink-0">
+          <Plus size={15} />
+          Install plugin
+        </button>
+      </div>
+      <div className="mt-4">
         {isLoading ? (
           <p className="text-sm text-faint">Loading…</p>
         ) : plugins.length === 0 ? (
@@ -269,6 +256,6 @@ export function PluginsPage() {
           </ul>
         )}
       </div>
-    </div>
+    </section>
   );
 }

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -26,7 +27,14 @@ import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
 import { MonitoringData } from "../components/settings/MonitoringData";
-import { PluginsCard } from "../components/settings/PluginsCard";
+import { PluginRegistry } from "../components/settings/PluginRegistry";
+import {
+  DEFAULT_SETTINGS_TAB,
+  SETTINGS_TABS,
+  nextSettingsTab,
+  settingsTabFrom,
+  type SettingsTab,
+} from "../lib/settingsTabs";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 
 /** What each encryption scope covers. Raw files include Garmin monitoring
@@ -50,13 +58,54 @@ export function SettingsPage() {
   const unitsMode = useUnitsStore((s) => s.mode);
   const setUnitsMode = useUnitsStore((s) => s.setMode);
 
-  // Legal-document viewer (Settings → General → License)
+  // The open tab lives in the URL (`?tab=vault`): a plugin page links back
+  // to Plugins, and a reload keeps the section. General has no param.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = settingsTabFrom(searchParams.get("tab"));
+  // Whether the encryption dialogs can still show an error when a crypto
+  // call settles: they live in the Vault section, which another tab — or
+  // leaving Settings altogether — unmounts. Then only a toast reaches the user.
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    // Set on the way in too: StrictMode runs mount → cleanup → mount, and a
+    // cleanup-only effect would leave the flag false for good in dev.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const encryptionDialogGone = () => !mountedRef.current || tabRef.current !== "vault";
+  const selectTab = (next: SettingsTab) =>
+    setSearchParams(
+      (prev) => {
+        // Only the tab key changes; any other query the page grows keeps.
+        const params = new URLSearchParams(prev);
+        if (next === DEFAULT_SETTINGS_TAB) params.delete("tab");
+        else params.set("tab", next);
+        return params;
+      },
+      { replace: true },
+    );
+  // A tablist promises arrow keys: Left/Right cycle, Home/End jump, and only
+  // the open tab sits in the Tab order (roving tabindex).
+  function onTabKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const next = nextSettingsTab(tab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    selectTab(next);
+    (e.currentTarget.querySelector(`#settings-tab-${next}`) as HTMLElement | null)?.focus();
+  }
+
+  // Legal-document viewer (Settings → About)
   const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
 
   // App version (About card)
   const { data: appVersion } = useQuery({
     queryKey: ["appVersion"],
     queryFn: () => getVersion(),
+    enabled: tab === "about",
   });
 
   // Import data sources (Runkeeper, …)
@@ -78,16 +127,18 @@ export function SettingsPage() {
   });
   const geocodingEnabled = geocodingSetting === "true";
 
-  // Tile cache info
+  // Tile cache info: a directory walk on disk, only for the tab that shows it
   const { data: cacheInfo, refetch: refetchCache } = useQuery({
     queryKey: ["tileCacheInfo"],
     queryFn: () => api.getTileCacheInfo(),
+    enabled: tab === "general",
   });
 
   // Encryption status
   const { data: encryptionStatus } = useQuery({
     queryKey: ["encryptionStatus"],
     queryFn: () => api.getEncryptionStatus(),
+    enabled: tab === "vault",
   });
 
   const [clearing, setClearing] = useState(false);
@@ -261,6 +312,7 @@ export function SettingsPage() {
       setEncConfirm("");
     } catch (e) {
       setEncError(`Failed: ${e}`);
+      if (encryptionDialogGone()) addToast("error", `Encryption failed: ${e}`);
     } finally {
       setEncBusy(false);
       // Re-read status on EVERY outcome: a failed transition can settle the
@@ -280,6 +332,7 @@ export function SettingsPage() {
       setDecPassword("");
     } catch (e) {
       setDecError(`Wrong password or error: ${e}`);
+      if (encryptionDialogGone()) addToast("error", `Disabling encryption failed: ${e}`);
     } finally {
       setEncBusy(false);
       refreshAfterCryptoChange();
@@ -296,385 +349,435 @@ export function SettingsPage() {
   return (
     <div className="h-full overflow-y-auto scroll-themed">
       <div className="max-w-[760px] mx-auto p-6 flex flex-col gap-5">
-        <h1 className="page-title">Settings</h1>
+        {/* The tab strip is the page's heading: the tab names say where the
+            user is, so no title and no card headings repeating them. */}
+        <div
+          className="seg self-center"
+          role="tablist"
+          aria-label="Settings sections"
+          onKeyDown={onTabKeyDown}
+        >
+          {SETTINGS_TABS.map((t) => (
+            <button
+              key={t.id}
+              id={`settings-tab-${t.id}`}
+              role="tab"
+              aria-selected={tab === t.id}
+              // Only the open panel exists in the DOM; a dangling id is worse
+              // than none.
+              aria-controls={tab === t.id ? `settings-panel-${t.id}` : undefined}
+              tabIndex={tab === t.id ? 0 : -1}
+              className={tab === t.id ? "on" : ""}
+              onClick={() => selectTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-        {/* General */}
-        <section className="card">
-          <h3>General</h3>
-          <div className="set-row">
-            <div>
-              <div className="sl">Syzify</div>
-              <div className="sd">A local-first training vault</div>
-              <div className="sd">
-                © 2026 Stanislav Zainullin ·{" "}
-                <button
-                  onClick={() => setLegalDoc("license")}
-                  className="text-accent-2 hover:underline"
-                >
-                  AGPL-3.0
-                </button>{" "}
-                with the{" "}
-                <button
-                  onClick={() => setLegalDoc("exception")}
-                  className="text-accent-2 hover:underline"
-                >
-                  Plugin Exception
-                </button>{" "}
-                ·{" "}
-                <button
-                  onClick={() => setLegalDoc("notices")}
-                  className="text-accent-2 hover:underline"
-                >
-                  Third-party notices
-                </button>
-              </div>
-            </div>
-            {/* Stretch to the text block's height: Version sits on the title
-                line, Check for updates on the license line. */}
-            <div className="flex flex-col items-end justify-between self-stretch">
-              {appVersion && <span className="sd !mt-0">Version {appVersion}</span>}
-              <UpdateCheck />
-            </div>
-          </div>
-          <div className="set-row">
-            <div>
-              <div className="sl">Theme</div>
-              <div className="sd">Warm light, warm dark, or follow the system</div>
-            </div>
-            <div className="seg">
-              {THEME_MODES.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setThemeMode(m)}
-                  className={`capitalize${themeMode === m ? " on" : ""}`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="set-row">
-            <div>
-              <div className="sl">Units</div>
-              <div className="sd">Distance, pace and elevation</div>
-            </div>
-            <div className="seg">
-              <button
-                onClick={() => setUnitsMode("metric")}
-                className={unitsMode === "metric" ? "on" : ""}
-              >
-                Metric · km
-              </button>
-              <button
-                onClick={() => setUnitsMode("imperial")}
-                className={unitsMode === "imperial" ? "on" : ""}
-              >
-                Imperial · mi
-              </button>
-            </div>
-          </div>
-          <div className="set-row">
-            <div>
-              <div className="sl">Activities per page</div>
-              <div className="sd">
-                Number of activities loaded at once in the list view
-              </div>
-            </div>
-            <Select
-              ariaLabel="Activities per page"
-              className="w-24"
-              value={pageSize ?? "20"}
-              onChange={handlePageSizeChange}
-              options={[
-                { value: "10", label: "10" },
-                { value: "20", label: "20" },
-                { value: "50", label: "50" },
-                { value: "100", label: "100" },
-              ]}
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <div className="sl">Automatic location names</div>
-              <div className="sd">
-                Look up a city name for each imported activity via
-                nominatim.openstreetmap.org — the activity's start coordinates
-                are sent to that OpenStreetMap service. When off, nothing is
-                sent; searching a location by name when editing an activity
-                uses the same service.
-              </div>
-            </div>
-            <Toggle
-              on={geocodingEnabled}
-              onToggle={handleGeocodingToggle}
-              ariaLabel="Automatic location names"
-            />
-          </div>
-          <div className="set-row">
-            <div>
-              <div className="sl">Import Activities</div>
-              <div className="sd">
-                Drop GPX/FIT/TCX files anywhere in the app to import
-              </div>
-            </div>
-          </div>
-          {importSources.map((ds) => (
-            <div key={ds.id} className="set-row">
+        {tab === "general" && (
+          <section
+            className="card"
+            role="tabpanel"
+            id="settings-panel-general"
+            aria-labelledby="settings-tab-general"
+          >
+            <div className="set-row">
               <div>
-                <div className="sl">{ds.name} import</div>
+                <div className="sl">Theme</div>
+                <div className="sd">Warm light, warm dark, or follow the system</div>
+              </div>
+              <div className="seg">
+                {THEME_MODES.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setThemeMode(m)}
+                    className={`capitalize${themeMode === m ? " on" : ""}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">Units</div>
+                <div className="sd">Distance, pace and elevation</div>
+              </div>
+              <div className="seg">
+                <button
+                  onClick={() => setUnitsMode("metric")}
+                  className={unitsMode === "metric" ? "on" : ""}
+                >
+                  Metric · km
+                </button>
+                <button
+                  onClick={() => setUnitsMode("imperial")}
+                  className={unitsMode === "imperial" ? "on" : ""}
+                >
+                  Imperial · mi
+                </button>
+              </div>
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">Activities per page</div>
                 <div className="sd">
-                  {ds.description} · .{ds.extensions.join(" .")}
+                  Number of activities loaded at once in the list view
+                </div>
+              </div>
+              <Select
+                ariaLabel="Activities per page"
+                className="w-24"
+                value={pageSize ?? "20"}
+                onChange={handlePageSizeChange}
+                options={[
+                  { value: "10", label: "10" },
+                  { value: "20", label: "20" },
+                  { value: "50", label: "50" },
+                  { value: "100", label: "100" },
+                ]}
+              />
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">Automatic location names</div>
+                <div className="sd">
+                  Look up a city name for each imported activity via
+                  nominatim.openstreetmap.org — the activity's start coordinates
+                  are sent to that OpenStreetMap service. When off, nothing is
+                  sent; searching a location by name when editing an activity
+                  uses the same service.
+                </div>
+              </div>
+              <Toggle
+                on={geocodingEnabled}
+                onToggle={handleGeocodingToggle}
+                ariaLabel="Automatic location names"
+              />
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">Import Activities</div>
+                <div className="sd">
+                  Drop GPX/FIT/TCX files anywhere in the app to import
+                </div>
+              </div>
+            </div>
+            {importSources.map((ds) => (
+              <div key={ds.id} className="set-row">
+                <div>
+                  <div className="sl">{ds.name} import</div>
+                  <div className="sd">
+                    {ds.description} · .{ds.extensions.join(" .")}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleImportDatasource(ds)}
+                  className="btn ghost"
+                >
+                  <Upload size={15} />
+                  Import
+                </button>
+              </div>
+            ))}
+            <div className="set-row">
+              <div>
+                <div className="sl">Map tile cache</div>
+                <div className="sd">
+                  Cached map tiles on disk: {cacheInfo?.size_display ?? "…"}
                 </div>
               </div>
               <button
-                onClick={() => handleImportDatasource(ds)}
+                onClick={handleClearCache}
+                disabled={clearing || (cacheInfo?.size_bytes ?? 0) === 0}
                 className="btn ghost"
               >
-                <Upload size={15} />
-                Import
+                <Trash2 size={15} />
+                {clearing ? "Clearing…" : "Clear Cache"}
               </button>
             </div>
-          ))}
-          <div className="set-row">
-            <div>
-              <div className="sl">Feedback</div>
-              <div className="sd">
-                Report a bug or suggest a feature on{" "}
+          </section>
+        )}
+
+        {tab === "vault" && (
+          <section
+            className="card"
+            role="tabpanel"
+            id="settings-panel-vault"
+            aria-labelledby="settings-tab-vault"
+          >
+            <VaultLocation />
+            <div className="set-row">
+              <div className="flex-1">
+                <div className="sl">Encryption</div>
+                <div className="sd">
+                  Encrypt selected data at rest with AES-256-GCM
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5">
+                  {(["activities", "database", "photos"] as const).map((scope) => {
+                    const enabled = !!encryptionStatus?.enabled;
+                    const checked = enabled
+                      ? !!encryptionStatus?.scopes?.[scope]
+                      : encScopes[scope];
+                    return (
+                      <label
+                        key={scope}
+                        className={`flex items-center gap-1.5 text-[13px] ${
+                          enabled ? "cursor-default text-muted" : "cursor-pointer text-ink"
+                        }`}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          disabled={enabled}
+                          onChange={() =>
+                            setEncScopes((s) => ({ ...s, [scope]: !s[scope] }))
+                          }
+                        />
+                        {SCOPE_LABELS[scope]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <Toggle
+                on={!!encryptionStatus?.enabled}
+                onToggle={() =>
+                  encryptionStatus?.enabled
+                    ? setShowDecryptDialog(true)
+                    : setShowEncryptDialog(true)
+                }
+                ariaLabel={
+                  encryptionStatus?.enabled
+                    ? "Disable encryption"
+                    : "Enable encryption"
+                }
+              />
+            </div>
+
+            {/* Enable encryption dialog */}
+            {showEncryptDialog && (
+              <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
+                <p className="text-sm font-semibold text-ink">
+                  Set encryption password
+                </p>
+                <p className="sd">
+                  The selected data will be encrypted. You will need this password
+                  to access your vault
+                </p>
+                <input
+                  type="password"
+                  placeholder="Password (min 8 characters)"
+                  value={encPassword}
+                  onChange={(e) => setEncPassword(e.target.value)}
+                  className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
+                />
+                <input
+                  type="password"
+                  placeholder="Confirm password"
+                  value={encConfirm}
+                  onChange={(e) => setEncConfirm(e.target.value)}
+                  className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
+                />
+                {encError && <p className="text-xs text-red-500">{encError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleEnableEncryption}
+                    disabled={encBusy}
+                    className="btn primary"
+                  >
+                    {encBusy && <Loader2 size={15} className="animate-spin" />}
+                    {encBusy ? "Encrypting…" : "Enable Encryption"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowEncryptDialog(false);
+                      setEncPassword("");
+                      setEncConfirm("");
+                      setEncError(null);
+                    }}
+                    className="btn ghost"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Disable encryption dialog */}
+            {showDecryptDialog && (
+              <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
+                <p className="text-sm font-semibold text-ink">
+                  Enter password to disable encryption
+                </p>
+                <input
+                  type="password"
+                  placeholder="Current password"
+                  value={decPassword}
+                  onChange={(e) => setDecPassword(e.target.value)}
+                  className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
+                />
+                {decError && <p className="text-xs text-red-500">{decError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleDisableEncryption}
+                    disabled={encBusy}
+                    className="btn danger"
+                  >
+                    {encBusy && <Loader2 size={15} className="animate-spin" />}
+                    {encBusy ? "Decrypting…" : "Disable Encryption"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowDecryptDialog(false);
+                      setDecPassword("");
+                      setDecError(null);
+                    }}
+                    className="btn ghost"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="set-row">
+              <div>
+                <div className="sl">Backup &amp; Restore</div>
+                <div className="sd">Back up or restore your entire vault</div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBackup}
+                  disabled={backingUp || restoring}
+                  className="btn ghost"
+                >
+                  <Archive size={15} />
+                  {backingUp ? "Creating…" : "Backup"}
+                </button>
+                <button
+                  onClick={handleRestore}
+                  disabled={backingUp || restoring}
+                  className="btn ghost"
+                >
+                  <Upload size={15} />
+                  {restoring ? "Restoring…" : "Restore"}
+                </button>
+              </div>
+            </div>
+            <MonitoringData />
+          </section>
+        )}
+
+        {tab === "plugins" && (
+          <div role="tabpanel" id="settings-panel-plugins" aria-labelledby="settings-tab-plugins">
+            <PluginRegistry />
+          </div>
+        )}
+
+        {tab === "about" && (
+          <section
+            className="card"
+            role="tabpanel"
+            id="settings-panel-about"
+            aria-labelledby="settings-tab-about"
+          >
+            <div className="set-row">
+              <div>
+                <div className="sl">Syzify</div>
+                <div className="sd">A local-first training vault</div>
+              </div>
+              <div className="flex flex-col items-end gap-0.5">
+                {appVersion && <span className="sd !mt-0">Version {appVersion}</span>}
+                <UpdateCheck />
+              </div>
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">License</div>
+                <div className="sd">
+                  © 2026 Stanislav Zainullin ·{" "}
+                  <button
+                    onClick={() => setLegalDoc("license")}
+                    className="text-accent-2 hover:underline"
+                  >
+                    AGPL-3.0
+                  </button>{" "}
+                  with the{" "}
+                  <button
+                    onClick={() => setLegalDoc("exception")}
+                    className="text-accent-2 hover:underline"
+                  >
+                    Plugin Exception
+                  </button>{" "}
+                  ·{" "}
+                  <button
+                    onClick={() => setLegalDoc("notices")}
+                    className="text-accent-2 hover:underline"
+                  >
+                    Third-party notices
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">Feedback</div>
+                <div className="sd">
+                  Report a bug or suggest a feature on{" "}
+                  <a
+                    href={GITHUB_ISSUES_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-2 hover:underline"
+                  >
+                    GitHub Issues
+                  </a>
+                  {CONTACT_EMAIL && (
+                    <>
+                      , or email{" "}
+                      <a
+                        href={`mailto:${CONTACT_EMAIL}`}
+                        className="text-accent-2 hover:underline"
+                        onClick={(e) => {
+                          // WKWebView doesn't handle mailto: itself and the
+                          // external-link interceptor skips non-http(s)
+                          // schemes, so route it through the opener plugin.
+                          e.preventDefault();
+                          openUrl(`mailto:${CONTACT_EMAIL}`).catch((err) => {
+                            addToast("error", `Failed to open email client: ${err}`);
+                          });
+                        }}
+                      >
+                        {CONTACT_EMAIL}
+                      </a>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
                 <a
                   href={GITHUB_ISSUES_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-accent-2 hover:underline"
+                  className="iconbtn no-underline"
+                  data-tip="GitHub Issues"
+                  aria-label="GitHub Issues"
                 >
-                  GitHub Issues
+                  <Github size={15} />
                 </a>
-                {CONTACT_EMAIL && (
-                  <>
-                    , or email{" "}
-                    <a
-                      href={`mailto:${CONTACT_EMAIL}`}
-                      className="text-accent-2 hover:underline"
-                      onClick={(e) => {
-                        // WKWebView doesn't handle mailto: itself and the
-                        // external-link interceptor skips non-http(s)
-                        // schemes, so route it through the opener plugin.
-                        e.preventDefault();
-                        openUrl(`mailto:${CONTACT_EMAIL}`).catch((err) => {
-                          addToast("error", `Failed to open email client: ${err}`);
-                        });
-                      }}
-                    >
-                      {CONTACT_EMAIL}
-                    </a>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <a
-                href={GITHUB_ISSUES_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="iconbtn no-underline"
-                data-tip="GitHub Issues"
-                aria-label="GitHub Issues"
-              >
-                <Github size={15} />
-              </a>
-              <button
-                onClick={() => useFeedbackStore.getState().open()}
-                className="iconbtn"
-                data-tip="Send feedback"
-                aria-label="Send feedback"
-              >
-                <Mail size={15} />
-              </button>
-            </div>
-          </div>
-        </section>
-
-
-        {/* Vault */}
-        <section className="card">
-          <h3>Vault</h3>
-          <VaultLocation />
-          <div className="set-row">
-            <div className="flex-1">
-              <div className="sl">Encryption</div>
-              <div className="sd">
-                Encrypt selected data at rest with AES-256-GCM
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5">
-                {(["activities", "database", "photos"] as const).map((scope) => {
-                  const enabled = !!encryptionStatus?.enabled;
-                  const checked = enabled
-                    ? !!encryptionStatus?.scopes?.[scope]
-                    : encScopes[scope];
-                  return (
-                    <label
-                      key={scope}
-                      className={`flex items-center gap-1.5 text-[13px] ${
-                        enabled ? "cursor-default text-muted" : "cursor-pointer text-ink"
-                      }`}
-                    >
-                      <Checkbox
-                        checked={checked}
-                        disabled={enabled}
-                        onChange={() =>
-                          setEncScopes((s) => ({ ...s, [scope]: !s[scope] }))
-                        }
-                      />
-                      {SCOPE_LABELS[scope]}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-            <Toggle
-              on={!!encryptionStatus?.enabled}
-              onToggle={() =>
-                encryptionStatus?.enabled
-                  ? setShowDecryptDialog(true)
-                  : setShowEncryptDialog(true)
-              }
-              ariaLabel={
-                encryptionStatus?.enabled
-                  ? "Disable encryption"
-                  : "Enable encryption"
-              }
-            />
-          </div>
-
-          {/* Enable encryption dialog */}
-          {showEncryptDialog && (
-            <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
-              <p className="text-sm font-semibold text-ink">
-                Set encryption password
-              </p>
-              <p className="sd">
-                The selected data will be encrypted. You will need this password
-                to access your vault
-              </p>
-              <input
-                type="password"
-                placeholder="Password (min 8 characters)"
-                value={encPassword}
-                onChange={(e) => setEncPassword(e.target.value)}
-                className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
-              />
-              <input
-                type="password"
-                placeholder="Confirm password"
-                value={encConfirm}
-                onChange={(e) => setEncConfirm(e.target.value)}
-                className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
-              />
-              {encError && <p className="text-xs text-red-500">{encError}</p>}
-              <div className="flex gap-2">
                 <button
-                  onClick={handleEnableEncryption}
-                  disabled={encBusy}
-                  className="btn primary"
+                  onClick={() => useFeedbackStore.getState().open()}
+                  className="iconbtn"
+                  data-tip="Send feedback"
+                  aria-label="Send feedback"
                 >
-                  {encBusy && <Loader2 size={15} className="animate-spin" />}
-                  {encBusy ? "Encrypting…" : "Enable Encryption"}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowEncryptDialog(false);
-                    setEncPassword("");
-                    setEncConfirm("");
-                    setEncError(null);
-                  }}
-                  className="btn ghost"
-                >
-                  Cancel
+                  <Mail size={15} />
                 </button>
               </div>
             </div>
-          )}
-
-          {/* Disable encryption dialog */}
-          {showDecryptDialog && (
-            <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
-              <p className="text-sm font-semibold text-ink">
-                Enter password to disable encryption
-              </p>
-              <input
-                type="password"
-                placeholder="Current password"
-                value={decPassword}
-                onChange={(e) => setDecPassword(e.target.value)}
-                className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
-              />
-              {decError && <p className="text-xs text-red-500">{decError}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleDisableEncryption}
-                  disabled={encBusy}
-                  className="btn danger"
-                >
-                  {encBusy && <Loader2 size={15} className="animate-spin" />}
-                  {encBusy ? "Decrypting…" : "Disable Encryption"}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowDecryptDialog(false);
-                    setDecPassword("");
-                    setDecError(null);
-                  }}
-                  className="btn ghost"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="set-row">
-            <div>
-              <div className="sl">Backup &amp; Restore</div>
-              <div className="sd">Back up or restore your entire vault</div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleBackup}
-                disabled={backingUp || restoring}
-                className="btn ghost"
-              >
-                <Archive size={15} />
-                {backingUp ? "Creating…" : "Backup"}
-              </button>
-              <button
-                onClick={handleRestore}
-                disabled={backingUp || restoring}
-                className="btn ghost"
-              >
-                <Upload size={15} />
-                {restoring ? "Restoring…" : "Restore"}
-              </button>
-            </div>
-          </div>
-          <MonitoringData />
-          <div className="set-row">
-            <div>
-              <div className="sl">Map tile cache</div>
-              <div className="sd">
-                Cached map tiles on disk: {cacheInfo?.size_display ?? "…"}
-              </div>
-            </div>
-            <button
-              onClick={handleClearCache}
-              disabled={clearing || (cacheInfo?.size_bytes ?? 0) === 0}
-              className="btn ghost"
-            >
-              <Trash2 size={15} />
-              {clearing ? "Clearing…" : "Clear Cache"}
-            </button>
-          </div>
-        </section>
-
-        <PluginsCard />
+          </section>
+        )}
 
         {legalDoc && (
           <LegalModal doc={legalDoc} onClose={() => setLegalDoc(null)} />

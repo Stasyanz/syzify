@@ -126,7 +126,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <div
             className={`ri tip-left${pathname === "/settings" ? " on" : ""}`}
-            onClick={() => navigate("/settings")}
+            // Already there: a click keeps the open tab instead of resetting
+            // the query to General.
+            onClick={() => pathname !== "/settings" && navigate("/settings")}
             data-tip="Settings"
             aria-label="Settings"
           >

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { api } from "../lib/tauri";
 import { PluginWidget } from "../components/plugins/PluginWidget";
+import { settingsPath } from "../lib/settingsTabs";
 
 /** The full-page contribution points and the export each maps to. */
 export type PagePoint = "route.planner" | "sync.source";
@@ -26,7 +27,7 @@ export function PluginPage({ point = "route.planner" }: { point?: PagePoint }) {
     <div className="h-full overflow-y-auto">
       <div className="max-w-3xl mx-auto p-6 space-y-4">
         <button
-          onClick={() => navigate("/plugins")}
+          onClick={() => navigate(settingsPath("plugins"))}
           className="flex items-center gap-1 text-sm text-faint hover:text-muted"
         >
           <ArrowLeft size={14} /> Plugins

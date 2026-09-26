@@ -6,6 +6,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Changed
+- Settings is split into tabs — General, Vault, Plugins, About — instead
+  of one long column (#151). The plugin registry now lives in the Plugins
+  tab (the old `/plugins` page redirects there); the license, version,
+  update check and feedback links are in About. The open tab is part of
+  the URL (`/settings?tab=vault`).
+
 ### Fixed
 - The recording device of a FIT activity is read from the file's creator
   (`file_id`, completed by the creator's `device_info`) instead of the

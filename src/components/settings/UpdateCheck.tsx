@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../../lib/tauri";
 
-/** Manual "Check for updates" under the version in Settings → General, and
+/** Manual "Check for updates" under the version in Settings → About, and
  * (centered) on the vault-too-new boot error screen — both commands it calls
  * are vault-independent, so it works before the DB opens. Strictly
  * user-initiated (the app never phones home on its own) with the

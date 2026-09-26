@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route } from "react-router";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library } from "./routes/Library";
 import { DashboardPage } from "./routes/Dashboard";
 import { ActivityDetailPage } from "./routes/ActivityDetail";
 import { SettingsPage } from "./routes/Settings";
-import { PluginsPage } from "./routes/Plugins";
 import { Segments } from "./routes/Segments";
 import { PluginPage } from "./routes/PluginPage";
 import { UnlockModal } from "./components/UnlockModal";
@@ -19,6 +18,7 @@ import { ImportProgressOverlay } from "./components/import/ImportProgressOverlay
 import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
 import { UpdateCheck } from "./components/settings/UpdateCheck";
+import { settingsPath } from "./lib/settingsTabs";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -231,7 +231,8 @@ function AppContent() {
             <Route path="/activity/:id" element={<ActivityDetailPage />} />
             <Route path="/segments" element={<Segments />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/plugins" element={<PluginsPage />} />
+            {/* The registry moved into Settings → Plugins; old links still land there. */}
+            <Route path="/plugins" element={<Navigate to={settingsPath("plugins")} replace />} />
             <Route path="/plugin/:pluginId" element={<PluginPage />} />
             <Route path="/plugin/:pluginId/sync" element={<PluginPage point="sync.source" />} />
           </Routes>
