@@ -193,12 +193,30 @@ fn expand_paths_with(
     (files, failed)
 }
 
+/// How deep a watch folder (or a device mount) is looked into: the root
+/// and five levels below — a sync client's `Apps/Vendor/2026/09/ride.fit`
+/// still counts. Deeper than a drop's [`FOLDER_MAX_DEPTH`], which doubles
+/// as a "this is not a device folder" heuristic. The live watcher applies
+/// the same limit ([`within_walk_depth`]), so what it reports and what a
+/// scan finds are the same set of files.
+pub const WATCH_FOLDER_MAX_DEPTH: usize = 6;
+
 /// The importable files under a folder the user chose (a watch folder, a
 /// device mount), within the app's bounds, sorted. An empty folder is an
 /// empty list, not an error — a watch folder is usually empty between
 /// rides; the drop path adds its own "nothing here" refusal on top.
 pub fn folder_files(dir: &Path) -> Result<Vec<String>, String> {
-    walk_folder(dir, FOLDER_MAX_DEPTH, FOLDER_MAX_FILES, FOLDER_MAX_ENTRIES)
+    walk_folder(dir, WATCH_FOLDER_MAX_DEPTH, FOLDER_MAX_FILES, FOLDER_MAX_ENTRIES)
+}
+
+/// Whether `path` lies within `max_depth` levels of `root` the way the
+/// folder walk counts them: a file directly in the root is one component
+/// below it, a file in a folder at the deepest visited level is
+/// `max_depth` components below. Anything outside `root` is not within.
+pub fn within_walk_depth(root: &Path, path: &Path, max_depth: usize) -> bool {
+    path.strip_prefix(root)
+        .map(|rel| rel.components().count() <= max_depth)
+        .unwrap_or(false)
 }
 
 fn walk_folder(
@@ -230,18 +248,19 @@ impl Walk {
     /// levels 0 … max_depth − 1, i.e. the root and two nested levels for the
     /// default of 3.
     fn run(&mut self, dir: &Path, depth: usize) -> Result<(), String> {
-        let entries = fs::read_dir(dir).map_err(|e| {
-            if depth == 0 {
-                format!("Failed to read folder: {}", e)
-            } else {
-                format!("Failed to read subfolder {}: {}", dir.display(), e)
-            }
-        })?;
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if depth == 0 => return Err(format!("Failed to read folder: {}", e)),
+            // A subfolder the app may not read (a volume's root-owned
+            // `.Trashes`, a TCC-guarded folder, a dead mount point) is
+            // skipped: the files next to it are still the user's files.
+            Err(_) => return Ok(()),
+        };
         for entry in entries.flatten() {
             self.entries += 1;
             if self.entries > self.max_entries {
                 return Err(format!(
-                    "Folder is too large ({}+ entries); drop the device's Monitor or Activity \
+                    "Folder is too large ({}+ entries); pick the device's Monitor or Activity \
                      folder itself",
                     self.max_entries
                 ));
@@ -1758,21 +1777,66 @@ mod tests {
     }
 
     /// The watch-folder scan's view of a folder: empty is empty, files are
-    /// listed sorted from up to three levels, unreadable is an error.
+    /// listed sorted from the root and five levels below (a sync client's
+    /// nesting), an unreadable root is an error.
     #[test]
     fn folder_files_lists_sorted_and_treats_empty_as_empty() {
         let root = std::env::temp_dir().join(format!("syzify-folder-files-{}", Uuid::new_v4()));
-        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::create_dir_all(root.join("a/b/c/d/e/f")).unwrap();
         assert_eq!(folder_files(&root).unwrap(), Vec::<String>::new());
+        // Created out of alphabetical order, so the sort has to do something.
         fs::write(root.join("z.FIT"), b"x").unwrap();
-        fs::write(root.join("a/b/m.fit.gz"), b"x").unwrap();
+        fs::write(root.join("a/b/c/d/e/deep.fit.gz"), b"x").unwrap();
+        fs::write(root.join("a/b/c/d/e/f/too-deep.fit"), b"x").unwrap();
         fs::write(root.join("a/notes.txt"), b"x").unwrap();
+        fs::write(root.join("0-first.gpx"), b"x").unwrap();
         let found = folder_files(&root).unwrap();
         assert_eq!(
             found,
-            vec![root.join("a/b/m.fit.gz").to_str().unwrap().to_string(), root.join("z.FIT").to_str().unwrap().to_string()]
+            vec![
+                root.join("0-first.gpx").to_str().unwrap().to_string(),
+                root.join("a/b/c/d/e/deep.fit.gz").to_str().unwrap().to_string(),
+                root.join("z.FIT").to_str().unwrap().to_string()
+            ]
         );
         assert!(folder_files(&root.join("missing")).unwrap_err().starts_with("Failed to read folder"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The watcher and the scan agree on what is inside a watch folder:
+    /// the depth test is the walk's own counting.
+    #[test]
+    fn within_walk_depth_matches_the_walk() {
+        let root = Path::new("/w");
+        let d = WATCH_FOLDER_MAX_DEPTH;
+        assert!(within_walk_depth(root, Path::new("/w/ride.fit"), d));
+        assert!(within_walk_depth(root, Path::new("/w/a/b/c/d/e/deep.fit"), d));
+        assert!(!within_walk_depth(root, Path::new("/w/a/b/c/d/e/f/too-deep.fit"), d));
+        assert!(!within_walk_depth(root, Path::new("/elsewhere/ride.fit"), d));
+        assert!(!within_walk_depth(root, Path::new("/w/ride.fit"), 0));
+    }
+
+    /// A subfolder the app cannot read does not take the folder's other
+    /// files with it — a volume's root-owned `.Trashes` next to `Activity`.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subfolder_is_skipped_not_fatal() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("syzify-unreadable-sub-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("Activity")).unwrap();
+        fs::create_dir_all(root.join(".Trashes")).unwrap();
+        fs::write(root.join("Activity/ride.fit"), b"x").unwrap();
+        fs::set_permissions(root.join(".Trashes"), fs::Permissions::from_mode(0o000)).unwrap();
+        // root reads anything (a containerised runner): only assert when
+        // the lock holds.
+        let lock_holds = fs::read_dir(root.join(".Trashes")).is_err();
+        let found = folder_files(&root);
+        let (files, failed) = expand_paths(&[root.to_str().unwrap().to_string()]);
+        fs::set_permissions(root.join(".Trashes"), fs::Permissions::from_mode(0o755)).unwrap();
+        if lock_holds {
+            assert_eq!(found.unwrap(), vec![root.join("Activity/ride.fit").to_str().unwrap().to_string()]);
+            assert_eq!((files.len(), failed.len()), (1, 0));
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 

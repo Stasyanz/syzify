@@ -17,7 +17,6 @@ import type {
   ScanResult,
   DeviceStats,
   ScanPreview,
-  SuggestedPath,
   EncryptionStatus,
   UpdateCheck,
   EncryptionScopes,
@@ -193,9 +192,6 @@ export const api = {
 
   previewWatchFolders: () =>
     invoke<ScanPreview>("preview_watch_folders"),
-
-  getSuggestedWatchPaths: () =>
-    invoke<SuggestedPath[]>("get_suggested_watch_paths"),
 
   // Settings (key-value)
   getSetting: (key: string) =>

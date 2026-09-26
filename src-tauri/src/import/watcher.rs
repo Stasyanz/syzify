@@ -21,15 +21,27 @@ pub fn start_watching(
     let recently_flushed: Arc<Mutex<HashMap<String, Instant>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
-    let pending_clone = Arc::clone(&pending);
-    let last_event_clone = Arc::clone(&last_event);
-    let recently_flushed_clone = Arc::clone(&recently_flushed);
+    // The flusher holds only weak references: the watcher's callback owns
+    // the strong ones, so when the watcher is dropped (restart_watcher, a
+    // folder change) the next tick fails to upgrade and the thread ends —
+    // not one leaked 500 ms loop per restart.
+    let pending_weak = Arc::downgrade(&pending);
+    let last_event_weak = Arc::downgrade(&last_event);
+    let recently_flushed_weak = Arc::downgrade(&recently_flushed);
     let app_clone = app_handle.clone();
 
     // Spawn a debounce flusher thread
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(500));
+
+            let (Some(pending_clone), Some(last_event_clone), Some(recently_flushed_clone)) = (
+                pending_weak.upgrade(),
+                last_event_weak.upgrade(),
+                recently_flushed_weak.upgrade(),
+            ) else {
+                break;
+            };
 
             let should_flush = {
                 let last = last_event_clone.lock().unwrap();
@@ -62,6 +74,9 @@ pub fn start_watching(
     let pending_ev = Arc::clone(&pending);
     let last_event_ev = Arc::clone(&last_event);
     let recently_flushed_ev = Arc::clone(&recently_flushed);
+    // notify recurses without limit; the scan does not. Report only what a
+    // scan would find, so the two never disagree about a file's existence.
+    let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         if let Ok(event) = res {
@@ -70,7 +85,16 @@ pub fn start_watching(
                     let mut found_any = false;
                     let rf = recently_flushed_ev.lock().unwrap();
                     for path in &event.paths {
-                        if path.is_file() && crate::import::pipeline::is_importable_file(path) {
+                        if path.is_file()
+                            && crate::import::pipeline::is_importable_file(path)
+                            && roots.iter().any(|r| {
+                                crate::import::pipeline::within_walk_depth(
+                                    r,
+                                    path,
+                                    crate::import::pipeline::WATCH_FOLDER_MAX_DEPTH,
+                                )
+                            })
+                        {
                             if let Some(s) = path.to_str() {
                                 // Skip files that were recently flushed
                                 if rf.contains_key(s) {

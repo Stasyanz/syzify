@@ -23,7 +23,7 @@ export function WatchFolders() {
     queryKey: ["watchFolders"],
     queryFn: () => api.getWatchFolders(),
   });
-  const { data: autoImport } = useQuery({
+  const { data: autoImport, isPending: autoImportPending } = useQuery({
     queryKey: ["setting", "watch_auto_import"],
     queryFn: () => api.getSetting("watch_auto_import"),
   });
@@ -35,15 +35,20 @@ export function WatchFolders() {
   async function foldersChanged() {
     queryClient.invalidateQueries({ queryKey: ["watchFolders"] });
     setPreview(null);
-    // The watcher follows the list; a failure to restart is not the user's
-    // problem here (the next launch picks the list up anyway).
-    api.restartWatcher().catch(() => {});
+    // The watcher follows the list. A restart that fails leaves the app
+    // WITHOUT a watcher until the next launch (the old one is stopped
+    // first), so the user hears about it.
+    try {
+      await api.restartWatcher();
+    } catch (e) {
+      addToast("warning", `Folder list saved, but watching could not restart: ${e}`);
+    }
   }
 
   async function handleAddFolder() {
-    const selected = await open({ directory: true, multiple: false });
-    if (!selected || typeof selected !== "string") return;
     try {
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected || typeof selected !== "string") return;
       await api.addWatchFolder(selected);
       await foldersChanged();
     } catch (e) {
@@ -61,9 +66,16 @@ export function WatchFolders() {
   }
 
   async function handleToggleAutoImport() {
+    // Until the stored value is known a click would flip from "unknown",
+    // writing "auto" over a saved "auto" instead of turning it off.
+    if (autoImportPending) return;
     const next = autoImport === "auto" ? "ask" : "auto";
-    await api.setSetting("watch_auto_import", next);
-    queryClient.invalidateQueries({ queryKey: ["setting", "watch_auto_import"] });
+    try {
+      await api.setSetting("watch_auto_import", next);
+      queryClient.invalidateQueries({ queryKey: ["setting", "watch_auto_import"] });
+    } catch (e) {
+      addToast("error", `Could not change auto-import: ${e}`);
+    }
   }
 
   async function handlePreview() {
@@ -164,7 +176,7 @@ export function WatchFolders() {
                 {preview.new_files > 0 && (
                   <button
                     onClick={handleScan}
-                    disabled={scanning}
+                    disabled={busy}
                     className="btn primary !px-2.5 !py-1 !text-xs"
                   >
                     {scanning ? "Importing…" : "Import All New"}
@@ -197,9 +209,11 @@ export function WatchFolders() {
         <div>
           <div className="sl">Auto-import new files</div>
           <div className="sd">
-            {autoImport === "auto"
-              ? "Files the watch folders receive are imported right away"
-              : "You are asked before files the watch folders receive are imported"}
+            {autoImportPending
+              ? "…"
+              : autoImport === "auto"
+                ? "Files the watch folders receive are imported right away"
+                : "You are asked before files the watch folders receive are imported"}
           </div>
         </div>
         <Toggle

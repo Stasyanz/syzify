@@ -90,8 +90,9 @@ pub fn remove_watch_folder(id: i64, state: State<AppState>) -> Result<(), String
 }
 
 /// The files a scan would import from the watch folders, plus the folders
-/// it could not read. A folder that is not there right now (the device is
-/// unplugged) is silently nothing; an empty one likewise.
+/// it could not read. A folder that is not a directory right now — the
+/// device is unplugged, or its metadata cannot even be read — is silently
+/// nothing; an empty one likewise.
 pub fn scan_targets(folders: &[String]) -> (Vec<String>, Vec<pipeline::FailedFile>) {
     let mut files = Vec::new();
     let mut failed = Vec::new();
@@ -115,6 +116,10 @@ pub fn scan_targets(folders: &[String]) -> (Vec<String>, Vec<pipeline::FailedFil
 pub async fn scan_watch_folders(app: AppHandle) -> Result<ScanResult, String> {
     let folders = {
         let state = app.state::<AppState>();
+        // Checked here as well as in import_paths: a scan that finds only
+        // unreadable folders returns before importing anything, and the
+        // answer on a locked vault must still be "unlock it", not a count.
+        crate::commands::import::ensure_vault_unlocked(&state)?;
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?
     };
@@ -344,104 +349,68 @@ pub struct ScanPreview {
     pub new_files: usize,
 }
 
+/// One file of a preview before the vault is asked about it: its hash, or
+/// nothing when it could not be read (then it counts as new — the import
+/// will say why it fails).
+pub type PreviewFile = (String, String, Option<String>);
+
+/// Walk the folders and hash every file: the slow half of a preview, done
+/// without the DB lock so an import or the UI is not held up by it.
+pub fn preview_files(folders: &[String]) -> Vec<(String, Vec<PreviewFile>)> {
+    folders
+        .iter()
+        .filter(|f| Path::new(f).is_dir())
+        .map(|folder| {
+            let files = pipeline::folder_files(Path::new(folder))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path_str| {
+                    let path = PathBuf::from(&path_str);
+                    let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let hash = fs::read(&path).ok().map(|bytes| hex::encode(Sha256::digest(&bytes)));
+                    (path_str, filename, hash)
+                })
+                .collect();
+            (folder.clone(), files)
+        })
+        .collect()
+}
+
+/// What "Import Now" would find: every file under the watch folders, marked
+/// new or already in the vault. Files are read and hashed off the runtime
+/// and without the DB lock; only the hash lookups take it.
 #[tauri::command]
-pub fn preview_watch_folders(state: State<AppState>) -> Result<ScanPreview, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-
-    let folders = db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?;
-
-    let mut preview = ScanPreview {
-        folders: Vec::new(),
-        total_files: 0,
-        new_files: 0,
+pub async fn preview_watch_folders(app: AppHandle) -> Result<ScanPreview, String> {
+    let folders = {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?
     };
+    let hashed = tokio::task::spawn_blocking(move || preview_files(&folders))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?;
 
-    for folder in &folders {
-        let dir = Path::new(folder);
-        if !dir.is_dir() {
-            continue;
-        }
-        let mut folder_preview = FolderPreview {
-            folder: folder.clone(),
-            files: Vec::new(),
-        };
-
-        for path_str in pipeline::folder_files(dir).unwrap_or_default() {
-            let path = PathBuf::from(&path_str);
-            let filename = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            // Check if file is new by computing hash
-            let is_new = match fs::read(&path) {
-                Ok(bytes) => {
-                    let hash = hex::encode(Sha256::digest(&bytes));
-                    !db::raw_files::hash_exists(&conn, &hash).unwrap_or(true)
-                }
-                Err(_) => true,
+    let state = app.state::<AppState>();
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut preview = ScanPreview { folders: Vec::new(), total_files: 0, new_files: 0 };
+    for (folder, files) in hashed {
+        let mut folder_preview = FolderPreview { folder, files: Vec::new() };
+        for (path, filename, hash) in files {
+            let is_new = match hash {
+                Some(h) => !db::raw_files::hash_exists(&conn, &h).unwrap_or(true),
+                None => true,
             };
-
             preview.total_files += 1;
             if is_new {
                 preview.new_files += 1;
             }
-
-            folder_preview.files.push(FilePreviewItem {
-                path: path_str,
-                filename,
-                is_new,
-            });
+            folder_preview.files.push(FilePreviewItem { path, filename, is_new });
         }
-
         if !folder_preview.files.is_empty() {
             preview.folders.push(folder_preview);
         }
     }
-
     Ok(preview)
-}
-
-#[derive(serde::Serialize)]
-pub struct SuggestedPath {
-    pub label: String,
-    pub path: String,
-    pub exists: bool,
-}
-
-#[tauri::command]
-pub fn get_suggested_watch_paths() -> Result<Vec<SuggestedPath>, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_default();
-
-    let downloads_path = format!("{}/Downloads", home);
-    let candidates = vec![
-        // Garmin
-        ("Garmin (USB)", "/Volumes/GARMIN/Garmin/Activity"),
-        ("Garmin (USB alt)", "/Volumes/GARMIN/GARMIN/Activity"),
-        // Wahoo
-        ("Wahoo ELEMNT", "/Volumes/ELEMNT/activities"),
-        // Coros
-        ("COROS (USB)", "/Volumes/COROS/Activity"),
-        // Suunto
-        ("Suunto (USB)", "/Volumes/SUUNTO/moves"),
-        // Polar
-        ("Polar (USB)", "/Volumes/POLAR/DATA"),
-        // Downloads
-        ("Downloads", downloads_path.as_str()),
-    ];
-
-    let mut suggestions: Vec<SuggestedPath> = Vec::new();
-    for (label, path) in candidates {
-        suggestions.push(SuggestedPath {
-            label: label.to_string(),
-            path: path.to_string(),
-            exists: Path::new(path).is_dir(),
-        });
-    }
-
-    Ok(suggestions)
 }
 
 // --- Encryption ---
@@ -1105,6 +1074,45 @@ mod tests {
         let (files, failed) = scan_targets(&folders);
         assert_eq!(files, vec![root.join("garmin/Activity/1.fit").to_str().unwrap().to_string()]);
         assert!(failed.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A folder the app cannot read is a named failure of the scan, so the
+    /// import summary counts it instead of pretending it was empty.
+    #[cfg(unix)]
+    #[test]
+    fn scan_targets_names_an_unreadable_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("syzify-scan-locked-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
+        let lock_holds = fs::read_dir(&root).is_err();
+        let (files, failed) = scan_targets(&[root.to_str().unwrap().to_string()]);
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        if lock_holds {
+            assert!(files.is_empty());
+            assert_eq!(failed.len(), 1);
+            assert_eq!(failed[0].path, root.to_str().unwrap());
+            assert!(failed[0].reason.starts_with("Failed to read folder"), "{}", failed[0].reason);
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A preview hashes what it can read and leaves the unreadable marked
+    /// as "no hash" (new), per folder, absent folders skipped.
+    #[test]
+    fn preview_files_hashes_per_folder() {
+        let root = std::env::temp_dir().join(format!("syzify-preview-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("w")).unwrap();
+        fs::write(root.join("w/ride.fit"), b"hello").unwrap();
+        let folders = vec![root.join("w").to_str().unwrap().to_string(), root.join("gone").to_str().unwrap().to_string()];
+        let out = preview_files(&folders);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, folders[0]);
+        let (path, name, hash) = &out[0].1[0];
+        assert!(path.ends_with("w/ride.fit"));
+        assert_eq!(name, "ride.fit");
+        assert_eq!(hash.as_deref(), Some(&*hex::encode(Sha256::digest(b"hello"))));
         fs::remove_dir_all(&root).unwrap();
     }
 

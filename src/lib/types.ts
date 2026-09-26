@@ -396,12 +396,6 @@ export interface ScanPreview {
   new_files: number;
 }
 
-export interface SuggestedPath {
-  label: string;
-  path: string;
-  exists: boolean;
-}
-
 // Encryption
 export interface EncryptionScopes {
   activities: boolean;

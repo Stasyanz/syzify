@@ -79,11 +79,34 @@ describe("WatchFolders", () => {
     await waitFor(() => expect(api.restartWatcher).toHaveBeenCalledTimes(1));
   });
 
-  it("flips auto-import and re-reads the setting", async () => {
-    vi.mocked(api.setSetting).mockResolvedValue(undefined);
-    vi.mocked(api.getSetting).mockResolvedValueOnce("ask").mockResolvedValue("auto");
+  it("warns when the watcher cannot restart after a folder change, and when a setting write fails", async () => {
+    vi.mocked(api.removeWatchFolder).mockResolvedValue(undefined);
+    vi.mocked(api.restartWatcher).mockRejectedValue(new Error("inotify limit"));
+    vi.mocked(api.setSetting).mockRejectedValue(new Error("db closed"));
     renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    fireEvent.click(screen.getByLabelText(`Remove ${garmin.path}`));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("warning", expect.stringMatching(/could not restart.*inotify limit/)),
+    );
+    fireEvent.click(screen.getByLabelText("Auto-import new files"));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", expect.stringMatching(/auto-import.*db closed/)),
+    );
+  });
+
+  it("flips auto-import and re-reads the setting, ignoring a click before the value is known", async () => {
+    vi.mocked(api.setSetting).mockResolvedValue(undefined);
+    let settle!: (v: string) => void;
+    vi.mocked(api.getSetting).mockReturnValueOnce(new Promise((r) => (settle = r))).mockResolvedValue("auto");
+    renderIt();
+    // Still loading: the row says so and a click writes nothing.
     await waitFor(() => expect(screen.getByLabelText("Auto-import new files")).toBeTruthy());
+    expect(screen.getByText("…")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Auto-import new files"));
+    expect(api.setSetting).not.toHaveBeenCalled();
+    settle("ask");
+    await waitFor(() => expect(screen.getByText(/You are asked before/)).toBeTruthy());
     fireEvent.click(screen.getByLabelText("Auto-import new files"));
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith("watch_auto_import", "auto"));
     // The invalidation refetches; the row follows the stored value.
@@ -108,6 +131,8 @@ describe("WatchFolders", () => {
     const imported = { imported: 1, skipped: 1, failed: [], monitoring_files: 0, monitoring_days: 0 } as unknown as ImportResult;
     vi.mocked(api.scanWatchFolders).mockResolvedValue({ new_files: ["/a/1.fit", "/a/2.fit"], import_result: imported });
     renderIt();
+    // A cached library, so the invalidation after the import is observable.
+    qc.setQueryData(["activities"], []);
     await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
     await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
@@ -123,7 +148,7 @@ describe("WatchFolders", () => {
     );
     // The preview is stale once an import ran.
     expect(screen.queryByTestId("scan-preview")).toBeNull();
-    expect(qc.getQueryState(["activities"])?.isInvalidated ?? true).toBe(true);
+    expect(qc.getQueryState(["activities"])?.isInvalidated).toBe(true);
   });
 
   it("says so when a scan finds nothing, and keeps Preview / Import Now off without folders", async () => {
