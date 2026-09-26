@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{Cursor, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
@@ -197,7 +197,7 @@ fn expand_paths_with(
 /// and five levels below — a sync client's `Apps/Vendor/2026/09/ride.fit`
 /// still counts. Deeper than a drop's [`FOLDER_MAX_DEPTH`], which doubles
 /// as a "this is not a device folder" heuristic. The live watcher applies
-/// the same limit ([`within_walk_depth`]), so what it reports and what a
+/// the same limit ([`too_deep_for_walk`]), so what it reports and what a
 /// scan finds are the same set of files.
 pub const WATCH_FOLDER_MAX_DEPTH: usize = 6;
 
@@ -209,14 +209,20 @@ pub fn folder_files(dir: &Path) -> Result<Vec<String>, String> {
     walk_folder(dir, WATCH_FOLDER_MAX_DEPTH, FOLDER_MAX_FILES, FOLDER_MAX_ENTRIES)
 }
 
-/// Whether `path` lies within `max_depth` levels of `root` the way the
-/// folder walk counts them: a file directly in the root is one component
-/// below it, a file in a folder at the deepest visited level is
-/// `max_depth` components below. Anything outside `root` is not within.
-pub fn within_walk_depth(root: &Path, path: &Path, max_depth: usize) -> bool {
-    path.strip_prefix(root)
-        .map(|rel| rel.components().count() <= max_depth)
-        .unwrap_or(false)
+/// Whether `path` is under one of `roots` AND deeper than the folder walk
+/// looks (`max_depth` levels, counted the walk's way: a file directly in
+/// the root is one component below it, a file at the deepest visited
+/// level is `max_depth` components below). Fails OPEN: a path that
+/// matches no root — a spelling the caller did not normalise, a symlink
+/// resolved one way and not the other — is not "too deep", because an
+/// extra file reported by the watcher is a harmless import while a
+/// dropped one is silent data loss. Callers compare like with like:
+/// canonicalise both sides.
+pub fn too_deep_for_walk(roots: &[PathBuf], path: &Path, max_depth: usize) -> bool {
+    roots
+        .iter()
+        .find_map(|root| path.strip_prefix(root).ok())
+        .is_some_and(|rel| rel.components().count() > max_depth)
 }
 
 fn walk_folder(
@@ -254,7 +260,11 @@ impl Walk {
             // A subfolder the app may not read (a volume's root-owned
             // `.Trashes`, a TCC-guarded folder, a dead mount point) is
             // skipped: the files next to it are still the user's files.
-            Err(_) => return Ok(()),
+            // Logged, so a folder that holds every ride leaves a trace.
+            Err(e) => {
+                eprintln!("Skipping unreadable subfolder {}: {}", dir.display(), e);
+                return Ok(());
+            }
         };
         for entry in entries.flatten() {
             self.entries += 1;
@@ -1804,16 +1814,21 @@ mod tests {
     }
 
     /// The watcher and the scan agree on what is inside a watch folder:
-    /// the depth test is the walk's own counting.
+    /// the depth test is the walk's own counting — and a path the roots do
+    /// not account for is never dropped.
     #[test]
-    fn within_walk_depth_matches_the_walk() {
-        let root = Path::new("/w");
+    fn too_deep_for_walk_matches_the_walk_and_fails_open() {
+        let roots = vec![PathBuf::from("/w"), PathBuf::from("/other")];
         let d = WATCH_FOLDER_MAX_DEPTH;
-        assert!(within_walk_depth(root, Path::new("/w/ride.fit"), d));
-        assert!(within_walk_depth(root, Path::new("/w/a/b/c/d/e/deep.fit"), d));
-        assert!(!within_walk_depth(root, Path::new("/w/a/b/c/d/e/f/too-deep.fit"), d));
-        assert!(!within_walk_depth(root, Path::new("/elsewhere/ride.fit"), d));
-        assert!(!within_walk_depth(root, Path::new("/w/ride.fit"), 0));
+        assert!(!too_deep_for_walk(&roots, Path::new("/w/ride.fit"), d));
+        assert!(!too_deep_for_walk(&roots, Path::new("/w/a/b/c/d/e/deep.fit"), d));
+        assert!(too_deep_for_walk(&roots, Path::new("/w/a/b/c/d/e/f/too-deep.fit"), d));
+        assert!(too_deep_for_walk(&roots, Path::new("/other/a/b/c/d/e/f/too-deep.fit"), d));
+        assert!(too_deep_for_walk(&roots, Path::new("/w/ride.fit"), 0));
+        // Not under any root as spelled (a symlink resolved on one side, a
+        // case difference): kept, never silently lost.
+        assert!(!too_deep_for_walk(&roots, Path::new("/private/w/a/b/c/d/e/f/g/deep.fit"), d));
+        assert!(!too_deep_for_walk(&roots, Path::new("/W/a/b/c/d/e/f/g/deep.fit"), d));
     }
 
     /// A subfolder the app cannot read does not take the folder's other

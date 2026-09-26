@@ -1113,6 +1113,20 @@ mod tests {
         assert!(path.ends_with("w/ride.fit"));
         assert_eq!(name, "ride.fit");
         assert_eq!(hash.as_deref(), Some(&*hex::encode(Sha256::digest(b"hello"))));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = root.join("w/locked.fit");
+            fs::write(&locked, b"secret").unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+            let lock_holds = fs::read(&locked).is_err();
+            let out = preview_files(&folders[..1]);
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+            if lock_holds {
+                let unreadable = out[0].1.iter().find(|(_, n, _)| n == "locked.fit").unwrap();
+                assert!(unreadable.2.is_none());
+            }
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 

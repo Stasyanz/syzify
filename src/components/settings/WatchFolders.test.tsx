@@ -140,6 +140,12 @@ describe("WatchFolders", () => {
     expect(screen.getByText("1 new")).toBeTruthy();
     expect(screen.getAllByText("IMPORTED")).toHaveLength(1);
     expect(screen.getAllByText("NEW")).toHaveLength(1);
+    // The list is a bounded, scrolling box; the panel can be dismissed.
+    expect(screen.getByTestId("scan-preview").querySelector(".overflow-y-auto")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Close preview"));
+    expect(screen.queryByTestId("scan-preview")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Import All New" }));
     await waitFor(() => expect(api.scanWatchFolders).toHaveBeenCalledTimes(1));

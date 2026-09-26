@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, RefreshCw, Eye, Trash2 } from "lucide-react";
+import { FolderOpen, RefreshCw, Eye, Trash2, X } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type { ScanPreview } from "../../lib/types";
 import { useToastStore } from "../../stores/toastStore";
@@ -168,38 +168,52 @@ export function WatchFolders() {
 
           {preview && (
             <div className="bg-card-2 rounded-[9px] p-3 space-y-2" data-testid="scan-preview">
-              <div className="flex items-center justify-between text-xs text-muted">
+              <div className="flex items-center justify-between gap-2 text-xs text-muted">
                 <span>
                   {preview.total_files} file{preview.total_files !== 1 ? "s" : ""} found,{" "}
                   <strong style={{ color: "var(--good)" }}>{preview.new_files} new</strong>
                 </span>
-                {preview.new_files > 0 && (
+                <div className="flex items-center gap-2">
+                  {preview.new_files > 0 && (
+                    <button
+                      onClick={handleScan}
+                      disabled={busy}
+                      className="btn primary !px-2.5 !py-1 !text-xs"
+                    >
+                      {scanning ? "Importing…" : "Import All New"}
+                    </button>
+                  )}
                   <button
-                    onClick={handleScan}
-                    disabled={busy}
-                    className="btn primary !px-2.5 !py-1 !text-xs"
+                    onClick={() => setPreview(null)}
+                    className="iconbtn"
+                    data-tip="Close preview"
+                    aria-label="Close preview"
                   >
-                    {scanning ? "Importing…" : "Import All New"}
+                    <X size={14} />
                   </button>
-                )}
-              </div>
-              {preview.folders.map((fp) => (
-                <div key={fp.folder} className="space-y-1">
-                  <p className="set-path !flex-none">{fp.folder}</p>
-                  {fp.files.map((f) => (
-                    <div key={f.path} className="flex items-center gap-2 pl-3 text-xs">
-                      <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          f.is_new ? "bg-accent-soft text-accent-2" : "bg-card text-muted"
-                        }`}
-                      >
-                        {f.is_new ? "NEW" : "IMPORTED"}
-                      </span>
-                      <span className="text-muted truncate">{f.filename}</span>
-                    </div>
-                  ))}
                 </div>
-              ))}
+              </div>
+              {/* A device folder holds hundreds of files: the list scrolls
+                  inside a bounded box instead of stretching the page. */}
+              <div className="max-h-56 overflow-y-auto scroll-themed space-y-2 pr-1">
+                {preview.folders.map((fp) => (
+                  <div key={fp.folder} className="space-y-1">
+                    <p className="set-path !flex-none">{fp.folder}</p>
+                    {fp.files.map((f) => (
+                      <div key={f.path} className="flex items-center gap-2 pl-3 text-xs">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            f.is_new ? "bg-accent-soft text-accent-2" : "bg-card text-muted"
+                          }`}
+                        >
+                          {f.is_new ? "NEW" : "IMPORTED"}
+                        </span>
+                        <span className="text-muted truncate">{f.filename}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

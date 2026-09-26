@@ -76,7 +76,13 @@ pub fn start_watching(
     let recently_flushed_ev = Arc::clone(&recently_flushed);
     // notify recurses without limit; the scan does not. Report only what a
     // scan would find, so the two never disagree about a file's existence.
-    let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    // Roots are canonicalised once and the event path per event, so a
+    // symlinked or differently-cased spelling of a root still matches;
+    // the depth test fails open for anything that still does not.
+    let roots: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p)))
+        .collect();
 
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         if let Ok(event) = res {
@@ -87,13 +93,11 @@ pub fn start_watching(
                     for path in &event.paths {
                         if path.is_file()
                             && crate::import::pipeline::is_importable_file(path)
-                            && roots.iter().any(|r| {
-                                crate::import::pipeline::within_walk_depth(
-                                    r,
-                                    path,
-                                    crate::import::pipeline::WATCH_FOLDER_MAX_DEPTH,
-                                )
-                            })
+                            && !crate::import::pipeline::too_deep_for_walk(
+                                &roots,
+                                &std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+                                crate::import::pipeline::WATCH_FOLDER_MAX_DEPTH,
+                            )
                         {
                             if let Some(s) = path.to_str() {
                                 // Skip files that were recently flushed
