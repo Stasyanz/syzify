@@ -6,23 +6,7 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
-### Changed
-- Settings is split into tabs — General, Vault, Plugins, About — instead
-  of one long column (#151). The plugin registry now lives in the Plugins
-  tab (the old `/plugins` page redirects there); the license, version,
-  update check and feedback links are in About. The open tab is part of
-  the URL (`/settings?tab=vault`).
-
-### Fixed
-- The recording device of a FIT activity is read from the file's creator
-  (`file_id`, completed by the creator's `device_info`) instead of the
-  first `device_info` message, which can be a paired sensor — a fenix
-  ride whose file listed a peripheral first was filed as "Garmin 1620"
-  and showed a bare "Garmin" chip (#144). This also means a file
-  re-created by an app (Zwift, TrainerRoad) is credited to the app, as
-  its `file_id` says, not to the watch it read from. Existing activities
-  are corrected once at startup from their stored FIT files, encrypted
-  vaults included.
+## [0.8.0] - 2026-09-26
 
 ### Added
 - Watch folders are back, in Settings → Vault (#152): folders scanned
@@ -68,6 +52,24 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   timer time and rebuilds the power zones from the track — the file itself
   stays as recorded. A Garmin Edge still at an old FTP no longer leaves a
   ride with the wrong load for good.
+
+### Fixed
+- The recording device of a FIT activity is read from the file's creator
+  (`file_id`, completed by the creator's `device_info`) instead of the
+  first `device_info` message, which can be a paired sensor — a fenix
+  ride whose file listed a peripheral first was filed as "Garmin 1620"
+  and showed a bare "Garmin" chip (#144). This also means a file
+  re-created by an app (Zwift, TrainerRoad) is credited to the app, as
+  its `file_id` says, not to the watch it read from. Existing activities
+  are corrected once at startup from their stored FIT files, encrypted
+  vaults included.
+
+### Changed
+- Settings is split into tabs — General, Vault, Plugins, About — instead
+  of one long column (#151). The plugin registry now lives in the Plugins
+  tab (the old `/plugins` page redirects there); the license, version,
+  update check and feedback links are in About. The open tab is part of
+  the URL (`/settings?tab=vault`).
 
 ## [0.7.0] - 2026-09-15
 
