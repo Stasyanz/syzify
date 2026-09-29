@@ -257,6 +257,11 @@ describe("SettingsPage tabs", () => {
     );
   });
 
+  it("reserves the scrollbar gutter on every tab, so a tall tab is not narrower", () => {
+    renderAt("/settings");
+    expect(screen.getByTestId("settings-scroll").className).toContain("overflow-y-scroll");
+  });
+
   it("treats an unknown tab as General", () => {
     renderAt("/settings?tab=nope");
     expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");

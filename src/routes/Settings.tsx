@@ -348,7 +348,10 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto scroll-themed">
+    // overflow-y-scroll, not auto: the themed scrollbar takes 10 px of
+    // layout, and only the tallest tab would get it — every tab reserves
+    // the gutter, so switching tabs never shifts the cards.
+    <div className="h-full overflow-y-scroll scroll-themed" data-testid="settings-scroll">
       <div className="max-w-[760px] mx-auto p-6 flex flex-col gap-5">
         {/* The tab strip is the page's heading: the tab names say where the
             user is, so no title and no card headings repeating them. */}

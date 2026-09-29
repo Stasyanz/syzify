@@ -6,6 +6,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- The Vault tab of Settings was a few pixels narrower than the other
+  tabs: it is the only one tall enough to scroll, and the scrollbar took
+  its width from the cards. Every tab now reserves the scrollbar's
+  space (#155).
+
 ## [0.8.0] - 2026-09-26
 
 ### Added
