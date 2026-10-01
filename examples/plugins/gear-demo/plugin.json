@@ -1,0 +1,11 @@
+{
+  "id": "com.syzify.example.gear-demo",
+  "name": "Gear Demo (example)",
+  "version": "0.1.0",
+  "minAppVersion": "0.9.0",
+  "author": "Syzify",
+  "description": "Reference WASM plugin: lists the Garage through host_query and puts an activity on an item through host_set_activity_gear — what a sync plugin does with the gear a service assigned.",
+  "entry": "plugin.wasm",
+  "contributes": ["dashboard.widget"],
+  "permissions": ["read:activities", "gear:write"]
+}

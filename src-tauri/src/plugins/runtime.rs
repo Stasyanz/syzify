@@ -64,9 +64,11 @@ impl<R: Runtime> VaultAccess for AppVault<R> {
 }
 
 /// Event the frontend refreshes its activity-derived queries on: a plugin
-/// imported files during a contribution call. Emitted by the runtime (the
-/// host layer has no `AppHandle`), whether the call then returned a view or
-/// trapped — the files are in the vault either way.
+/// changed the vault during a contribution call — imported files, or put
+/// activities on gear (`gear_writes`, #169; the name stays for the
+/// listeners' sake). Emitted by the runtime (the host layer has no
+/// `AppHandle`), whether the call then returned a view or trapped — the
+/// files and the gear writes are in the vault either way.
 pub const PLUGINS_IMPORTED_EVENT: &str = "plugins:imported";
 
 /// One plugin invocation at a time. `render_plugin_view` runs off the main
@@ -132,6 +134,7 @@ pub fn run_contribution<R: Runtime>(
         vault: Some(Arc::new(AppVault(app.clone()))),
         imported: 0,
         imported_activities: 0,
+        gear_writes: 0,
         monitoring: MonitoringBatch::default(),
         // Set before the sandbox is built, so it ends no later than the
         // epoch deadline: no request outlives its invocation.
@@ -155,6 +158,7 @@ pub fn run_contribution<R: Runtime>(
         .with_function("host_kv_set", [PTR], [PTR], ud.clone(), host::host_kv_set)
         .with_function("host_kv_get", [PTR], [PTR], ud.clone(), host::host_kv_get)
         .with_function("host_import_file", [PTR, PTR], [PTR], ud.clone(), host::host_import_file)
+        .with_function("host_set_activity_gear", [PTR], [PTR], ud.clone(), host::host_set_activity_gear)
         .with_function("host_http", [PTR, PTR], [PTR], ud.clone(), host::host_http)
         .with_function("host_http_meta", [], [PTR], ud.clone(), host::host_http_meta)
         .with_function("host_secret_set", [PTR], [PTR], ud.clone(), host::host_secret_set)
@@ -183,10 +187,12 @@ pub fn run_contribution<R: Runtime>(
     // views must follow. Recompute first, then the event — the frontend
     // refetches on it and must not see the days half done.
     let done = finish_invocation(&ud);
-    if done.imported > 0 {
+    // A gear write without an import changed what the Garage, the
+    // library and the activity page show: the same event, the same refresh.
+    if done.imported > 0 || done.gear_writes > 0 {
         let _ = app.emit(
             PLUGINS_IMPORTED_EVENT,
-            serde_json::json!({ "imported": done.imported, "monitoring_days": done.monitoring_days }),
+            serde_json::json!({ "imported": done.imported, "monitoring_days": done.monitoring_days, "gear_writes": done.gear_writes }),
         );
     }
     // Newly imported activities get their location names like a drop
@@ -209,6 +215,8 @@ struct Finished {
     activities: usize,
     /// Monitor days recomputed at the end.
     monitoring_days: usize,
+    /// Activities put on gear or taken off it (`host_set_activity_gear`).
+    gear_writes: usize,
 }
 
 /// Close the invocation behind `ud`: recompute the Monitor days its
@@ -241,7 +249,7 @@ fn finish_invocation(ud: &UserData<PluginCtx>) -> Finished {
             Err(e) => eprintln!("plugin {}: monitoring recompute failed: {e}", ctx.plugin_id),
         }
     }
-    Finished { imported: ctx.imported, activities: ctx.imported_activities, monitoring_days }
+    Finished { imported: ctx.imported, activities: ctx.imported_activities, monitoring_days, gear_writes: ctx.gear_writes }
 }
 
 #[cfg(test)]
@@ -532,6 +540,7 @@ mod tests {
                 vault: Some(state.clone()),
                 imported: 0,
                 imported_activities: 0,
+                gear_writes: 0,
                 monitoring: MonitoringBatch::default(),
                 net: NetState::default(),
             };
@@ -812,6 +821,165 @@ mod tests {
 
     // End-to-end import: the paste-import example wasm calls the REAL
     // host_import_file (two-pointer ABI) against a real vault + db.
+    fn gear_demo_wasm() -> &'static str {
+        let wasm = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../examples/plugins/gear-demo/plugin.wasm"
+        );
+        assert!(
+            std::path::Path::new(wasm).exists(),
+            "missing {wasm}; build it: cargo build --release --target wasm32-unknown-unknown in examples/plugins/gear-demo"
+        );
+        wasm
+    }
+
+    /// The gear host surface end to end (#169): the fixture reads the
+    /// Garage through `host_query gear`, puts an activity on an item by
+    /// name through `host_set_activity_gear`, writes nothing on a name the
+    /// Garage lacks, takes the activity off on an empty name, and a refusal
+    /// (a multisport whole) traps in the user's words. A write without an
+    /// import still emits the refresh event; a miss emits none.
+    #[test]
+    fn run_contribution_reads_and_writes_gear_through_the_live_app() {
+        use super::{run_contribution, PLUGINS_IMPORTED_EVENT};
+        use crate::models::gear::{GearInput, GearKind};
+        use crate::models::plugin::Plugin;
+        use crate::plugins::view::ViewSpec;
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+        use tauri::{Listener, Manager};
+
+        let plugin_id = "com.syzify.example.gear-demo";
+        let vault = std::env::temp_dir().join(format!("syz_runtime_gear_{}", uuid::Uuid::new_v4()));
+        let plugin_dir = vault.join("plugins").join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::copy(gear_demo_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
+
+        let state = AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.clone(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        };
+        let road_id = {
+            let conn = state.db.lock().unwrap();
+            crate::db::plugins::upsert_plugin(
+                &conn,
+                &Plugin {
+                    id: plugin_id.to_string(),
+                    name: "Gear Demo".to_string(),
+                    version: "0.1.0".to_string(),
+                    author: None,
+                    description: None,
+                    enabled: true,
+                    signed: false,
+                    manifest: format!(
+                        r#"{{"id":"{plugin_id}","name":"Gear Demo","version":"0.1.0","entry":"plugin.wasm","contributes":["dashboard.widget"],"permissions":["read:activities","gear:write"]}}"#
+                    ),
+                    source: format!("plugins/{plugin_id}"),
+                    installed_at: String::new(),
+                    updated_at: String::new(),
+                },
+            )
+            .unwrap();
+            crate::db::plugins::set_enabled(&conn, plugin_id, true).unwrap();
+            let road = crate::db::gear::insert(
+                &conn,
+                &GearInput {
+                    kind: GearKind::Bike,
+                    name: "Road".into(),
+                    brand: None,
+                    model: None,
+                    purchased_at: None,
+                    initial_distance_m: 0.0,
+                    distance_limit_m: None,
+                    notes: None,
+                    default_for: vec![],
+                    rules: vec![],
+                },
+            )
+            .unwrap();
+            for (id, parent) in [("a1", None), ("container", None), ("leg", Some("container"))] {
+                conn.execute(
+                    "INSERT INTO activity (id, start_time, sport_type, distance_m, parent_id) VALUES (?1, '2026-09-01T08:00:00+03:00', 'ride', 42000, ?2)",
+                    rusqlite::params![id, parent],
+                )
+                .unwrap();
+            }
+            road.id
+        };
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let handle = app.handle().clone();
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        handle.listen(PLUGINS_IMPORTED_EVENT, move |e| sink.lock().unwrap().push(e.payload().to_string()));
+        let assign = |activity: &str, gear: &str| {
+            serde_json::json!({ "action": "assign", "values": { "activity_id": activity, "gear": gear } }).to_string()
+        };
+        // The answer is a valid ViewSpec; its texts and stats, parsed.
+        let view = |out: &str| -> (Vec<String>, Vec<(String, String)>) {
+            let spec: ViewSpec = serde_json::from_str(out).expect("valid ViewSpec JSON");
+            spec.validate().expect("valid ViewSpec");
+            let v: serde_json::Value = serde_json::from_str(out).unwrap();
+            let els = v["elements"].as_array().unwrap();
+            let texts = els.iter().filter_map(|e| e["text"].as_str().map(str::to_string)).collect();
+            let stats = els
+                .iter()
+                .filter(|e| e["type"] == "stat_grid")
+                .flat_map(|e| e["stats"].as_array().unwrap().iter())
+                .map(|st| (st["label"].as_str().unwrap().to_string(), st["value"].as_str().unwrap().to_string()))
+                .collect();
+            (texts, stats)
+        };
+        let gear_of = |id: &str| {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            crate::db::gear::gear_of_activity(&conn, id).unwrap()
+        };
+
+        // The registry, read through the host; no write, no event.
+        let (texts, _) = view(&run_contribution(&handle, plugin_id, "dashboard_widget", "{}").unwrap());
+        assert!(texts.contains(&"1 item(s) in the Garage.".to_string()), "{texts:?}");
+        assert!(texts.iter().any(|t| t.starts_with("Road (bike) · 0.0 km · 0 activities")), "{texts:?}");
+        assert!(events.lock().unwrap().is_empty());
+
+        // Put a1 on Road by name: stored, and the refresh event fires
+        // although nothing was imported.
+        let (_, stats) = view(&run_contribution(&handle, plugin_id, "dashboard_widget", &assign("a1", "Road")).unwrap());
+        assert!(stats.contains(&("Gear".to_string(), road_id.clone())), "{stats:?}");
+        assert_eq!(gear_of("a1").as_deref(), Some(road_id.as_str()));
+        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"gear_writes":1,"imported":0,"monitoring_days":0}"#]);
+
+        // A name the Garage lacks: a notice, no write, no event.
+        let (texts, stats) = view(&run_contribution(&handle, plugin_id, "dashboard_widget", &assign("a1", "Canyon")).unwrap());
+        assert!(texts.iter().any(|t| t.contains("No gear named \"Canyon\"")), "{texts:?}");
+        assert!(stats.is_empty());
+        assert_eq!(gear_of("a1").as_deref(), Some(road_id.as_str()), "a miss erases nothing");
+        assert_eq!(events.lock().unwrap().len(), 1);
+
+        // An explicitly empty name takes it off.
+        let (_, stats) = view(&run_contribution(&handle, plugin_id, "dashboard_widget", &assign("a1", "")).unwrap());
+        assert!(stats.contains(&("Gear".to_string(), "none".to_string())), "{stats:?}");
+        assert_eq!(gear_of("a1"), None);
+        assert_eq!(events.lock().unwrap().len(), 2);
+
+        // A refusal traps in the user's words, the activity is untouched, no event.
+        let err = run_contribution(&handle, plugin_id, "dashboard_widget", &assign("container", "Road")).unwrap_err();
+        assert!(err.contains("multisport"), "{err}");
+        assert_eq!(gear_of("container"), None);
+        assert_eq!(events.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&vault);
+    }
+
     fn paste_import_wasm() -> &'static str {
         let wasm = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -859,6 +1027,7 @@ mod tests {
                 vault: Some(state.clone()),
                 imported: 0,
                 imported_activities: 0,
+                gear_writes: 0,
                 monitoring: MonitoringBatch::default(),
                 net: NetState::default(),
             };
@@ -956,6 +1125,7 @@ mod tests {
             vault: Some(state.clone()),
             imported: 0,
             imported_activities: 0,
+            gear_writes: 0,
             monitoring: MonitoringBatch::default(),
             net: NetState::default(),
         };
@@ -981,7 +1151,7 @@ mod tests {
 
         let ud = host::user_data(ctx);
         let done = super::finish_invocation(&ud);
-        assert_eq!(done, super::Finished { imported: 3, activities: 0, monitoring_days: 2 });
+        assert_eq!(done, super::Finished { imported: 3, activities: 0, monitoring_days: 2, gear_writes: 0 });
         assert_eq!(computed(&state), 2);
         // Finishing again has nothing left to do.
         assert_eq!(super::finish_invocation(&ud).monitoring_days, 0);
@@ -1004,7 +1174,7 @@ mod tests {
         ctx.monitoring.days.insert(20_700);
         ctx.imported = 2;
         let ud = host::user_data(ctx);
-        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 2, activities: 0, monitoring_days: 0 });
+        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 2, activities: 0, monitoring_days: 0, gear_writes: 0 });
 
         // Poison the context's lock from another thread.
         let mut ctx = PluginCtx::new(Arc::new(Mutex::new(crate::db::test_db())), "com.test", vec![]);
@@ -1018,7 +1188,7 @@ mod tests {
             panic!("host call panicked mid-way");
         })
         .join();
-        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 3, activities: 1, monitoring_days: 0 });
+        assert_eq!(super::finish_invocation(&ud), super::Finished { imported: 3, activities: 1, monitoring_days: 0, gear_writes: 0 });
     }
 
     /// The whole runtime path on a real (windowless) Tauri app: the plugin
@@ -1096,7 +1266,7 @@ mod tests {
         // An import: the activity lands, the event says one file.
         let out = run_contribution(&handle, plugin_id, "dashboard_widget", &input("run.gpx")).unwrap();
         assert!(out.contains(r#""label":"Imported","value":"1""#), "{out}");
-        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"imported":1,"monitoring_days":0}"#]);
+        assert_eq!(events.lock().unwrap().as_slice(), [r#"{"gear_writes":0,"imported":1,"monitoring_days":0}"#]);
 
         // A trap after nothing imported: an error, no event. The message
         // is the host function's own (user-facing text): the vault's path

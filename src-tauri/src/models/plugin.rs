@@ -166,6 +166,10 @@ pub enum Permission {
     /// (`host_import_file`) — what a sync plugin needs to land activities
     /// and monitoring it fetched.
     ImportFiles,
+    /// Put activities on gear (`host_set_activity_gear`) — a sync plugin
+    /// carrying the gear a service assigned over. Reading the registry is
+    /// `read:activities` (`host_query gear`): gear is activity metadata.
+    GearWrite,
     /// Network access to a specific host.
     Net { host: String },
     Unknown(String),
@@ -186,6 +190,7 @@ impl Permission {
             "data:own" => Permission::DataOwn,
             "data:secret" => Permission::DataSecret,
             "import:files" => Permission::ImportFiles,
+            "gear:write" => Permission::GearWrite,
             other => Permission::Unknown(other.to_string()),
         }
     }
@@ -268,6 +273,7 @@ mod tests {
         assert_eq!(Permission::parse("data:own"), Permission::DataOwn);
         assert_eq!(Permission::parse("data:secret"), Permission::DataSecret);
         assert_eq!(Permission::parse("import:files"), Permission::ImportFiles);
+        assert_eq!(Permission::parse("gear:write"), Permission::GearWrite);
         assert_eq!(
             Permission::parse("net:host=api.open-meteo.com"),
             Permission::Net { host: "api.open-meteo.com".to_string() }

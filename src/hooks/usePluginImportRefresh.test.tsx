@@ -48,14 +48,19 @@ function mountHook() {
 }
 
 describe("usePluginImportRefresh", () => {
-  it("invalidates the activity-derived queries on the plugin import event", async () => {
+  it("invalidates the activity-derived queries and the open activity pages on the plugin event", async () => {
     const { client, unmount } = mountHook();
+    // An open activity page: a plugin may have put it on gear (#169).
+    client.setQueryData(["activity", "a-1"], { id: "a-1" });
+    client.setQueryData(["setting", "map_layer"], "osm");
     await waitFor(() => expect(listeners.has(PLUGINS_IMPORTED_EVENT)).toBe(true));
     expect(invalidateMock).not.toHaveBeenCalled();
 
     listeners.get(PLUGINS_IMPORTED_EVENT)!();
     expect(invalidateMock).toHaveBeenCalledTimes(1);
     expect(invalidateMock).toHaveBeenCalledWith(client);
+    expect(client.getQueryState(["activity", "a-1"])!.isInvalidated).toBe(true);
+    expect(client.getQueryState(["setting", "map_layer"])!.isInvalidated).toBe(false);
 
     unmount();
     expect(unlisten).toHaveBeenCalledTimes(1);

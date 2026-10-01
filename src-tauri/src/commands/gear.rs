@@ -75,26 +75,9 @@ pub(crate) fn set_activity_gear_core(
     gear_id: Option<&str>,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    if db::activities::get_activity_by_id(&conn, activity_id)
+    db::gear::assign(&conn, activity_id, gear_id)
         .map_err(|e| e.to_string())?
-        .is_none()
-    {
-        return Err(format!("Activity not found: {activity_id}"));
-    }
-    if let Some(gear) = gear_id {
-        if db::multisport_legs::is_multisport(&conn, activity_id).map_err(|e| e.to_string())? {
-            return Err("A multisport activity spans several sports and carries no gear; its legs do".into());
-        }
-        match db::gear::is_retired(&conn, gear).map_err(|e| e.to_string())? {
-            None => return Err(format!("Gear not found: {gear}")),
-            Some(true) if db::gear::gear_of_activity(&conn, activity_id).map_err(|e| e.to_string())?.as_deref() != Some(gear) => {
-                return Err("Bring the gear back before putting an activity on it".into());
-            }
-            _ => {}
-        }
-    }
-    db::gear::set_activity_gear(&conn, activity_id, gear_id).map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|refusal| refusal.to_string())
 }
 
 #[tauri::command]

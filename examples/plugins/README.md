@@ -97,6 +97,13 @@ Capability-gated; the user grants them by enabling the plugin.
   dedup answer (`skipped`) tells the plugin whether an identical file, or an activity with
   the same start/sport/distance/duration, is already in the vault — a narrow read the
   permission implies without `read:activities`
+- `gear:write` — change the gear of **any** activity, not only the plugin's own
+  imports (`host_set_activity_gear`: put it on an item, move it, or take it off) —
+  what a sync plugin does with the gear a service assigned; the Plugins screen says
+  so on the card. Reading the Garage is `host_query {"kind":"gear"}` under
+  `read:activities`: gear is activity metadata (every activity row carries its
+  `gear_id`). The published view is the item's id, kind, name, retirement, default
+  sports, totals and odometer — not its notes, purchase details or rules
 - `net:host=<hostname>` — network access to one host through `host_http`, on the
   first request and on every redirect hop. **Every host is disclosed**
   on the Plugins screen and counts as a network endpoint (privacy policy, PRD §16.2).
@@ -150,12 +157,23 @@ before the table:
 
 | Host function | Needs | Purpose |
 |---|---|---|
-| `host_query` | `read:activities` / `read:dashboard` | `{"kind":"activities"\|"activity"\|"dashboard", …}` → JSON (`activity` takes an `id`) |
+| `host_query` | `read:activities` / `read:dashboard` | `{"kind":"activities"\|"activity"\|"dashboard"\|"gear", …}` → JSON (`activity` takes an `id`; `gear` is the Garage, one object per item: `{id, kind, name, retired_at, default_for: [sport], stats: {activities, distance_m, duration_s, elev_gain_m, last_used}, odometer_m, distance_limit_m}` — `stats` is what the vault's activities add up to, `odometer_m` adds the mileage the item had before Syzify, as the Garage shows it; names are not unique; activity rows carry `gear_id`) |
+| `host_set_activity_gear(request)` | `gear:write` | `{"activity_id", "gear_id": "<id>" \| null}` → `{"activity_id", "gear_id"}` as now stored. Both keys and nothing else: a request that forgot `gear_id` (or spelled it `gearId`) is refused rather than read as "take it off". The app's own checks apply and a refusal fails the call in the user's words: an unknown activity or item, a multisport whole (it carries no gear; its legs do), a retired item the activity is not on already. `null` takes the activity off its gear. Any write, with or without an import, makes the app refresh its views |
 | `host_data_get` / `host_data_set` | `data:own` | the plugin's private structured store |
 | `host_kv_get` / `host_kv_set` | `data:own` | the plugin's private key/value store |
 | `host_secret_set` / `host_secret_get` | `data:secret` | the plugin's secrets: `host_secret_set({"key", "value"})` stores one (an empty value deletes it — a sign-out is one call per token; key ≤ 128 chars, value ≤ 64 KiB, at most 32 per plugin; an unknown field in the request fails the call), `host_secret_get(key)` reads it back, an empty string when there is none. Sealed under the vault key when vault encryption is on (any scope), plain otherwise; a locked vault fails the call with the `vault locked` prefix |
 | `host_http(request, body)` + `host_http_meta()` | `net:host=` | one HTTP request: `request` is `{"url", "method"?, "headers"?: [[name, value], …], "max_redirects"?}` (GET by default; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Expect`, `Upgrade`, `TE` are the host's; redirects followed up to `max_redirects`, 10 by default and at most — `0` hands a 3xx back as it is, `Location` and all), `body` the request body bytes (empty for GET/HEAD, ≤ 1 MiB) → the final response's body bytes (≤ 5 MiB); `host_http_meta()` right after → `{"status", "url", "headers": [[name, value], …], "hops": [{"status", "url", "location"}, …]}` of that response — lowercase names, one pair per header, so five `Set-Cookie` are five pairs; `hops` are the redirects taken on the way. The host holds a cookie jar for the invocation; see **Network** below. A refused hop, a bad request, a spent budget or a transport failure fails the call |
 | `host_import_file(name, bytes)` | `import:files` | run the app's import pipeline on one file → the drop import's `ImportResult` JSON: `{imported, skipped, failed: [{path, reason}], monitoring_files, monitoring_days, monitoring_range, monitoring_night}` — per call only the first four are filled: the Monitor days an invocation touches are recomputed once, when it ends, so `monitoring_days` / `monitoring_range` / `monitoring_night` come back as 0 / null / false — a plugin cannot tell yet whether the night it synced is complete (no monitoring query in the Host SDK today). `name` is a bare file name (letters, digits, `.`, `-`, `_`, ≤ 128 bytes; its extension — `.fit`/`.gpx`/`.tcx`, optionally `.gz`, or `.zip` — decides the format). A `.zip` (Garmin hands both downloads out as zips) is expanded by the host: every entry is imported like a file of its own — its own format, hash dedup, encryption, monitoring path — and reported as `<zip>/<entry>`; the archive itself is not stored, so a re-download of a file already in the vault is `skipped`. Bounds: ≤ 64 distinct entry names (a duplicate name replaces the earlier entry), ≤ 100 MiB read in total (every byte read counts, a declared size that lies buys nothing), 30 s of wall clock; only regular files (directories and symlink entries skipped), entry names through the same gate as `name`, nested zips and foreign extensions `failed` entries (a `.fit.gz` entry is expanded, under the `.gz` cap), a corrupt or empty archive, or one with nothing importable, one `failed` entry. A file the pipeline refuses is a `failed` entry; a bad name, an oversized file (> 32 MiB, the zip bytes included), a locked vault or a vault operation in flight fail the call |
+
+A sync plugin that also carries the **gear** a service assigned looks the item up in
+`host_query {"kind":"gear"}` (by name, say — the first match: names are not unique)
+and puts the imported activity on it with `host_set_activity_gear` — see
+[`gear-demo/`](gear-demo/) (it needs app 0.9.0). An activity the app's rules or sport
+default already put on gear can be moved the same way; the app's refusals (a
+multisport whole, a retired item) fail the call in the user's words. **On a miss —
+the service's name is not in the Garage — write nothing**: a `null` would erase the
+user's or the rules' pick. Take an activity off its gear only when the service says
+it has none.
 
 `host_import_file` is how a **sync plugin** lands what it fetched: one call per file
 or per downloaded zip (the sandbox's budget bounds the plugin's own code, not a
@@ -230,9 +248,9 @@ cp target/wasm32-unknown-unknown/release/consistency_widget.wasm plugin.wasm
 ```
 
 Then sideload its `plugin.json`, enable it, and open the Dashboard.
-(`smart-route`, `paste-import`, `net-probe` and `sync-demo` build the same way;
-their artifacts are `smart_route.wasm`, `paste_import.wasm`, `net_probe.wasm`
-and `sync_demo.wasm`.)
+(`smart-route`, `paste-import`, `net-probe`, `sync-demo` and `gear-demo` build the
+same way; their artifacts are `smart_route.wasm`, `paste_import.wasm`,
+`net_probe.wasm`, `sync_demo.wasm` and `gear_demo.wasm`.)
 
 
 ## Licensing: Interface Material

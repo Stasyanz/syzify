@@ -96,6 +96,9 @@ pub struct PluginCtx {
     pub imported: usize,
     /// Of those, activities — the ones a geocoding pass has work for.
     pub imported_activities: usize,
+    /// Activities this invocation put on gear or took off it
+    /// (`host_set_activity_gear`): the views showing gear refresh on it.
+    pub gear_writes: usize,
     /// The Monitor days this invocation's imports touched, recomputed once
     /// by the runtime when the invocation ends — a wellness sync lands one
     /// day per call and the watch writes several files per day, so a
@@ -117,6 +120,7 @@ impl PluginCtx {
             vault: None,
             imported: 0,
             imported_activities: 0,
+            gear_writes: 0,
             monitoring: MonitoringBatch::default(),
             net: NetState::default(),
         }
@@ -242,8 +246,102 @@ host_fn!(pub host_query(user_data: PluginCtx; req: String) -> String {
             let data = db::dashboard::get_dashboard_data(&conn, period, request.sport_type.as_deref())?;
             Ok(serde_json::to_string(&data)?)
         }
+        // The gear registry (ADR 0003) as the SDK publishes it: `gear_view`
+        // of every item — not the app's own model, which carries notes and
+        // the sensor serials of the rules. Gear is activity metadata, so
+        // reading it is `read:activities`.
+        "gear" => {
+            ctx.require(&Permission::ReadActivities)?;
+            let conn = ctx.db.lock().map_err(|e| extism::Error::msg(e.to_string()))?;
+            let items: Vec<serde_json::Value> = db::gear::list(&conn)?.iter().map(gear_view).collect();
+            Ok(serde_json::to_string(&items)?)
+        }
         other => Err(extism::Error::msg(format!("unknown query kind: {other}"))),
     }
+});
+
+/// A gear item as the Host SDK publishes it (`host_query gear`): what a
+/// plugin needs to find an item and judge it — id, kind, name, whether it
+/// is retired, the sports it is the default for, its totals in the vault
+/// and the odometer the Garage shows (the mileage before Syzify counted
+/// in). Deliberately NOT the app's model: no notes, no brand/model/purchase
+/// date, no rules (their values are sensor serials). A new field is an
+/// addition; none of these goes away without a version.
+pub fn gear_view(item: &crate::models::gear::GearItem) -> serde_json::Value {
+    let g = &item.gear;
+    serde_json::json!({
+        "id": g.id,
+        "kind": g.kind,
+        "name": g.name,
+        "retired_at": g.retired_at,
+        "default_for": item.default_for,
+        "stats": {
+            "activities": item.stats.activities,
+            "distance_m": item.stats.distance_m,
+            "duration_s": item.stats.duration_s,
+            "elev_gain_m": item.stats.elev_gain_m,
+            "last_used": item.stats.last_used,
+        },
+        "odometer_m": g.initial_distance_m + item.stats.distance_m,
+        "distance_limit_m": g.distance_limit_m,
+    })
+}
+
+/// `{"activity_id", "gear_id": "<id>" | null}`, both keys spelled out and
+/// nothing else: a request that forgot `gear_id`, or spelled it `gearId`,
+/// must not read as "take the activity off its gear" — that is the user's
+/// hand-picked item it would erase.
+fn parse_set_gear_request(req: &str) -> Result<(String, Option<String>), String> {
+    let value: serde_json::Value = serde_json::from_str(req).map_err(|e| format!("bad request: {e}"))?;
+    let obj = value.as_object().ok_or("bad request: expected an object")?;
+    for key in obj.keys() {
+        if key != "activity_id" && key != "gear_id" {
+            return Err(format!("bad request: unknown field `{key}`"));
+        }
+    }
+    let activity_id = obj
+        .get("activity_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or("bad request: `activity_id` must be a non-empty string")?
+        .to_string();
+    let gear_id = match obj.get("gear_id") {
+        None => return Err("bad request: `gear_id` is required — a string, or null to take the activity off its gear".into()),
+        Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(_) => return Err("bad request: `gear_id` must be a non-empty string or null".into()),
+    };
+    Ok((activity_id, gear_id))
+}
+
+/// `host_set_activity_gear` without the Extism plumbing: check the
+/// permission, parse strictly, apply with the app's own checks. The
+/// refusals are the UI's words (`db::gear::AssignRefusal`), so a plugin
+/// reads what the user would. Returns `{"activity_id", "gear_id"}` as now
+/// stored, and counts the write for the runtime's refresh event.
+pub fn set_activity_gear(ctx: &mut PluginCtx, req: &str) -> Result<String, String> {
+    ctx.require(&Permission::GearWrite).map_err(|e| e.to_string())?;
+    let (activity_id, gear_id) = parse_set_gear_request(req)?;
+    {
+        let conn = ctx.db.lock().map_err(|e| e.to_string())?;
+        db::gear::assign(&conn, &activity_id, gear_id.as_deref())
+            .map_err(|e| e.to_string())?
+            .map_err(|refusal| refusal.to_string())?;
+    }
+    ctx.gear_writes += 1;
+    Ok(serde_json::json!({ "activity_id": activity_id, "gear_id": gear_id }).to_string())
+}
+
+// Put an activity on a gear item, or take it off: `{"activity_id",
+// "gear_id": "<id>" | null}` -> `{"activity_id", "gear_id"}`. The checks
+// are the app's own (a multisport whole carries no gear, a retired item
+// takes no new activity); a refusal traps with the same words the user
+// would read. `gear:write` reaches ANY activity, not only the plugin's
+// own imports — that is what carrying a service's assignments needs.
+host_fn!(pub host_set_activity_gear(user_data: PluginCtx; req: String) -> String {
+    let ud = user_data.get()?;
+    let mut ctx = ud.lock().map_err(|e| extism::Error::msg(format!("plugin state lock poisoned: {e}")))?;
+    set_activity_gear(&mut ctx, &req).map_err(extism::Error::msg)
 });
 
 // Append a record to the plugin's private structured store. Returns the row id.
@@ -590,6 +688,7 @@ mod tests {
             vault: Some(state.clone()),
             imported: 0,
             imported_activities: 0,
+            gear_writes: 0,
             monitoring: MonitoringBatch::default(),
             net: NetState::default(),
         };
@@ -643,6 +742,102 @@ mod tests {
         let _ = std::fs::remove_dir_all(&vault);
     }
 
+    /// The gear host surface (#169): the registry under `read:activities`,
+    /// writes under `gear:write`, both with the app's own refusals.
+    #[test]
+    fn gear_is_read_with_activities_and_written_with_gear_write_by_the_app_s_rules() {
+        use crate::models::gear::{GearInput, GearKind};
+        let db: Db = Arc::new(Mutex::new(crate::db::test_db()));
+        let (road, old) = {
+            let conn = db.lock().unwrap();
+            let bike = |name: &str| GearInput {
+                kind: GearKind::Bike,
+                name: name.into(),
+                brand: None,
+                model: None,
+                purchased_at: None,
+                initial_distance_m: 0.0,
+                distance_limit_m: None,
+                notes: None,
+                default_for: vec!["ride".into()],
+                rules: vec![],
+            };
+            let road = db::gear::insert(&conn, &bike("Road")).unwrap();
+            // No default on Old: one default per sport, it must stay on Road.
+            let mut old = bike("Old");
+            old.default_for = vec![];
+            let old = db::gear::insert(&conn, &old).unwrap();
+            db::gear::set_retired(&conn, &old.id, true).unwrap();
+            for (id, parent) in [("a1", None), ("container", None), ("leg", Some("container"))] {
+                conn.execute(
+                    "INSERT INTO activity (id, start_time, sport_type, parent_id) VALUES (?1, '2026-09-01T08:00:00+03:00', 'ride', ?2)",
+                    rusqlite::params![id, parent],
+                )
+                .unwrap();
+            }
+            (road, old)
+        };
+        let mut writer = PluginCtx::new(db.clone(), "com.test", vec![Permission::GearWrite]);
+        let mut reader = PluginCtx::new(db.clone(), "com.test", vec![Permission::ReadActivities]);
+
+        // The registry as the SDK publishes it: exactly these keys, so a
+        // plugin can rely on them and nothing private rides along.
+        let conn = db.lock().unwrap();
+        let views: Vec<serde_json::Value> = db::gear::list(&conn).unwrap().iter().map(gear_view).collect();
+        drop(conn);
+        let mut keys: Vec<&str> = views[0].as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["default_for", "distance_limit_m", "id", "kind", "name", "odometer_m", "retired_at", "stats"]);
+        let mut stat_keys: Vec<&str> = views[0]["stats"].as_object().unwrap().keys().map(String::as_str).collect();
+        stat_keys.sort();
+        assert_eq!(stat_keys, ["activities", "distance_m", "duration_s", "elev_gain_m", "last_used"]);
+        assert_eq!(views[0]["name"], "Road");
+        assert_eq!(views[0]["default_for"], serde_json::json!(["ride"]));
+        assert_eq!(views[0]["odometer_m"], serde_json::json!(0.0));
+        assert!(views[1]["retired_at"].is_string(), "Old is retired");
+
+        // Writes need gear:write; reads do not grant it.
+        let req = |activity: &str, gear: Option<&str>| {
+            serde_json::json!({ "activity_id": activity, "gear_id": gear }).to_string()
+        };
+        assert!(set_activity_gear(&mut reader, &req("a1", Some(&road.id))).unwrap_err().contains("lacks permission"));
+        let out = set_activity_gear(&mut writer, &req("a1", Some(&road.id))).unwrap();
+        assert_eq!(out, format!(r#"{{"activity_id":"a1","gear_id":"{}"}}"#, road.id));
+        assert_eq!(writer.gear_writes, 1);
+        let on = |id: &str| db::gear::gear_of_activity(&db.lock().unwrap(), id).unwrap();
+        assert_eq!(on("a1").as_deref(), Some(road.id.as_str()));
+        // The app's refusals, in the user's words — and no write counted.
+        assert_eq!(set_activity_gear(&mut writer, &req("nope", Some(&road.id))).unwrap_err(), "Activity not found: nope");
+        assert_eq!(set_activity_gear(&mut writer, &req("a1", Some("ghost"))).unwrap_err(), "Gear not found: ghost");
+        assert!(set_activity_gear(&mut writer, &req("container", Some(&road.id))).unwrap_err().contains("multisport"));
+        assert_eq!(on("container"), None);
+        assert!(set_activity_gear(&mut writer, &req("a1", Some(&old.id))).unwrap_err().contains("Bring the gear back"));
+        assert_eq!(on("a1").as_deref(), Some(road.id.as_str()), "a refusal changes nothing");
+        assert_eq!(writer.gear_writes, 1);
+        // A request that forgot `gear_id`, misspelled it, or sent a number
+        // is refused rather than read as "take it off".
+        for bad in [
+            r#"{"activity_id":"a1"}"#,
+            r#"{"activity_id":"a1","gearId":"x"}"#,
+            r#"{"activity_id":"a1","gear_id":7}"#,
+            r#"{"activity_id":"a1","gear_id":""}"#,
+            r#"{"activity_id":"","gear_id":null}"#,
+            r#"{"gear_id":"x"}"#,
+            r#"[]"#,
+            r#"not json"#,
+        ] {
+            assert!(set_activity_gear(&mut writer, bad).unwrap_err().starts_with("bad request"), "{bad}");
+        }
+        assert_eq!(on("a1").as_deref(), Some(road.id.as_str()), "nothing was taken off");
+        // Taking off: an explicit null; a merged leg carries its own.
+        assert!(set_activity_gear(&mut writer, &req("leg", Some(&road.id))).is_ok());
+        assert_eq!(on("leg").as_deref(), Some(road.id.as_str()));
+        let out = set_activity_gear(&mut writer, &req("a1", None)).unwrap();
+        assert_eq!(out, r#"{"activity_id":"a1","gear_id":null}"#);
+        assert_eq!(on("a1"), None);
+        assert_eq!(writer.gear_writes, 3);
+    }
+
     /// A context whose db IS the state's db, as the runtime builds it.
     fn import_ctx(state: &Arc<AppState>) -> PluginCtx {
         PluginCtx {
@@ -652,6 +847,7 @@ mod tests {
             vault: Some(state.clone()),
             imported: 0,
             imported_activities: 0,
+            gear_writes: 0,
             monitoring: MonitoringBatch::default(),
             net: NetState::default(),
         }

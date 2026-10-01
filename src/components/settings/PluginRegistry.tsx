@@ -19,6 +19,7 @@ function permissionLabel(perm: string): string {
     "data:own": "Private storage",
     "data:secret": "Stores secrets (tokens)",
     "import:files": "Import files into the vault (can tell whether a file is already there)",
+    "gear:write": "Change the gear of any activity (put it on an item, move it, or take it off)",
   };
   return map[perm] ?? perm;
 }

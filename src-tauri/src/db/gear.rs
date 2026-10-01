@@ -180,9 +180,59 @@ pub fn gear_of_activity(conn: &Connection, activity_id: &str) -> Result<Option<S
     .map(|r| r.flatten())
 }
 
-/// Put an activity on an item, or take it off (None). Ok(false) when there
-/// is no such activity. The FK refuses an unknown item; the command checks
-/// the activity is no multisport whole first.
+/// Why an activity cannot be put on an item — the one rule for the app's
+/// command and the plugin host function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignRefusal {
+    NoActivity(String),
+    /// A multisport whole spans several sports and carries no gear.
+    Multisport,
+    NoGear(String),
+    /// A retired item takes no activity it is not on already.
+    Retired,
+}
+
+impl std::fmt::Display for AssignRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssignRefusal::NoActivity(id) => write!(f, "Activity not found: {id}"),
+            AssignRefusal::Multisport => {
+                write!(f, "A multisport activity spans several sports and carries no gear; its legs do")
+            }
+            AssignRefusal::NoGear(id) => write!(f, "Gear not found: {id}"),
+            AssignRefusal::Retired => write!(f, "Bring the gear back before putting an activity on it"),
+        }
+    }
+}
+
+/// Put an activity on an item or take it off (None), with the checks: the
+/// activity exists; an item is named, is not retired unless the activity
+/// is on it already, and the activity is no multisport whole. Taking off
+/// is always allowed. Ok(Err(..)) says why a request is refused — the
+/// caller's words are the same whether it came from the UI or a plugin.
+pub fn assign(conn: &Connection, activity_id: &str, gear_id: Option<&str>) -> Result<std::result::Result<(), AssignRefusal>> {
+    if super::activities::get_activity_by_id(conn, activity_id)?.is_none() {
+        return Ok(Err(AssignRefusal::NoActivity(activity_id.to_string())));
+    }
+    if let Some(gear) = gear_id {
+        if super::multisport_legs::is_multisport(conn, activity_id)? {
+            return Ok(Err(AssignRefusal::Multisport));
+        }
+        match is_retired(conn, gear)? {
+            None => return Ok(Err(AssignRefusal::NoGear(gear.to_string()))),
+            Some(true) if gear_of_activity(conn, activity_id)?.as_deref() != Some(gear) => {
+                return Ok(Err(AssignRefusal::Retired));
+            }
+            _ => {}
+        }
+    }
+    set_activity_gear(conn, activity_id, gear_id)?;
+    Ok(Ok(()))
+}
+
+/// Put an activity on an item, or take it off (None), unchecked. Ok(false)
+/// when there is no such activity. The FK refuses an unknown item; `assign`
+/// is the checked entry point.
 pub fn set_activity_gear(conn: &Connection, activity_id: &str, gear_id: Option<&str>) -> Result<bool> {
     let n = conn.execute(
         "UPDATE activity SET gear_id = ?2 WHERE id = ?1",

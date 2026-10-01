@@ -57,6 +57,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   87 %", red once past the limit — and a row opens the Garage. A
   warning, not a service log: retire the item or raise its limit to
   clear it.
+- Plugins reach the Garage (#169): `host_query {"kind":"gear"}` returns
+  every item with its totals, default sports and rules under
+  `read:activities`, and a new `gear:write` permission lets
+  `host_set_activity_gear` put an activity on an item or take it off,
+  with the app's own checks — a sync plugin can carry the gear a service
+  assigned. `examples/plugins/gear-demo` shows both calls.
 
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:
