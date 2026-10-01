@@ -12,6 +12,9 @@ import type {
   DaySummary,
   DashboardData,
   CacheInfo,
+  Gear,
+  GearInput,
+  GearItem,
   WatchFolder,
   ScanResult,
   DeviceStats,
@@ -136,6 +139,18 @@ export const api = {
 
   clearTileCache: () =>
     invoke<void>("clear_tile_cache"),
+
+  listGear: () => invoke<GearItem[]>("list_gear"),
+
+  createGear: (input: GearInput) => invoke<Gear>("create_gear", { input }),
+
+  updateGear: (id: string, input: GearInput) =>
+    invoke<void>("update_gear", { id, input }),
+
+  setGearRetired: (id: string, retired: boolean) =>
+    invoke<void>("set_gear_retired", { id, retired }),
+
+  deleteGear: (id: string) => invoke<void>("delete_gear", { id }),
 
   getWatchFolders: () =>
     invoke<WatchFolder[]>("get_watch_folders"),

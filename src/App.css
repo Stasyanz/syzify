@@ -583,6 +583,7 @@ body {
    the nav chevrons on one header line. */
 .dp-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 252px; z-index: 80; background: var(--card); border: 1px solid var(--border-2); border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18); padding: 12px; }
 .dp-right .dp-pop { left: auto; right: 0; }
+.dp-down .dp-pop { bottom: auto; top: calc(100% + 8px); }
 .dark .dp-pop { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5); }
 .dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .dp-month { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--ink); }

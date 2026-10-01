@@ -28,6 +28,7 @@ import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
 import { MonitoringData } from "../components/settings/MonitoringData";
 import { WatchFolders } from "../components/settings/WatchFolders";
+import { Garage } from "../components/settings/Garage";
 import { PluginRegistry } from "../components/settings/PluginRegistry";
 import {
   DEFAULT_SETTINGS_TAB,
@@ -672,6 +673,12 @@ export function SettingsPage() {
             <MonitoringData />
             <WatchFolders />
           </section>
+        )}
+
+        {tab === "garage" && (
+          <div role="tabpanel" id="settings-panel-garage" aria-labelledby="settings-tab-garage">
+            <Garage />
+          </div>
         )}
 
         {tab === "plugins" && (

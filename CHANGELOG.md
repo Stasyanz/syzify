@@ -6,6 +6,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Settings gets a Garage tab, right after Vault (#164): the bikes, shoes
+  and other gear your activities are done on, each with the mileage its
+  activities add up to — continued from the mileage it had before
+  Syzify — hours, climbing, activity count and last use. An item can carry
+  a "replace at" distance that shows as a wear bar, be the default for
+  chosen sports, and be retired without losing its history; deleting one
+  leaves its activities in place. The first stage of gear tracking
+  (#163): assigning an item to an activity follows.
+
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:
   the chips on list rows and on the activity page, the Tags editor in

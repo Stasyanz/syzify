@@ -4,6 +4,7 @@
 export const SETTINGS_TABS = [
   { id: "general", label: "General" },
   { id: "vault", label: "Vault" },
+  { id: "garage", label: "Garage" },
   { id: "plugins", label: "Plugins" },
   { id: "about", label: "About" },
 ] as const;

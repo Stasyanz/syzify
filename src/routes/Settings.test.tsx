@@ -37,6 +37,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("../components/settings/VaultLocation", () => ({ VaultLocation: () => <div>VAULT LOCATION</div> }));
 vi.mock("../components/settings/MonitoringData", () => ({ MonitoringData: () => <div>MONITORING DATA</div> }));
 vi.mock("../components/settings/WatchFolders", () => ({ WatchFolders: () => <div>WATCH FOLDERS</div> }));
+vi.mock("../components/settings/Garage", () => ({ Garage: () => <div>GARAGE</div> }));
 vi.mock("../components/settings/PluginRegistry", () => ({ PluginRegistry: () => <div>PLUGIN REGISTRY</div> }));
 vi.mock("../components/settings/UpdateCheck", () => ({ UpdateCheck: () => <div>UPDATE CHECK</div> }));
 vi.mock("../components/settings/LegalModal", () => ({
@@ -112,11 +113,11 @@ describe("SettingsPage tabs", () => {
   });
   afterEach(cleanup);
 
-  it("opens on General with the four tabs and only that section", async () => {
+  it("opens on General with the five tabs and only that section", async () => {
     renderAt("/settings");
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["General", "Vault", "Plugins", "About"]);
-    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["General", "Vault", "Garage", "Plugins", "About"]);
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false"]);
     expect(rows()).toEqual([
       "Theme",
       "Units",
@@ -128,9 +129,9 @@ describe("SettingsPage tabs", () => {
     await waitFor(() => expect(screen.getByText(/Cached map tiles on disk: 2 KB/)).toBeTruthy());
     expect(screen.getByRole("button", { name: /Clear Cache/ })).toBeTruthy();
     // Only the open tab is in the Tab order; the panel is tied to its tab.
-    expect(screen.getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(screen.getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1, -1, -1]);
     expect(screen.getAllByRole("tab").map((t) => t.getAttribute("aria-controls"))).toEqual([
-      screen.getByRole("tabpanel").id, null, null, null,
+      screen.getByRole("tabpanel").id, null, null, null, null,
     ]);
     const panel = screen.getByRole("tabpanel");
     expect(panel.getAttribute("aria-labelledby")).toBe(screen.getByRole("tab", { name: "General" }).id);
@@ -165,6 +166,11 @@ describe("SettingsPage tabs", () => {
     expect(screen.getByText("MONITORING DATA")).toBeTruthy();
     expect(screen.getByText("WATCH FOLDERS")).toBeTruthy();
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Garage" }));
+    expect(url()).toBe("/settings?tab=garage");
+    expect(screen.getByRole("tabpanel").textContent).toBe("GARAGE");
+    expect(rows()).toEqual([]);
 
     fireEvent.click(screen.getByRole("tab", { name: "Plugins" }));
     expect(url()).toBe("/settings?tab=plugins");

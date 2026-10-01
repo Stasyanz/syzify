@@ -345,6 +345,59 @@ export interface CalDayActivity {
   duration_s: number | null;
 }
 
+// ── Gear (ADR 0003) ──
+
+export type GearKind = "bike" | "shoes" | "other";
+
+export interface Gear {
+  id: string;
+  kind: GearKind;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  /** "YYYY-MM-DD". */
+  purchased_at: string | null;
+  /** Mileage before Syzify, so the odometer continues from it. */
+  initial_distance_m: number;
+  /** Wear warning threshold; null = none. */
+  distance_limit_m: number | null;
+  retired_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** What the Garage edits: the item's own fields plus the sports it is the
+ * default for. The same shape creates and updates. */
+export interface GearInput {
+  kind: GearKind;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  purchased_at: string | null;
+  initial_distance_m: number;
+  distance_limit_m: number | null;
+  notes: string | null;
+  default_for: SportType[];
+}
+
+/** What the activities on an item add up to; computed on read. */
+export interface GearStats {
+  activities: number;
+  distance_m: number;
+  duration_s: number;
+  elev_gain_m: number;
+  last_used: string | null;
+}
+
+/** A Garage card: the item's fields, its totals and its default sports. */
+export interface GearItem extends Gear {
+  stats: GearStats;
+  default_for: SportType[];
+}
+
+/** Name cap in the Garage modal (the backend refuses longer). */
+export const MAX_GEAR_NAME_LENGTH = 60;
+
 export interface WatchFolder {
   id: number;
   path: string;

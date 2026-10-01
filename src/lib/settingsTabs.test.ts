@@ -27,6 +27,7 @@ describe("settingsPath", () => {
 describe("nextSettingsTab", () => {
   it("cycles with the arrows, jumps with Home/End and ignores other keys", () => {
     expect(nextSettingsTab("general", "ArrowRight")).toBe("vault");
+    expect(nextSettingsTab("vault", "ArrowRight")).toBe("garage");
     expect(nextSettingsTab("about", "ArrowRight")).toBe("general");
     expect(nextSettingsTab("general", "ArrowLeft")).toBe("about");
     expect(nextSettingsTab("plugins", "Home")).toBe("general");

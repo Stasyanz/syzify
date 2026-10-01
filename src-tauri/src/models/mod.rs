@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod dashboard;
 pub mod exercise_set;
+pub mod gear;
 pub mod hrv_sample;
 pub mod lap;
 pub mod monitoring;

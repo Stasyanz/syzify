@@ -39,6 +39,7 @@ fn migration_list() -> Vec<M<'static>> {
         M::up(include_str!("../../migrations/030_monitoring.sql")),
         M::up(include_str!("../../migrations/031_plugin_secret.sql")),
         M::up(include_str!("../../migrations/032_drop_tags.sql")),
+        M::up(include_str!("../../migrations/033_gear.sql")),
     ]
 }
 
@@ -119,8 +120,9 @@ mod tests {
     fn drop_tags_migration_clears_a_populated_vault() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        // Up to and including 031: the schema the drop runs against.
         let list = migration_list();
-        let before_drop = list.len() - 1;
+        let before_drop = 31;
         Migrations::new(list[..before_drop].to_vec()).to_latest(&mut conn).unwrap();
         conn.execute_batch(
             "INSERT INTO activity (id, start_time) VALUES ('a1', '2026-01-01T10:00:00+00:00');
