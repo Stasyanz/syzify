@@ -33,6 +33,7 @@ import { LapsTable } from "../components/activity/LapsTable";
 import { EditActivityModal } from "../components/activity/EditActivityModal";
 import { FtpMismatchHint } from "../components/activity/FtpMismatchHint";
 import { DeviceChip } from "../components/activity/DeviceChip";
+import { GearChip } from "../components/activity/GearChip";
 import { describeDevice } from "../lib/devices";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
 import { ShareModal } from "../components/activity/ShareModal";
@@ -304,7 +305,9 @@ export function ActivityDetailPage() {
     }
   }
 
-  const hasDevice = describeDevice(activity.source_device) != null;
+  // The chips row: the badges on the right take the slack only when a chip
+  // is in the middle to push against.
+  const hasDevice = describeDevice(activity.source_device) != null || data.gear_id != null;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -363,6 +366,7 @@ export function ActivityDetailPage() {
         </div>
 
         <DeviceChip source={activity.source_device} />
+        <GearChip gearId={data.gear_id} onClick={() => setEditing(true)} />
 
         <div className={`flex items-center justify-end gap-2.5 ${hasDevice ? "flex-1" : "shrink-0"}`}>
           {recordBadges.length > 0 && (
@@ -582,6 +586,8 @@ export function ActivityDetailPage() {
       {editing && (
         <EditActivityModal
           activity={activity}
+          gearId={data.gear_id}
+          gearLocked={data.is_multisport}
           focusFtp={editFocusFtp}
           onClose={() => {
             setEditing(false);

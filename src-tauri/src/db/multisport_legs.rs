@@ -31,6 +31,20 @@ pub fn insert_legs(conn: &Connection, legs: &[MultisportLeg]) -> Result<()> {
     Ok(())
 }
 
+/// Whether the activity is a multisport whole: a merged container (it has
+/// adopted children) or a FIT-native one (it has leg rows). A container
+/// carries no parent_id itself, so this is how it is recognized. Its
+/// aggregate spans several sports, so it is never merged again and never
+/// carries gear (ADR 0003) — the swim would count into the bike.
+pub fn is_multisport(conn: &Connection, activity_id: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM activity WHERE parent_id = ?1)
+             OR EXISTS(SELECT 1 FROM multisport_leg WHERE activity_id = ?1)",
+        params![activity_id],
+        |r| r.get(0),
+    )
+}
+
 pub fn get_legs(conn: &Connection, activity_id: &str) -> Result<Vec<MultisportLeg>> {
     let mut stmt = conn.prepare(
         "SELECT id, activity_id, leg_number, sport_type, is_transition,
@@ -166,16 +180,9 @@ pub fn merge_into_triathlon(
                 Some(format!("activity {id} is already part of a multisport")),
             ));
         }
-        // A container carries no parent_id itself — recognize it by its
-        // adopted children or its leg rows (FIT-native multisport). Merging
-        // one would nest containers and double-count its aggregate.
-        let is_multisport: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM activity WHERE parent_id = ?1)
-                 OR EXISTS(SELECT 1 FROM multisport_leg WHERE activity_id = ?1)",
-            params![id],
-            |r| r.get(0),
-        )?;
-        if is_multisport {
+        // Merging a container would nest containers and double-count its
+        // aggregate.
+        if is_multisport(&tx, id)? {
             return Err(SqliteFailure(
                 rusqlite::ffi::Error::new(1),
                 Some(format!("activity {id} is a multisport itself")),

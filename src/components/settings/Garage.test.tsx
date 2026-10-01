@@ -12,6 +12,7 @@ vi.mock("../../lib/tauri", () => ({
     updateGear: vi.fn(),
     setGearRetired: vi.fn(),
     deleteGear: vi.fn(),
+    assignGearHistory: vi.fn(),
   },
 }));
 vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
@@ -125,6 +126,8 @@ describe("Garage helpers", () => {
 describe("Garage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Queued once-answers must not leak from a test that stopped early.
+    vi.mocked(confirmDialog).mockReset();
     vi.mocked(api.listGear).mockResolvedValue([road, pegasus, oldShoes]);
   });
   afterEach(() => {
@@ -342,6 +345,53 @@ describe("Garage", () => {
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not update gear: Gear not found: g-road"),
     );
+  });
+
+  it("offers to put the item on its history from the purchase on, and says how many it took", async () => {
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+    vi.mocked(api.assignGearHistory).mockResolvedValueOnce(37).mockResolvedValueOnce(0);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(3));
+    const [bike, shoes, retired] = screen.getAllByTestId("gear-card");
+    // Only an item with default sports offers it; a retired one never.
+    const offer = within(bike).getByRole("button", { name: /Assign to all Ride activities since/ });
+    expect(offer.textContent).toContain("2025");
+    expect(within(shoes).queryByRole("button", { name: /Assign to all/ })).toBeNull();
+    expect(within(retired).queryByRole("button", { name: /Assign to all/ })).toBeNull();
+
+    // Cancelled: nothing happens.
+    fireEvent.click(offer);
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmDialog).mock.calls[0][0].title).toMatch(/^Assign to all Ride activities since .*\?$/);
+    expect(api.assignGearHistory).not.toHaveBeenCalled();
+
+    fireEvent.click(offer);
+    await waitFor(() => expect(api.assignGearHistory).toHaveBeenCalledWith("g-road"));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Road assigned to 37 activities"),
+    );
+    await waitFor(() => expect(api.listGear).toHaveBeenCalledTimes(2));
+
+    // Nothing left to take is said as such, not as a success.
+    fireEvent.click(offer);
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("info", expect.stringContaining("Nothing to assign")),
+    );
+
+    // A refusal is said.
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
+    vi.mocked(api.assignGearHistory).mockRejectedValueOnce(new Error("Bring the gear back"));
+    fireEvent.click(offer);
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not assign gear: Bring the gear back"),
+    );
+  });
+
+  it("offers the whole history when the item has no purchase date", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([{ ...road, purchased_at: null }]);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Assign to all Ride activities" })).toBeTruthy();
   });
 
   it("deletes only after a confirmation that counts the activities, and never on cancel", async () => {

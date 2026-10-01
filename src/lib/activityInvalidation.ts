@@ -17,6 +17,7 @@ const ACTIVITY_DATA_PREFIXES: readonly string[] = [
   "segment-efforts", // sport change / delete rematches segment passes
   "monitoring", // Garmin monitoring days (an import batch may carry both)
   "recovery", // the recovery index reads monitoring days AND daily hrTSS
+  "gear", // the Garage sums its mileage from the activities
 ];
 
 /**

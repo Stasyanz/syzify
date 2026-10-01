@@ -890,6 +890,13 @@ pub fn import_bytes(
     // 9b². Insert multisport legs if present (triathlon per-leg breakdown)
     if !parsed.legs.is_empty() {
         db::multisport_legs::insert_legs(conn, &parsed.legs).map_err(|e| e.to_string())?;
+    } else if let Some(gear) =
+        db::gear::default_for_sport(conn, sport.as_str(), &start_time).map_err(|e| e.to_string())?
+    {
+        // 9b³. The sport's default gear (ADR 0003), if it was already bought
+        // when the activity happened. A native multisport file gets none:
+        // its one activity spans several sports.
+        db::gear::set_activity_gear(conn, &activity_id, Some(&gear)).map_err(|e| e.to_string())?;
     }
 
     // 9c. Insert swim lengths if present
@@ -2146,6 +2153,74 @@ mod tests {
         let activities = crate::db::activities::get_activities(&conn, &crate::models::activity::ActivityFilters::default()).unwrap();
         assert_eq!(activities.len(), 1);
         assert_eq!(activities[0].sport_type, "run");
+        assert_eq!(activities[0].gear_id, None, "no default shoes set up");
+
+        // With default shoes for runs, the next import lands on them.
+        let shoes = crate::db::gear::insert(
+            &conn,
+            &crate::models::gear::GearInput {
+                kind: crate::models::gear::GearKind::Shoes,
+                name: "Pegasus".into(),
+                brand: None,
+                model: None,
+                purchased_at: None,
+                initial_distance_m: 0.0,
+                distance_limit_m: None,
+                notes: None,
+                default_for: vec!["run".into()],
+            },
+        )
+        .unwrap();
+        let second = vault_dir.join("test_run_2.gpx");
+        std::fs::write(
+            &second,
+            std::fs::read_to_string(&gpx_path).unwrap().replace("2025-06-01T08:00", "2025-06-02T08:00"),
+        )
+        .unwrap();
+        let result = import_files(&conn, &vault_dir, &[second.to_str().unwrap().to_string()], None, |_, _, _| {});
+        assert_eq!(result.imported, 1);
+        let activities = crate::db::activities::get_activities(&conn, &crate::models::activity::ActivityFilters::default()).unwrap();
+        let newest = activities.iter().find(|a| a.start_time.starts_with("2025-06-02")).unwrap();
+        assert_eq!(newest.gear_id.as_deref(), Some(shoes.id.as_str()));
+        let first = activities.iter().find(|a| a.start_time.starts_with("2025-06-01")).unwrap();
+        assert_eq!(first.gear_id, None, "an earlier import is not touched");
+
+        // Shoes bought after the run: an archive from before the purchase
+        // must not land on them.
+        let mut later = crate::models::gear::GearInput {
+            kind: crate::models::gear::GearKind::Shoes,
+            name: "Pegasus".into(),
+            brand: None,
+            model: None,
+            purchased_at: Some("2025-07-01".into()),
+            initial_distance_m: 0.0,
+            distance_limit_m: None,
+            notes: None,
+            default_for: vec!["run".into()],
+        };
+        crate::db::gear::update(&conn, &shoes.id, &later).unwrap();
+        let third = vault_dir.join("test_run_3.gpx");
+        std::fs::write(
+            &third,
+            std::fs::read_to_string(&gpx_path).unwrap().replace("2025-06-01T08:00", "2025-06-03T08:00"),
+        )
+        .unwrap();
+        assert_eq!(import_files(&conn, &vault_dir, &[third.to_str().unwrap().to_string()], None, |_, _, _| {}).imported, 1);
+        let activities = crate::db::activities::get_activities(&conn, &crate::models::activity::ActivityFilters::default()).unwrap();
+        let third = activities.iter().find(|a| a.start_time.starts_with("2025-06-03")).unwrap();
+        assert_eq!(third.gear_id, None, "bought after the run");
+        later.purchased_at = Some("2025-06-01".into());
+        crate::db::gear::update(&conn, &shoes.id, &later).unwrap();
+        let fourth = vault_dir.join("test_run_4.gpx");
+        std::fs::write(
+            &fourth,
+            std::fs::read_to_string(&gpx_path).unwrap().replace("2025-06-01T08:00", "2025-06-04T08:00"),
+        )
+        .unwrap();
+        assert_eq!(import_files(&conn, &vault_dir, &[fourth.to_str().unwrap().to_string()], None, |_, _, _| {}).imported, 1);
+        let activities = crate::db::activities::get_activities(&conn, &crate::models::activity::ActivityFilters::default()).unwrap();
+        let fourth = activities.iter().find(|a| a.start_time.starts_with("2025-06-04")).unwrap();
+        assert_eq!(fourth.gear_id.as_deref(), Some(shoes.id.as_str()));
 
         // Verify trackpoints
         let tps = crate::db::trackpoints::get_trackpoints_columnar(&conn, &activities[0].id).unwrap();

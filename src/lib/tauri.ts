@@ -152,6 +152,12 @@ export const api = {
 
   deleteGear: (id: string) => invoke<void>("delete_gear", { id }),
 
+  setActivityGear: (activityId: string, gearId: string | null) =>
+    invoke<void>("set_activity_gear", { activityId, gearId }),
+
+  /** The Garage card's quick action; resolves to how many activities were assigned. */
+  assignGearHistory: (id: string) => invoke<number>("assign_gear_history", { id }),
+
   getWatchFolders: () =>
     invoke<WatchFolder[]>("get_watch_folders"),
 

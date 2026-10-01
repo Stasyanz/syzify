@@ -1,22 +1,24 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bike, Footprints, Package, Pencil, Plus, Trash2, X } from "lucide-react";
+import { History, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../../lib/tauri";
 import {
   SPORT_LABELS,
-  SPORT_TYPES,
   MAX_GEAR_NAME_LENGTH,
   type GearInput,
   type GearItem,
   type GearKind,
   type SportType,
 } from "../../lib/types";
+import { kindSports } from "../../lib/gear";
+import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatDistance, formatDurationHM, formatElevation } from "../../lib/format";
 import { useUnits, isImperial, distanceUnit, M_PER_MILE } from "../../lib/units";
 import { useToastStore } from "../../stores/toastStore";
 import { confirmDialog } from "../../stores/confirmStore";
 import { Select } from "../ui/Select";
 import { DateField } from "../ui/DateField";
+import { GearKindIcon } from "../activity/GearChip";
 import { useToday } from "../../hooks/useToday";
 
 /** How far back the purchase-date picker's year list reaches. */
@@ -28,18 +30,7 @@ export const GEAR_KINDS: { id: GearKind; label: string }[] = [
   { id: "other", label: "Other" },
 ];
 
-/** The sports an item of a kind is offered to be the default for. Offered,
- * not enforced: "other" is offered to everything. */
-export function kindSports(kind: GearKind): SportType[] {
-  switch (kind) {
-    case "bike":
-      return ["ride", "mountain_bike"];
-    case "shoes":
-      return ["run", "trail_run", "treadmill", "walk", "hike", "mountaineering"];
-    default:
-      return SPORT_TYPES;
-  }
-}
+export { kindSports };
 
 /** The odometer: what the item had done before Syzify plus what it has
  * done in it. */
@@ -80,12 +71,6 @@ export function distanceInputValue(meters: number | null): string {
   return String(Math.round(v * 100) / 100);
 }
 
-function KindIcon({ kind, size = 18 }: { kind: GearKind; size?: number }) {
-  if (kind === "bike") return <Bike size={size} />;
-  if (kind === "shoes") return <Footprints size={size} />;
-  return <Package size={size} />;
-}
-
 function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
@@ -108,6 +93,37 @@ export function Garage() {
     mutationFn: ({ id, retired }: { id: string; retired: boolean }) => api.setGearRetired(id, retired),
     onSuccess: changed,
     onError: (e: Error) => addToast("error", `Could not update gear: ${e.message}`),
+  });
+
+  /** The sentence the quick action offers: the item's default sports,
+   * from its purchase date on (all time without one). */
+  function historyOffer(item: GearItem): string {
+    const sports = item.default_for.map((s) => SPORT_LABELS[s] ?? s).join(", ");
+    const since = item.purchased_at ? ` since ${formatDay(item.purchased_at + "T00:00:00")}` : "";
+    return `Assign to all ${sports} activities${since}`;
+  }
+
+  // A mutation, so a second press while one runs is inert (the backend
+  // is idempotent anyway: only activities without gear are touched).
+  const assignHistory = useMutation({
+    mutationFn: async (item: GearItem) => {
+      const ok = await confirmDialog({
+        title: `${historyOffer(item)}?`,
+        message: "Only activities without gear are touched. Multisport events are left alone.",
+        confirmLabel: "Assign",
+      });
+      if (!ok) return null;
+      return { item, n: await api.assignGearHistory(item.id) };
+    },
+    onSuccess: (done) => {
+      if (!done) return;
+      const { item, n } = done;
+      addToast(n > 0 ? "success" : "info", n > 0 ? `${item.name} assigned to ${n} activit${n === 1 ? "y" : "ies"}` : "Nothing to assign: every matching activity already has gear");
+      // The activity pages and the library show the gear too; the Garage's
+      // own totals are among the activity-derived queries this refreshes.
+      invalidateActivityData(queryClient);
+    },
+    onError: (e: Error) => addToast("error", `Could not assign gear: ${e.message}`),
   });
 
   async function remove(item: GearItem) {
@@ -167,7 +183,7 @@ export function Garage() {
               >
                 <div className="flex items-start gap-3">
                   <span className="mt-0.5 shrink-0 text-accent-2" aria-hidden="true">
-                    <KindIcon kind={item.kind} />
+                    <GearKindIcon kind={item.kind} size={18} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2">
@@ -205,8 +221,21 @@ export function Garage() {
                       </div>
                     )}
                     {item.default_for.length > 0 && (
-                      <div className="mt-1 text-xs text-faint">
-                        Default for {item.default_for.map((s) => SPORT_LABELS[s] ?? s).join(", ")}
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
+                        <span>Default for {item.default_for.map((s) => SPORT_LABELS[s] ?? s).join(", ")}</span>
+                        {!retired && (
+                          // The way the history gets its gear: one click
+                          // instead of a library filter (#165).
+                          <button
+                            type="button"
+                            onClick={() => assignHistory.mutate(item)}
+                            disabled={assignHistory.isPending}
+                            className="inline-flex items-center gap-1 text-accent-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                          >
+                            <History size={12} />
+                            {historyOffer(item)}
+                          </button>
+                        )}
                       </div>
                     )}
                     {wear != null && (
@@ -364,7 +393,7 @@ export function GearModal({
               className="w-full"
               value={kind}
               onChange={(v) => changeKind(v as GearKind)}
-              options={GEAR_KINDS.map((k) => ({ value: k.id, label: k.label, icon: <KindIcon kind={k.id} size={14} /> }))}
+              options={GEAR_KINDS.map((k) => ({ value: k.id, label: k.label, icon: <GearKindIcon kind={k.id} size={14} /> }))}
             />
           </div>
           <div>

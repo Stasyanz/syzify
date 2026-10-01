@@ -553,6 +553,8 @@ pub fn run() {
             commands::gear::update_gear,
             commands::gear::set_gear_retired,
             commands::gear::delete_gear,
+            commands::gear::set_activity_gear,
+            commands::gear::assign_gear_history,
             commands::settings::get_watch_folders,
             commands::settings::add_watch_folder,
             commands::settings::remove_watch_folder,

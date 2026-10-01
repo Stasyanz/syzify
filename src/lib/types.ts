@@ -92,6 +92,8 @@ export interface ActivitySummary {
   avg_hr: number | null;
   location_name: string | null;
   source_device: string | null;
+  /** The gear item the activity is on (ADR 0003), if assigned. */
+  gear_id: string | null;
 }
 
 export interface MultisportLeg {
@@ -118,6 +120,11 @@ export interface MultisportLeg {
 export interface ActivityDetail {
   activity: Activity;
   trackpoints: TrackPointColumns;
+  /** The gear item the activity is on (ADR 0003); null when unassigned. */
+  gear_id: string | null;
+  /** A multisport whole (merged container or FIT-native file): it carries
+   * no gear of its own; the backend applies the same rule. */
+  is_multisport: boolean;
   laps: Lap[];
   legs: MultisportLeg[];
   lengths: SwimLength[];

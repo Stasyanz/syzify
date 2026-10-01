@@ -14,7 +14,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   a "replace at" distance that shows as a wear bar, be the default for
   chosen sports, and be retired without losing its history; deleting one
   leaves its activities in place. The first stage of gear tracking
-  (#163): assigning an item to an activity follows.
+  (#163).
+- Activities carry their gear (#165): a Gear field in Edit Activity
+  offering the items that fit the sport, a chip next to the device in
+  the activity header, and the sport's default item on every new import.
+  The Garage card offers "Assign to all Ride activities since 1 Jan
+  2024" — the item's default sports from its purchase date on, only
+  activities without gear — so the history gets its mileage in one
+  click. A multisport event carries no gear of its own (its aggregate
+  spans several sports); its legs do. For plugins, the activity rows
+  that `host_query` returns gain `gear_id`.
 
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:

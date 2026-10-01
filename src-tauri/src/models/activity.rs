@@ -324,6 +324,8 @@ pub struct ActivitySummary {
     /// The recording device as the file named it (see `describeDevice` in
     /// the frontend for the display form).
     pub source_device: Option<String>,
+    /// The gear item the activity was done on (ADR 0003), if assigned.
+    pub gear_id: Option<String>,
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { render, cleanup, waitFor, fireEvent, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Activity } from "../../lib/types";
+import type { Activity, GearItem } from "../../lib/types";
 
 const addToast = vi.fn();
 
@@ -14,6 +14,8 @@ vi.mock("../../lib/tauri", () => ({
     setActivityLocationNamed: vi.fn().mockResolvedValue({ geocoded: true, geocoding_off: false, location_name: "" }),
     setActivityFtp: vi.fn().mockResolvedValue({ threshold_power_w: 238, intensity_factor: 0.7, training_stress_score: 60 }),
     deleteActivity: vi.fn().mockResolvedValue(undefined),
+    listGear: vi.fn().mockResolvedValue([]),
+    setActivityGear: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../../stores/toastStore", () => ({
@@ -357,5 +359,167 @@ describe("FTP correction", () => {
     fireEvent.click(getByText("Save"));
     await new Promise((r) => setTimeout(r, 30));
     expect(api.setActivityFtp).not.toHaveBeenCalled();
+  });
+});
+
+describe("gear", () => {
+  const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => ({
+    id,
+    kind,
+    name: id,
+    brand: null,
+    model: null,
+    purchased_at: null,
+    initial_distance_m: 0,
+    distance_limit_m: null,
+    retired_at: retired ? "2026-01-01T00:00:00" : null,
+    notes: null,
+    created_at: "2026-01-01T00:00:00",
+    stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
+    default_for: [],
+  });
+  const registry = [item("road", "bike"), item("old-road", "bike", true), item("pegasus", "shoes"), item("helmet", "other")];
+
+  beforeEach(() => {
+    vi.mocked(api.listGear).mockClear().mockResolvedValue(registry);
+    vi.mocked(api.setActivityGear).mockClear();
+    vi.mocked(api.updateActivity).mockClear();
+  });
+
+  function renderGear(props: { gearId?: string | null; gearLocked?: boolean; sport?: string }) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <EditActivityModal
+          activity={{ ...activity, sport_type: props.sport ?? "run" } as Activity}
+          gearId={props.gearId ?? null}
+          gearLocked={props.gearLocked}
+          onClose={() => {}}
+          onSaved={() => {}}
+          onDeleted={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("offers the items that fit the sport, the current one even if retired, and saves only a change", async () => {
+    const { getByLabelText, getByRole, getAllByRole, getByText } = renderGear({ gearId: "old-road", sport: "ride" });
+    await waitFor(() => expect(getByLabelText("Gear").textContent).toContain("old-road (retired)"));
+    fireEvent.click(getByLabelText("Gear"));
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "road", "old-road (retired)", "helmet"]);
+    // Picking the same item again is no write.
+    fireEvent.click(getByRole("option", { name: "old-road (retired)" }));
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.updateActivity).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.setActivityGear).not.toHaveBeenCalled();
+
+    fireEvent.click(getByLabelText("Gear"));
+    fireEvent.click(getByRole("option", { name: "road" }));
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.setActivityGear).toHaveBeenCalledWith("act-1", "road"));
+  });
+
+  it("follows the sport being saved and takes the activity off its gear with None", async () => {
+    const { getByLabelText, getByRole, getAllByRole, getByText } = renderGear({ gearId: "pegasus", sport: "run" });
+    await waitFor(() => expect(getByLabelText("Gear").textContent).toContain("pegasus"));
+    // Switching the sport to a ride offers bikes instead of shoes — the
+    // shoes it is on stay offered so a plain save keeps them.
+    fireEvent.click(getByLabelText("Sport type"));
+    fireEvent.click(getByRole("option", { name: "Ride" }));
+    fireEvent.click(getByLabelText("Gear"));
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "road", "pegasus", "helmet"]);
+    fireEvent.click(getByRole("option", { name: "None" }));
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.setActivityGear).toHaveBeenCalledWith("act-1", null));
+  });
+
+  it("says why a multisport event has no gear field and never writes one", async () => {
+    const { queryByLabelText, getByText } = renderGear({ gearLocked: true });
+    expect(queryByLabelText("Gear")).toBeNull();
+    expect(getByText(/A multisport event carries no gear/)).toBeTruthy();
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(api.updateActivity).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.setActivityGear).not.toHaveBeenCalled();
+    expect(api.listGear).not.toHaveBeenCalled();
+  });
+});
+
+describe("gear refusals and sport changes", () => {
+  const item = (id: string, kind: GearItem["kind"]): GearItem => ({
+    id,
+    kind,
+    name: id,
+    brand: null,
+    model: null,
+    purchased_at: null,
+    initial_distance_m: 0,
+    distance_limit_m: null,
+    retired_at: null,
+    notes: null,
+    created_at: "2026-01-01T00:00:00",
+    stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
+    default_for: [],
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.listGear).mockClear().mockResolvedValue([item("road", "bike"), item("pegasus", "shoes")]);
+    vi.mocked(api.setActivityGear).mockClear();
+    vi.mocked(api.updateActivity).mockClear();
+    vi.mocked(api.setActivityFtp).mockClear();
+  });
+
+  function renderWith(over: Partial<Activity>, gearId: string | null, onSaved = vi.fn()) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <EditActivityModal
+          activity={{ ...activity, ...over } as Activity}
+          gearId={gearId}
+          onClose={() => {}}
+          onSaved={onSaved}
+          onDeleted={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    return onSaved;
+  }
+
+  it("reports a refused gear by name and still finishes the save, FTP included", async () => {
+    vi.mocked(api.setActivityGear).mockRejectedValueOnce(new Error("Bring the gear back"));
+    const onSaved = renderWith(
+      { sport_type: "ride", normalized_power_w: 200, threshold_power_w: 200, duration_s: 3600 },
+      null,
+    );
+    fireEvent.click(screen.getByLabelText("Gear"));
+    fireEvent.click(await screen.findByRole("option", { name: "road" }));
+    fireEvent.change(screen.getByLabelText("FTP (W)"), { target: { value: "238" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(api.updateActivity).toHaveBeenCalledTimes(1);
+    expect(api.setActivityFtp).toHaveBeenCalledWith("act-1", 238);
+    expect(addToast).toHaveBeenCalledWith("error", "Gear not changed: Bring the gear back");
+    expect(addToast).toHaveBeenLastCalledWith("success", "Activity updated (gear unchanged)");
+  });
+
+  it("drops a pick the new sport does not offer instead of saving it unseen", async () => {
+    renderWith({ sport_type: "ride" }, null);
+    fireEvent.click(screen.getByLabelText("Gear"));
+    fireEvent.click(await screen.findByRole("option", { name: "road" }));
+    expect(screen.getByLabelText("Gear").textContent).toContain("road");
+    fireEvent.click(screen.getByLabelText("Sport type"));
+    fireEvent.click(screen.getByRole("option", { name: "Run" }));
+    expect(screen.getByLabelText("Gear").textContent).toContain("None");
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(api.updateActivity).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.setActivityGear).not.toHaveBeenCalled();
+    // The shoes it could take are still a pick away.
+    fireEvent.click(screen.getByLabelText("Gear"));
+    fireEvent.click(screen.getByRole("option", { name: "pegasus" }));
+    fireEvent.click(screen.getByLabelText("Sport type"));
+    fireEvent.click(screen.getByRole("option", { name: "Trail Run" }));
+    expect(screen.getByLabelText("Gear").textContent).toContain("pegasus");
   });
 });

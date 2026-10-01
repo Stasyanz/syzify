@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { X, MapPin, Trash2, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
 import {
@@ -11,16 +11,26 @@ import {
 } from "../../lib/types";
 import { Select } from "../ui/Select";
 import { SportIcon } from "../brand/SportIcon";
+import { GearKindIcon } from "./GearChip";
+import { gearChoicesFor } from "../../lib/gear";
 import { useToastStore } from "../../stores/toastStore";
 
 interface Props {
   activity: Activity;
+  /** The gear item the activity is on (ADR 0003); null when unassigned. */
+  gearId?: string | null;
+  /** A multisport whole (merged container, FIT-native file) carries no
+   * gear: its aggregate spans several sports. The field says so instead. */
+  gearLocked?: boolean;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
   /** Open with the FTP field focused — the "Correct FTP" hint lands here. */
   focusFtp?: boolean;
 }
+
+/** The option that takes an activity off its gear. */
+const NO_GEAR = "";
 
 /** The Location field asks for suggestions this long after the last
  * keystroke — and never for fewer characters than this. Nominatim allows
@@ -38,13 +48,38 @@ export function stepHighlight(current: number, count: number, delta: 1 | -1): nu
   return (current + delta + count) % count;
 }
 
-export function EditActivityModal({ activity, onClose, onSaved, onDeleted, focusFtp = false }: Props) {
+export function EditActivityModal({
+  activity,
+  gearId = null,
+  gearLocked = false,
+  onClose,
+  onSaved,
+  onDeleted,
+  focusFtp = false,
+}: Props) {
   const addToast = useToastStore((s) => s.addToast);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const [title, setTitle] = useState(activity.title ?? "");
   const [notes, setNotes] = useState(activity.notes ?? "");
   const [sportType, setSportType] = useState(activity.sport_type);
+  const [gear, setGear] = useState(gearId ?? NO_GEAR);
+  const { data: gearItems = [] } = useQuery({
+    queryKey: ["gear"],
+    queryFn: () => api.listGear(),
+    enabled: !gearLocked,
+  });
+  // The items that fit the sport being saved, plus the current one so a
+  // save keeps it even if it is retired or of another kind.
+  const gearChoices = gearChoicesFor(gearItems, sportType, gearId);
+  // A sport change can take the picked item off the list; a pick that is
+  // no longer offered falls back to what the activity is on, never to a
+  // hidden value the save would still send.
+  function changeSport(next: string) {
+    setSportType(next);
+    const offered = new Set(gearChoicesFor(gearItems, next, gearId).map((g) => g.id));
+    setGear((g) => (g === NO_GEAR || offered.has(g) ? g : (gearId ?? NO_GEAR)));
+  }
   const [locationText, setLocationText] = useState(activity.location_name ?? "");
   // The FTP the activity was recorded with — editable when the file carried
   // normalized power, since IF and TSS are recomputed from it.
@@ -158,13 +193,26 @@ export function EditActivityModal({ activity, onClose, onSaved, onDeleted, focus
     }
   };
   const updateMutation = useMutation({
-    mutationFn: async (): Promise<{ ftpRefused: boolean }> => {
+    mutationFn: async (): Promise<{ ftpRefused: boolean; gearRefused: boolean }> => {
       let ftpRefused = false;
+      let gearRefused = false;
       await api.updateActivity(activity.id, {
         title: title || undefined,
         notes: notes || undefined,
         sport_type: sportType,
       });
+      // Gear is its own write; untouched, it is not re-sent (a retired
+      // item already on the activity would be refused anew). Like the
+      // FTP below, a refusal is reported by name and does not undo the
+      // rest of the save.
+      if (!gearLocked && gear !== (gearId ?? NO_GEAR)) {
+        try {
+          await api.setActivityGear(activity.id, gear === NO_GEAR ? null : gear);
+        } catch (err) {
+          gearRefused = true;
+          addToast("error", `Gear not changed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       // A changed FTP rewrites IF, TSS and the power zones on the backend.
       // Its own failure is reported by name and does not undo the rest of
@@ -205,12 +253,13 @@ export function EditActivityModal({ activity, onClose, onSaved, onDeleted, focus
           }
         }
       }
-      return { ftpRefused };
+      return { ftpRefused, gearRefused };
     },
-    onSuccess: ({ ftpRefused }) => {
+    onSuccess: ({ ftpRefused, gearRefused }) => {
       // The last toast on screen must not read as "everything saved"
-      // when the FTP was refused a moment earlier.
-      addToast("success", ftpRefused ? "Activity updated (FTP unchanged)" : "Activity updated");
+      // when the FTP or the gear was refused a moment earlier.
+      const unchanged = [ftpRefused && "FTP", gearRefused && "gear"].filter(Boolean).join(" and ");
+      addToast("success", unchanged ? `Activity updated (${unchanged} unchanged)` : "Activity updated");
       onSaved();
     },
     onError: (err: Error) => {
@@ -357,7 +406,7 @@ export function EditActivityModal({ activity, onClose, onSaved, onDeleted, focus
             ariaLabel="Sport type"
             className="w-full"
             value={sportType}
-            onChange={setSportType}
+            onChange={changeSport}
             options={[...SPORT_TYPES]
               .sort((a, b) => SPORT_LABELS[a].localeCompare(SPORT_LABELS[b]))
               .map((st) => ({
@@ -366,6 +415,31 @@ export function EditActivityModal({ activity, onClose, onSaved, onDeleted, focus
                 icon: <SportIcon sport={st} size={18} />,
               }))}
           />
+        </div>
+
+        {/* Gear (ADR 0003) */}
+        <div>
+          <label className="text-xs text-muted block mb-1">Gear</label>
+          {gearLocked ? (
+            <p className="text-xs text-faint">
+              A multisport event carries no gear of its own; its legs do.
+            </p>
+          ) : (
+            <Select
+              ariaLabel="Gear"
+              className="w-full"
+              value={gear}
+              onChange={setGear}
+              options={[
+                { value: NO_GEAR, label: "None" },
+                ...gearChoices.map((g) => ({
+                  value: g.id,
+                  label: g.retired_at ? `${g.name} (retired)` : g.name,
+                  icon: <GearKindIcon kind={g.kind} size={14} />,
+                })),
+              ]}
+            />
+          )}
         </div>
 
         {/* Notes */}

@@ -85,12 +85,15 @@ fn defaults_of(conn: &Connection, gear_id: &str) -> Result<Vec<String>> {
     rows.collect()
 }
 
-/// The item new imports of `sport_type` get, if one is set and in use.
-pub fn default_for_sport(conn: &Connection, sport_type: &str) -> Result<Option<String>> {
+/// The item an import of `sport_type` starting at `start_time` gets, if
+/// one is set, in use and already bought by then — a 2019 archive must
+/// not land on a bike bought in 2024 (the same rule as `assign_history`).
+pub fn default_for_sport(conn: &Connection, sport_type: &str, start_time: &str) -> Result<Option<String>> {
     conn.query_row(
         "SELECT d.gear_id FROM gear_default d JOIN gear g ON g.id = d.gear_id \
-         WHERE d.sport_type = ?1 AND g.retired_at IS NULL",
-        params![sport_type],
+         WHERE d.sport_type = ?1 AND g.retired_at IS NULL \
+           AND (g.purchased_at IS NULL OR ?2 >= g.purchased_at)",
+        params![sport_type, start_time],
         |r| r.get(0),
     )
     .optional()
@@ -158,6 +161,57 @@ pub fn update(conn: &Connection, id: &str, input: &GearInput) -> Result<bool> {
 /// Whether the item exists and is retired (None = no such item).
 pub fn is_retired(conn: &Connection, id: &str) -> Result<Option<bool>> {
     Ok(get(conn, id)?.map(|g| g.retired_at.is_some()))
+}
+
+/// The item an activity is on, if any (None also for no such activity).
+pub fn gear_of_activity(conn: &Connection, activity_id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT gear_id FROM activity WHERE id = ?1",
+        params![activity_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(|r| r.flatten())
+}
+
+/// Put an activity on an item, or take it off (None). Ok(false) when there
+/// is no such activity. The FK refuses an unknown item; the command checks
+/// the activity is no multisport whole first.
+pub fn set_activity_gear(conn: &Connection, activity_id: &str, gear_id: Option<&str>) -> Result<bool> {
+    let n = conn.execute(
+        "UPDATE activity SET gear_id = ?2 WHERE id = ?1",
+        params![activity_id, gear_id],
+    )?;
+    Ok(n > 0)
+}
+
+/// The Garage card's quick action: put the item on every activity of its
+/// default sports that has no gear yet, from its purchase date on (all
+/// time without one). Multisport wholes (merged containers, FIT-native
+/// files) are skipped: their aggregate spans several sports. Returns how
+/// many activities were assigned.
+pub fn assign_history(conn: &Connection, gear_id: &str) -> Result<usize> {
+    let since: Option<String> = conn.query_row(
+        "SELECT purchased_at FROM gear WHERE id = ?1",
+        params![gear_id],
+        |r| r.get(0),
+    )?;
+    // start_time is ISO ("2026-10-01T07:55:38+03:00" from FIT, with the
+    // local offset; a GPX/TCX keeps its file's form, often "…Z"); against a
+    // bare date the string order is the date order, and a day's activities
+    // sort after the day itself, so ">=" takes the purchase day in. The
+    // date compared is the one the string carries — for a "…Z" file the
+    // UTC one — so an activity in the small hours of the purchase day can
+    // fall a day short; hours on one boundary day, accepted.
+    conn.execute(
+        "UPDATE activity SET gear_id = ?1 \
+         WHERE gear_id IS NULL \
+           AND sport_type IN (SELECT sport_type FROM gear_default WHERE gear_id = ?1) \
+           AND (?2 IS NULL OR start_time >= ?2) \
+           AND NOT EXISTS (SELECT 1 FROM activity c WHERE c.parent_id = activity.id) \
+           AND NOT EXISTS (SELECT 1 FROM multisport_leg l WHERE l.activity_id = activity.id)",
+        params![gear_id, since],
+    )
 }
 
 /// The item's defaults become exactly `sports`; a sport named here is
@@ -255,8 +309,14 @@ mod tests {
         assert_eq!(it.stats.elev_gain_m, 200.0);
         assert_eq!(it.stats.last_used.as_deref(), Some("2026-09-05T08:00:00+03:00"));
         assert_eq!(it.default_for, vec!["ride"]);
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(g.id.as_str()));
-        assert_eq!(default_for_sport(&conn, "run").unwrap(), None);
+        assert_eq!(default_for_sport(&conn, "ride", "2026-09-01T08:00:00+03:00").unwrap().as_deref(), Some(g.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "run", "2026-09-01T08:00:00+03:00").unwrap(), None);
+        // Bought on a date: nothing earlier lands on it, the day itself does.
+        let mut dated = bike("Road");
+        dated.purchased_at = Some("2024-06-15".into());
+        update(&conn, &g.id, &dated).unwrap();
+        assert_eq!(default_for_sport(&conn, "ride", "2024-06-14T23:00:00+03:00").unwrap(), None);
+        assert_eq!(default_for_sport(&conn, "ride", "2024-06-15T06:00:00+03:00").unwrap().as_deref(), Some(g.id.as_str()));
     }
 
     #[test]
@@ -272,7 +332,7 @@ mod tests {
         let conn = db::test_db();
         let a = insert(&conn, &bike("A")).unwrap();
         let b = insert(&conn, &bike("B")).unwrap();
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(b.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap().as_deref(), Some(b.id.as_str()));
         let items = list(&conn).unwrap();
         let of = |id: &str| items.iter().find(|i| i.gear.id == id).unwrap().default_for.clone();
         assert!(of(&a.id).is_empty());
@@ -282,8 +342,8 @@ mod tests {
         let mut claim = bike("A");
         claim.default_for = vec!["ride".into(), "mountain_bike".into()];
         assert!(update(&conn, &a.id, &claim).unwrap());
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(a.id.as_str()));
-        assert_eq!(default_for_sport(&conn, "mountain_bike").unwrap().as_deref(), Some(a.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap().as_deref(), Some(a.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "mountain_bike", "2026-01-01").unwrap().as_deref(), Some(a.id.as_str()));
         assert!(!update(&conn, "nope", &claim).unwrap());
     }
 
@@ -318,10 +378,10 @@ mod tests {
         let mut back = bike("Old");
         back.default_for = vec!["ride".into()];
         update(&conn, &old.id, &back).unwrap();
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(old.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap().as_deref(), Some(old.id.as_str()));
 
         assert!(set_retired(&conn, &old.id, true).unwrap());
-        assert_eq!(default_for_sport(&conn, "ride").unwrap(), None, "a retired item is no default");
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap(), None, "a retired item is no default");
         let items = list(&conn).unwrap();
         assert_eq!(items[0].gear.id, new.id, "in-use items first");
         assert!(items[1].gear.retired_at.is_some());
@@ -331,11 +391,11 @@ mod tests {
         // Editing the retired item cannot hand it a default back: the
         // active item's default stays where it is.
         update(&conn, &new.id, &back).unwrap();
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(new.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap().as_deref(), Some(new.id.as_str()));
         let mut sneak = bike("Old renamed");
         sneak.default_for = vec!["ride".into()];
         assert!(update(&conn, &old.id, &sneak).unwrap());
-        assert_eq!(default_for_sport(&conn, "ride").unwrap().as_deref(), Some(new.id.as_str()));
+        assert_eq!(default_for_sport(&conn, "ride", "2026-01-01").unwrap().as_deref(), Some(new.id.as_str()));
         assert_eq!(get(&conn, &old.id).unwrap().unwrap().name, "Old renamed");
         assert_eq!(is_retired(&conn, &old.id).unwrap(), Some(true));
         assert_eq!(is_retired(&conn, &new.id).unwrap(), Some(false));
@@ -365,6 +425,82 @@ mod tests {
         let defaults: i64 = conn.query_row("SELECT count(*) FROM gear_default", [], |r| r.get(0)).unwrap();
         assert_eq!(defaults, 0);
         assert!(list(&conn).unwrap().is_empty());
+    }
+
+    fn activity_of(conn: &Connection, id: &str, start: &str, sport: &str, parent: Option<&str>) {
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, parent_id) VALUES (?1, ?2, ?3, ?4)",
+            params![id, start, sport, parent],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_activity_goes_on_an_item_and_comes_off_again() {
+        let conn = db::test_db();
+        let g = insert(&conn, &bike("Road")).unwrap();
+        activity_of(&conn, "a1", "2026-09-01T08:00:00+03:00", "ride", None);
+        assert_eq!(gear_of_activity(&conn, "a1").unwrap(), None);
+        assert!(set_activity_gear(&conn, "a1", Some(&g.id)).unwrap());
+        assert_eq!(gear_of_activity(&conn, "a1").unwrap().as_deref(), Some(g.id.as_str()));
+        assert_eq!(list(&conn).unwrap()[0].stats.activities, 1);
+        assert!(set_activity_gear(&conn, "a1", None).unwrap());
+        assert_eq!(gear_of_activity(&conn, "a1").unwrap(), None);
+        assert!(!set_activity_gear(&conn, "nope", Some(&g.id)).unwrap());
+        assert_eq!(gear_of_activity(&conn, "nope").unwrap(), None);
+        // An unknown item is refused by the schema, not stored as a dangling id.
+        assert!(set_activity_gear(&conn, "a1", Some("ghost")).is_err());
+    }
+
+    #[test]
+    fn history_assignment_takes_the_default_sports_from_the_purchase_on_and_skips_multisport() {
+        let conn = db::test_db();
+        let mut road = bike("Road");
+        road.purchased_at = Some("2024-01-01".into());
+        road.default_for = vec!["ride".into(), "mountain_bike".into()];
+        let g = insert(&conn, &road).unwrap();
+        let other = insert(&conn, &bike("Other bike")).unwrap(); // claims nothing: Road re-claims below
+        let mut reclaim = road.clone();
+        reclaim.default_for = vec!["ride".into(), "mountain_bike".into()];
+        update(&conn, &g.id, &reclaim).unwrap();
+
+        activity_of(&conn, "before", "2023-12-31T23:00:00+03:00", "ride", None);
+        activity_of(&conn, "on-the-day", "2024-01-01T07:00:00+03:00", "ride", None);
+        activity_of(&conn, "mtb", "2025-05-05T07:00:00+03:00", "mountain_bike", None);
+        activity_of(&conn, "run", "2025-05-06T07:00:00+03:00", "run", None);
+        activity_of(&conn, "taken", "2025-05-07T07:00:00+03:00", "ride", None);
+        set_activity_gear(&conn, "taken", Some(&other.id)).unwrap();
+        // A merged container (it has a child) and a native multisport
+        // (it has leg rows) are both skipped; the merged leg itself is not.
+        activity_of(&conn, "container", "2025-06-01T07:00:00+03:00", "triathlon", None);
+        activity_of(&conn, "leg", "2025-06-01T08:00:00+03:00", "ride", Some("container"));
+        activity_of(&conn, "native", "2025-07-01T07:00:00+03:00", "ride", None);
+        conn.execute(
+            "INSERT INTO multisport_leg (activity_id, leg_number, sport_type) VALUES ('native', 1, 'ride')",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(assign_history(&conn, &g.id).unwrap(), 3);
+        let on_road = |id: &str| gear_of_activity(&conn, id).unwrap().as_deref() == Some(g.id.as_str());
+        assert!(on_road("on-the-day"));
+        assert!(on_road("mtb"));
+        assert!(on_road("leg"));
+        assert!(!on_road("before"), "earlier than the purchase");
+        assert!(!on_road("run"), "not a default sport");
+        assert!(!on_road("container"));
+        assert!(!on_road("native"));
+        assert_eq!(gear_of_activity(&conn, "taken").unwrap().as_deref(), Some(other.id.as_str()), "already on an item");
+        // Nothing left to take: a second run assigns none.
+        assert_eq!(assign_history(&conn, &g.id).unwrap(), 0);
+
+        // Without a purchase date the whole history qualifies.
+        let mut undated = road.clone();
+        undated.purchased_at = None;
+        update(&conn, &g.id, &undated).unwrap();
+        set_activity_gear(&conn, "before", None).unwrap();
+        assert_eq!(assign_history(&conn, &g.id).unwrap(), 1);
+        assert!(on_road("before"));
     }
 
     #[test]

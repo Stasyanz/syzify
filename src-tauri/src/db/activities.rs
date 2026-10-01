@@ -124,7 +124,8 @@ const ACTIVITY_COLUMNS: &str = "id, start_time, timezone_offset, sport_type, tit
 /// Canonical column list for an [`ActivitySummary`] (aliased `a`), in the order
 /// [`row_to_summary`] reads.
 const SUMMARY_COLUMNS: &str = "a.id, a.start_time, a.sport_type, a.title, a.distance_m, \
-     a.duration_s, a.elev_gain_m, a.avg_speed_mps, a.avg_hr, a.location_name, a.source_device";
+     a.duration_s, a.elev_gain_m, a.avg_speed_mps, a.avg_hr, a.location_name, a.source_device, \
+     a.gear_id";
 
 /// Build a full [`Activity`] from a row selected with [`ACTIVITY_COLUMNS`].
 fn row_to_activity(row: &rusqlite::Row) -> Result<Activity> {
@@ -220,6 +221,7 @@ fn row_to_summary(row: &rusqlite::Row) -> Result<ActivitySummary> {
         avg_hr: row.get(8)?,
         location_name: row.get(9)?,
         source_device: row.get(10)?,
+        gear_id: row.get(11)?,
     })
 }
 

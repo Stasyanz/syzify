@@ -49,6 +49,8 @@ pub fn get_activity_detail(
     let sets = db::exercise_sets::get_exercise_sets(&conn, &id).map_err(|e| e.to_string())?;
     let time_in_zones = db::time_in_zones::get_time_in_zones(&conn, &id).map_err(|e| e.to_string())?;
     let hrv_samples = db::hrv_samples::get_hrv_samples(&conn, &id).map_err(|e| e.to_string())?;
+    let gear_id = db::gear::gear_of_activity(&conn, &id).map_err(|e| e.to_string())?;
+    let is_multisport = db::multisport_legs::is_multisport(&conn, &id).map_err(|e| e.to_string())?;
     let recent_power = if activity.threshold_power_w.is_some() {
         db::activities::recent_power_activities(&conn, &id, db::activities::RECENT_POWER_RIDES)
             .map_err(|e| e.to_string())?
@@ -66,6 +68,8 @@ pub fn get_activity_detail(
         time_in_zones,
         hrv_samples,
         recent_power,
+        gear_id,
+        is_multisport,
     })
 }
 
@@ -73,6 +77,12 @@ pub fn get_activity_detail(
 pub struct ActivityDetail {
     pub activity: Activity,
     pub trackpoints: TrackPointColumns,
+    /// The gear item the activity is on (ADR 0003); None when unassigned.
+    pub gear_id: Option<String>,
+    /// A multisport whole (merged container or FIT-native file): the one
+    /// rule the backend applies, so the page offers no gear exactly when
+    /// the command would refuse it.
+    pub is_multisport: bool,
     pub laps: Vec<Lap>,
     pub legs: Vec<crate::models::multisport_leg::MultisportLeg>,
     pub lengths: Vec<SwimLength>,
