@@ -43,6 +43,15 @@ export interface ChartConfig {
   /** Smallest y-range the chart shows (display units): data spanning less
    * is centered in it instead of stretched to the panel (see widenToSpan). */
   minSpan?: number;
+  /** How a trackpoint without a reading is charted. The default is zero:
+   * the bars and the average line want a number per column, and a
+   * dropped sensor reading as 0 is the head unit's own convention for
+   * HR, cadence and power. A "gap" breaks the line instead, for the
+   * series where zero is a value the data never means: a hole at 0 m on
+   * a mountain ride would own the elevation axis (#161), and a stop,
+   * which pace leaves null, is not a 0:00 /km sprint at the top of a
+   * flipped axis. */
+  missing?: "gap";
   /** No "avg" reference line — average altitude is not a training reference. */
   noAverage?: boolean;
   /** The summary's average in this chart's display units, if the summary
@@ -153,6 +162,7 @@ export const ELEVATION = (): ChartConfig => ({
     color: b.color,
   })),
   minSpan: isImperial() ? ELEVATION_MIN_SPAN_M * FT_PER_M : ELEVATION_MIN_SPAN_M,
+  missing: "gap",
   noAverage: true,
 });
 export const HR: ChartConfig = {
@@ -182,6 +192,7 @@ export const PACE = (): ChartConfig => {
     sampleAvg: (_series, speedMps, t) => meanPace(speedMps, RUN_STOP_MPS, perUnit, t),
     valueFmt: fmtPace,
     invertY: true,
+    missing: "gap",
   };
 };
 // Swim pace per 100 m/yd; the near-stop cutoff sits lower than running's
@@ -201,6 +212,7 @@ export const SWIM_PACE = (): ChartConfig => {
     sampleAvg: (_series, speedMps, t) => meanPace(speedMps, SWIM_STOP_MPS, per100, t),
     valueFmt: fmtPace,
     invertY: true,
+    missing: "gap",
   };
 };
 export const SPEED = (): ChartConfig => {

@@ -443,7 +443,9 @@ function SingleChart({
               // descents read as such.
               const g = gradeRunGrades?.[chartIdx] ?? gradeValues?.[chartIdx];
               const gradeTxt = g != null && isFinite(g) ? ` · ${formatGrade(g)}` : "";
-              setTip({ left, text: fmtVal(values[chartIdx]) + gradeTxt });
+              // Over a gap the popup says there is no reading, not "0 m".
+              const v = values[chartIdx];
+              setTip({ left, text: (Number.isNaN(v) ? "—" : fmtVal(v)) + gradeTxt });
             }
             const tpIdx = indexMap[chartIdx] ?? null;
             isLocalCursor.current = true;
@@ -509,8 +511,13 @@ function SingleChart({
     };
 
     // The elevation profile with a climb is two series over one column of
-    // values (the altitude fill, then the grade fill with the line).
-    const column = new Float64Array(values);
+    // values (the altitude fill, then the grade fill with the line). A gap
+    // (NaN in `values`) must reach uPlot as null — a Float64Array has no
+    // null and uPlot gives NaN no special treatment — so a column with
+    // gaps goes as a plain array; the others keep the typed one.
+    const column = values.some(Number.isNaN)
+      ? values.map((v) => (Number.isNaN(v) ? null : v))
+      : new Float64Array(values);
     const data: uPlot.AlignedData = climbs
       ? [new Float64Array(xValues), column, column]
       : [new Float64Array(xValues), column];
@@ -636,7 +643,10 @@ function SingleChart({
     if (plot.cursor.idx === chartIdx) return;
 
     const left = plot.valToPos(xValues[chartIdx], "x");
-    const top = plot.valToPos(values[chartIdx], "y");
+    // A point in a gap has no height to sit the cursor at; the vertical
+    // line still marks the x.
+    const v = values[chartIdx];
+    const top = Number.isNaN(v) ? 0 : plot.valToPos(v, "y");
     plot.setCursor({ left, top }, false);
   }, [hoveredPointIndex, reverseMap, xValues, values, config.key]);
 
@@ -923,8 +933,13 @@ export function ChartPanel({
       indexMap.push(i);
       reverseMap.set(i, chartIdx);
       xValues.push(xVal);
+      // A missing reading is 0 for the metrics (see ChartConfig.missing)
+      // and NaN where the config wants a gap: NaN keeps the column a
+      // number[] (a Float64Array holds it, `?? 0` logic stays untouched)
+      // and becomes null on the way into uPlot, which is what breaks the
+      // line there.
       for (const [config, data] of series) {
-        chartValues.get(config.key)!.push(data[i] ?? 0);
+        chartValues.get(config.key)!.push(data[i] ?? (config.missing === "gap" ? NaN : 0));
       }
       gradeValues.push(grades[i] ?? null);
       gradeCats.push(gradeCatsAll[i] ?? 0);

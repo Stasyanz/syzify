@@ -146,6 +146,13 @@ describe("metric configs", () => {
     expect(HR.minSpan).toBeUndefined();
   });
 
+  it("elevation and pace chart a missing reading as a gap; the metrics keep zero", () => {
+    // Altitude has no zero convention, and a stop (pace null) is not a
+    // 0:00 sprint at the top of the flipped axis.
+    for (const cfg of [ELEVATION(), PACE(), SWIM_PACE()]) expect(cfg.missing).toBe("gap");
+    for (const cfg of [HR, CADENCE, POWER, SPEED()]) expect(cfg.missing).toBeUndefined();
+  });
+
   it("elevation opts out of the average line and converts to feet when imperial", () => {
     const tp = columns(2, { altitude_m: [100, null] });
     expect(ELEVATION().noAverage).toBe(true);

@@ -15,6 +15,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   longer carry the `tags` field, which was always empty.
 
 ### Fixed
+- A trackpoint without an altitude reading is a gap in the elevation
+  profile, not a point at sea level (#161): one dropped barometer sample
+  on a mountain ride drew a spike to 0 m and stretched the axis to it.
+  The line breaks over the hole and resumes after it, the axis follows
+  the real readings, and the hover popup says there is no reading there.
+  The pace chart gets the same treatment for stops, which it used to
+  draw as a 0:00 /km spike at the top of its axis.
 - The elevation profile of a flat ride is no longer a staircase (#159):
   a barometer writes altitude in 0.2 m steps, and with the axis hugging a
   few metres of drift every step was a ledge across the panel. The axis

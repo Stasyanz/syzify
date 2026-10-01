@@ -23,6 +23,10 @@ type PlotOpts = {
 const built: { opts: PlotOpts; data: unknown[] }[] = [];
 /** Every setSize the panel asked of a plot, in order. */
 const sizes: { width: number; height: number; label?: string }[] = [];
+/** Every setCursor the panel asked of a plot (the map → chart focus). */
+const cursorSets: { left: number; top: number; label?: string }[] = [];
+/** Every value the panel asked a plot to place. */
+const valToPosArgs: number[] = [];
 /** The bar-path configs handed to uPlot.paths.bars — their fill painter. */
 const barCfgs: { disp: { fill: { values: (u: unknown) => string[] } } }[] = [];
 
@@ -55,8 +59,11 @@ vi.mock("uplot", () => ({
       this.height = s.height;
       sizes.push({ ...s, label: this.label });
     }
-    setCursor() {}
-    valToPos() {
+    setCursor(c: { left: number; top: number }) {
+      cursorSets.push({ ...c, label: this.label });
+    }
+    valToPos(v: number) {
+      valToPosArgs.push(v);
       return 0;
     }
     destroy() {}
@@ -67,6 +74,7 @@ vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 import { ChartPanel, clampWideChartHeight, CHART_HEIGHT_PX, WIDE_CHART_MAX_HEIGHT_PX } from "./ChartPanel";
 import { api } from "../../lib/tauri";
 import { GRADE_COLORS } from "./chartZones";
+import { useActivityStore } from "../../stores/activityStore";
 
 /** A trackpoint column set with every column null-filled to `n`, then the
  * given columns overlaid. */
@@ -129,7 +137,11 @@ beforeEach(() => {
   } as unknown as typeof ResizeObserver;
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A focus a failing assertion left behind must not reach the next test.
+  useActivityStore.setState({ hoveredPointIndex: null });
+});
 
 describe("ChartPanel elevation layers", () => {
   beforeEach(() => built.splice(0));
@@ -179,6 +191,50 @@ describe("ChartPanel elevation layers", () => {
     // A plain line (power without zones) is left to uPlot's autoscale.
     const power = built.find((b) => b.opts.series[1]?.label?.startsWith("Power"))!;
     expect(power.opts.scales?.y).toBeUndefined();
+  });
+
+  it("charts a missing altitude as a gap, not a point at sea level (#161)", () => {
+    // A mountain ride with two dropped barometer samples; HR has a hole too.
+    const hole = (i: number) => i === 7 || i === 8;
+    const { container } = renderPanel(
+      columns(N, {
+        distance_m: seq((i) => i * 100),
+        altitude_m: Array.from({ length: N }, (_, i) => (hole(i) ? null : 1200 + i)),
+        hr: Array.from({ length: N }, (_, i) => (i === 3 ? null : 120 + i)),
+      }),
+      vi.fn(),
+    );
+    const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+    const column = elevation.data[1] as (number | null)[];
+    // The gap reaches uPlot as null in a plain array (a typed array could
+    // not carry it), and nothing in the column sits at 0 to own the axis.
+    expect(Array.isArray(column)).toBe(true);
+    expect(column[7]).toBeNull();
+    expect(column[8]).toBeNull();
+    expect(column[6]).toBe(1206);
+    expect(column.includes(0)).toBe(false);
+    // The metrics keep the zero convention and the typed column.
+    const hr = built.find((b) => b.opts.series[1]?.label?.startsWith("Heart"))!;
+    expect(hr.data[1]).toBeInstanceOf(Float64Array);
+    // Over the gap the popup says there is no reading, not "0 m".
+    const onCursor = elevation.opts.hooks!.setCursor![0];
+    const hover = (idx: number | null) => {
+      act(() => onCursor({ cursor: { idx, left: 0 }, over: document.createElement("div") }));
+      return container.textContent ?? "";
+    };
+    expect(hover(7)).toContain("—");
+    expect(hover(7)).not.toMatch(/\b0 m\b/);
+    expect(hover(6)).toContain("1206 m");
+    hover(null);
+    // Focus from the map on the gap: the cursor still marks the x, and
+    // no NaN is ever handed to the plot to place.
+    cursorSets.splice(0);
+    valToPosArgs.splice(0);
+    act(() => useActivityStore.setState({ hoveredPointIndex: 7 }));
+    const onElevation = cursorSets.filter((c) => c.label?.startsWith("Elevation"));
+    expect(onElevation).toEqual([{ left: 0, top: 0, label: onElevation[0]?.label }]);
+    expect(valToPosArgs.some(Number.isNaN)).toBe(false);
+    act(() => useActivityStore.setState({ hoveredPointIndex: null }));
   });
 
   it("draws the profile with grades as two series over one column, other charts as one", () => {
