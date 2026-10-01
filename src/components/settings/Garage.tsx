@@ -12,7 +12,7 @@ import {
   type RuleCandidates,
   type SportType,
 } from "../../lib/types";
-import { kindSports, rulesSummary, sensorLabel } from "../../lib/gear";
+import { kindSports, odometerM, rulesSummary, sensorLabel, wearFraction, wearState, wearTip, WEAR_COLORS } from "../../lib/gear";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatDistance, formatDurationHM, formatElevation } from "../../lib/format";
 import { useUnits, isImperial, distanceUnit, M_PER_MILE } from "../../lib/units";
@@ -32,20 +32,7 @@ export const GEAR_KINDS: { id: GearKind; label: string }[] = [
   { id: "other", label: "Other" },
 ];
 
-export { kindSports };
-
-/** The odometer: what the item had done before Syzify plus what it has
- * done in it. */
-export function odometerM(item: Pick<GearItem, "initial_distance_m" | "stats">): number {
-  return item.initial_distance_m + item.stats.distance_m;
-}
-
-/** How far along its limit the item is, 0–1 (over the limit clamps to 1),
- * or null without a limit. */
-export function wearFraction(item: Pick<GearItem, "initial_distance_m" | "stats" | "distance_limit_m">): number | null {
-  if (item.distance_limit_m == null || item.distance_limit_m <= 0) return null;
-  return Math.min(1, odometerM(item) / item.distance_limit_m);
-}
+export { kindSports, odometerM, wearFraction, wearTip };
 
 /** What a distance field holds. `untouched` is the text the field opened
  * with and `original` the meters behind it: text left as it was gives
@@ -71,16 +58,6 @@ export function distanceInputValue(meters: number | null): string {
   if (meters == null) return "";
   const v = meters / (isImperial() ? M_PER_MILE : 1000);
   return String(Math.round(v * 100) / 100);
-}
-
-/** The wear bar's tooltip: "7305.82 km of 8000.00 km · 91 %", or "past
- * the limit" once over it. */
-export function wearTip(item: Pick<GearItem, "initial_distance_m" | "stats" | "distance_limit_m">, wear: number): string {
-  const odo = formatDistance(odometerM(item));
-  const limit = formatDistance(item.distance_limit_m);
-  const over = odometerM(item) >= (item.distance_limit_m ?? Infinity);
-  // floor: 99.6 % must not read as 100 % while the limit is not reached.
-  return `${odo} of ${limit} · ${over ? "past the limit" : `${Math.floor(wear * 100)} %`}`;
 }
 
 function formatDay(iso: string): string {
@@ -306,7 +283,7 @@ export function Garage() {
                             data-testid="wear-fill"
                             style={{
                               width: `${wear * 100}%`,
-                              background: wear >= 1 ? "var(--danger)" : wear >= 0.8 ? "var(--warn)" : "var(--good)",
+                              background: WEAR_COLORS[wearState(wear)],
                             }}
                           />
                         </div>

@@ -749,6 +749,7 @@ body {
 .rec { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 10px; }
 .rec.link { cursor: pointer; transition: background 0.12s; }
 .rec.link:hover { background: var(--card-2); }
+.rec.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rec .ic { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-2); display: grid; place-items: center; flex-shrink: 0; }
 .rec .rl { font-size: 11px; color: var(--muted); }
 .rec .rv { font-family: var(--font-num); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }

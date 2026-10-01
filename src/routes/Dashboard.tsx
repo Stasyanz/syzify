@@ -5,6 +5,7 @@ import { VolumeChart } from "../components/dashboard/VolumeChart";
 import { SportDistribution } from "../components/dashboard/SportDistribution";
 import { PersonalRecords } from "../components/dashboard/PersonalRecords";
 import { MiniCalendar } from "../components/dashboard/MiniCalendar";
+import { GearWear } from "../components/dashboard/GearWear";
 import { PluginContributions } from "../components/plugins/PluginContributions";
 import { useInvalidateOnNewDay } from "../hooks/useToday";
 import "../lib/chartSetup";
@@ -30,6 +31,7 @@ export function DashboardPage() {
           ) : data ? (
             <>
               <SummaryCards data={data} />
+              <GearWear />
               <div className="threecol">
                 <VolumeChart weekVolume={data.week_volume} />
                 <SportDistribution distribution={data.week_sport_distribution} />

@@ -51,6 +51,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   the activities without gear. Existing activities get their profile and
   sensors filled in once at startup from their stored files — once the
   activities are unlocked, for an encrypted vault.
+- The dashboard reminds you of gear that is wearing out (#168): a "Gear
+  wear" card lists the items in use at or past 80 % of their "replace
+  at" distance, most worn first — "Pegasus · 700.00 km of 800.00 km ·
+  87 %", red once past the limit — and a row opens the Garage. A
+  warning, not a service log: retire the item or raise its limit to
+  clear it.
 
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:

@@ -18,6 +18,7 @@ vi.mock("../components/dashboard/SportDistribution", () => ({
   SportDistribution: () => null,
 }));
 vi.mock("../components/dashboard/PersonalRecords", () => ({ PersonalRecords: () => null }));
+vi.mock("../components/dashboard/GearWear", () => ({ GearWear: () => null }));
 vi.mock("../components/plugins/PluginContributions", () => ({
   PluginContributions: () => null,
 }));

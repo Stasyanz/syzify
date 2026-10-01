@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GearItem } from "./types";
-import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel } from "./gear";
+import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel, wearState, wornItems, WEAR_COLORS, WEAR_WARN } from "./gear";
 
 const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => ({
   id,
@@ -68,5 +68,42 @@ describe("rule labels", () => {
     ).toBe("profile ROAD · sensor Favero Electronics Assioma Duo (bike power) · sensor 999");
     expect(rulesSummary([{ kind: "sensor_serial", value: "3632674300" }], undefined)).toBe("sensor 3632674300");
     expect(rulesSummary([], candidates)).toBe("");
+  });
+});
+
+describe("wornItems", () => {
+  const withWear = (id: string, km: number, limitKm: number | null, retired = false): GearItem => ({
+    ...item(id, "shoes", retired),
+    distance_limit_m: limitKm == null ? null : limitKm * 1000,
+    stats: { activities: 1, distance_m: km * 1000, duration_s: 0, elev_gain_m: 0, last_used: null },
+  });
+
+  it("lists the items in use at or past the warning share of their limit, most worn first", () => {
+    expect(WEAR_WARN).toBe(0.8);
+    const worn = wornItems([
+      withWear("fresh", 100, 800),
+      withWear("edge", 640, 800),
+      withWear("gone", 900, 800),
+      withWear("no-limit", 5000, null),
+      withWear("retired", 900, 800, true),
+      withWear("almost", 790, 800),
+    ]);
+    expect(worn.map((w) => w.item.id)).toEqual(["gone", "almost", "edge"]);
+    expect(worn[0].wear).toBe(1);
+    expect(worn[2].wear).toBeCloseTo(0.8);
+    // Past the limit the bar is full for both, but the one further past
+    // comes first — not the one earlier in the alphabet.
+    const over = wornItems([withWear("a-little", 900, 800), withWear("z-far", 1600, 800)]);
+    expect(over.map((w) => w.item.id)).toEqual(["z-far", "a-little"]);
+    expect(over.map((w) => w.wear)).toEqual([1, 1]);
+  });
+
+  it("names the wear state and its color by one rule", () => {
+    expect(wearState(0.1)).toBe("ok");
+    expect(wearState(0.79)).toBe("ok");
+    expect(wearState(0.8)).toBe("warn");
+    expect(wearState(0.999)).toBe("warn");
+    expect(wearState(1)).toBe("over");
+    expect(WEAR_COLORS.over).toBe("var(--danger)");
   });
 });
