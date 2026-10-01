@@ -15,6 +15,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   longer carry the `tags` field, which was always empty.
 
 ### Fixed
+- The elevation profile of a flat ride is no longer a staircase (#159):
+  a barometer writes altitude in 0.2 m steps, and with the axis hugging a
+  few metres of drift every step was a ledge across the panel. The axis
+  now spans at least 50 m, as Garmin Connect and Strava do, so a flat
+  ride reads as a near-flat line and hills still fill the panel; nothing
+  is smoothed or hidden, and a profile along the coast keeps its floor
+  at sea level rather than hanging in the middle of an empty axis.
 - The Vault tab of Settings was a few pixels narrower than the other
   tabs: it is the only one tall enough to scroll, and the scrollbar took
   its width from the cards. Every tab now reserves the scrollbar's

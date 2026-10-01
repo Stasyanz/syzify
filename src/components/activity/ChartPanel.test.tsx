@@ -13,7 +13,13 @@ vi.mock("../../lib/tauri", () => ({
 /** Every uPlot built by the panel, for the layer tests below. */
 type Painter = (u: unknown) => unknown;
 type SeriesOpts = { label?: string; stroke?: string | Painter; fill?: string | Painter; width?: number };
-type PlotOpts = { series: SeriesOpts[]; height?: number; hooks?: { setCursor?: ((u: unknown) => void)[] } };
+type RangeFn = (u: unknown, min: number | null, max: number | null) => [number | null, number | null];
+type PlotOpts = {
+  series: SeriesOpts[];
+  height?: number;
+  hooks?: { setCursor?: ((u: unknown) => void)[] };
+  scales?: { y?: { range?: RangeFn; dir?: number } };
+};
 const built: { opts: PlotOpts; data: unknown[] }[] = [];
 /** Every setSize the panel asked of a plot, in order. */
 const sizes: { width: number; height: number; label?: string }[] = [];
@@ -23,6 +29,11 @@ const barCfgs: { disp: { fill: { values: (u: unknown) => string[] } } }[] = [];
 vi.mock("uplot", () => ({
   default: class {
     static pxRatio = 1;
+    /** The real one pads and snaps; here it echoes what the panel widened
+     * to, so a test sees the panel's own arithmetic. */
+    static rangeNum(min: number, max: number) {
+      return [min, max];
+    }
     static paths = {
       bars: (cfg: { disp: { fill: { values: (u: unknown) => string[] } } }) => {
         barCfgs.push(cfg);
@@ -136,6 +147,39 @@ describe("ChartPanel elevation layers", () => {
     };
     return { u, stops };
   }
+
+  it("gives the elevation axis a 50 m floor and leaves the other charts' ranges alone", () => {
+    // The flat ride from #159: a dozen metres of drift over the whole ride.
+    renderPanel(
+      columns(N, {
+        distance_m: seq((i) => i * 100),
+        t: seq((i) => i * 10),
+        altitude_m: seq((i) => 4 + (i % 3) * 0.2),
+        hr: seq((i) => 120 + i),
+        speed_mps: seq(() => 3),
+        power_w: seq(() => 200),
+      }),
+      vi.fn(),
+      "run",
+    );
+    const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+    const range = elevation.opts.scales?.y?.range;
+    expect(typeof range).toBe("function");
+    expect(range!(null, 4, 15)).toEqual([0, 50]);
+    expect(range!(null, 100, 300)).toEqual([100, 300]);
+    // An empty series stays unranged, as uPlot's own autoscale leaves it.
+    expect(range!(null, null, null)).toEqual([null, null]);
+    expect(elevation.opts.scales?.y?.dir).toBeUndefined();
+    // Bars keep the design's padded, tens-rounded range: no 50 m floor.
+    const hr = built.find((b) => b.opts.series[1]?.label?.startsWith("Heart"))!;
+    expect(hr.opts.scales?.y?.range!(null, 4, 15)).not.toEqual([0, 50]);
+    // Pace keeps only its flipped direction; the range is uPlot's.
+    const pace = built.find((b) => b.opts.series[1]?.label?.startsWith("Pace"))!;
+    expect(pace.opts.scales?.y).toEqual({ dir: -1 });
+    // A plain line (power without zones) is left to uPlot's autoscale.
+    const power = built.find((b) => b.opts.series[1]?.label?.startsWith("Power"))!;
+    expect(power.opts.scales?.y).toBeUndefined();
+  });
 
   it("draws the profile with grades as two series over one column, other charts as one", () => {
     // Flat, then a 10% pitch, then flat: the fill layer exists and every

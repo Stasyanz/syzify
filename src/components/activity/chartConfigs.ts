@@ -40,6 +40,9 @@ export interface ChartConfig {
   invertY?: boolean;
   /** Hypsometric fill bands (display units) — elevation's atlas coloring. */
   elevationBands?: ElevationBand[];
+  /** Smallest y-range the chart shows (display units): data spanning less
+   * is centered in it instead of stretched to the panel (see widenToSpan). */
+  minSpan?: number;
   /** No "avg" reference line — average altitude is not a training reference. */
   noAverage?: boolean;
   /** The summary's average in this chart's display units, if the summary
@@ -101,6 +104,36 @@ export function hasData(values: (number | null)[]): boolean {
 // Hypsometric band definitions live in chartZones.ts (ELEVATION_BANDS_M),
 // next to the gradient math and its ordering guard test.
 
+/** The elevation axis never shows less than this (#159). A barometer writes
+ * altitude in 0.2 m steps; a flat ride's few metres of drift, stretched to
+ * the panel, turned every step into a ledge. Garmin Connect and Strava
+ * hold a floor like this too: a flat ride reads as a near-flat line and
+ * 20–30 m hills still take half the panel. */
+export const ELEVATION_MIN_SPAN_M = 50;
+
+/** `[min, max]` widened symmetrically to at least `span`, in the data's
+ * units. A profile around sea level is not pushed below it: the floor
+ * stops at zero, or at the lowest point when that is a little under
+ * zero, and the headroom takes the rest — so a coastal ride does not get
+ * half a panel of nothing under the line, and one −0.2 m reading does
+ * not swing the axis (a floor fixed at zero would). Data already
+ * spanning `span` or more is returned as it is; so is a non-finite pair.
+ * Padding and tick-friendly rounding are still uPlot's job on top. */
+export function widenToSpan(min: number, max: number, span: number): [number, number] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !(span > 0)) return [min, max];
+  const have = max - min;
+  if (have >= span) return [min, max];
+  const pad = (span - have) / 2;
+  let lo = min - pad;
+  let hi = max + pad;
+  const floor = Math.min(0, min);
+  if (max >= 0 && lo < floor) {
+    hi += floor - lo;
+    lo = floor;
+  }
+  return [lo, hi];
+}
+
 // Elevation / pace / speed depend on the units setting — built via factories
 // so a units change yields fresh configs (see the useMemo in ChartPanel).
 export const ELEVATION = (): ChartConfig => ({
@@ -119,6 +152,7 @@ export const ELEVATION = (): ChartConfig => ({
     to: isImperial() ? b.to * FT_PER_M : b.to,
     color: b.color,
   })),
+  minSpan: isImperial() ? ELEVATION_MIN_SPAN_M * FT_PER_M : ELEVATION_MIN_SPAN_M,
   noAverage: true,
 });
 export const HR: ChartConfig = {

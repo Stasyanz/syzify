@@ -4,6 +4,7 @@ import { useUnitsStore, M_PER_MILE, MPH_PER_MPS, FT_PER_M } from "../../lib/unit
 import {
   CADENCE,
   ELEVATION,
+  ELEVATION_MIN_SPAN_M,
   HR,
   PACE,
   POWER,
@@ -16,6 +17,7 @@ import {
   hasData,
   resolveAverages,
   speedSeries,
+  widenToSpan,
   type ChartConfig,
   type ChartType,
 } from "./chartConfigs";
@@ -112,6 +114,36 @@ describe("metric configs", () => {
     expect(HR.summaryAvg!(s)).toBe(125);
     expect(CADENCE.summaryAvg!(s)).toBe(85);
     expect(POWER.summaryAvg!(s)).toBe(210);
+  });
+
+  it("widens a narrow y-range to the floor, centered, never below zero for data above it", () => {
+    // The flat ride from #159: 4–15 m of barometer drift, a 50 m floor.
+    // Centering would put the floor at -15.5; the data is all above zero,
+    // so the axis starts at 0 and the headroom takes the rest.
+    expect(widenToSpan(4, 15, 50)).toEqual([0, 50]);
+    // Up a hill the widening is symmetric.
+    expect(widenToSpan(100, 120, 50)).toEqual([85, 135]);
+    // A coastal ride dipping just under zero keeps its floor at the dip,
+    // not centered: one −0.2 m reading moves the axis by 0.2 m, not 23.
+    expect(widenToSpan(-0.2, 5, 50)).toEqual([-0.2, 49.8]);
+    expect(widenToSpan(-2, 3, 50)).toEqual([-2, 48]);
+    // Entirely below sea level there is no floor to hold: symmetric.
+    expect(widenToSpan(-30, -20, 50)).toEqual([-50, 0]);
+    // A real climb is left alone, as is exactly the floor.
+    expect(widenToSpan(0, 80, 50)).toEqual([0, 80]);
+    expect(widenToSpan(10, 60, 50)).toEqual([10, 60]);
+    // A single level is centered too.
+    expect(widenToSpan(1200, 1200, 50)).toEqual([1175, 1225]);
+    // Degenerate input is passed through: a non-finite pair, no floor.
+    expect(widenToSpan(NaN, NaN, 50)).toEqual([NaN, NaN]);
+    expect(widenToSpan(4, 15, 0)).toEqual([4, 15]);
+  });
+
+  it("elevation carries the 50 m floor in the display unit", () => {
+    expect(ELEVATION().minSpan).toBe(ELEVATION_MIN_SPAN_M);
+    useUnitsStore.setState({ mode: "imperial" });
+    expect(ELEVATION().minSpan).toBeCloseTo(ELEVATION_MIN_SPAN_M * FT_PER_M);
+    expect(HR.minSpan).toBeUndefined();
   });
 
   it("elevation opts out of the average line and converts to feet when imperial", () => {

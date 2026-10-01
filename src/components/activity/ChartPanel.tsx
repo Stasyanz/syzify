@@ -48,6 +48,7 @@ import {
   chartGridHasHole,
   hasData,
   resolveAverages,
+  widenToSpan,
   type ChartConfig,
   type ChartType,
   type SummaryAverages,
@@ -338,6 +339,25 @@ function SingleChart({
       },
     ];
 
+    // The y-range, where a chart has its own. Bars use the design's padded,
+    // tens-rounded range (per metric), widened first to span the average —
+    // bucket-max bars can all sit above the true mean, which would push the
+    // avg line off the plot. A chart with a span floor (elevation) widens
+    // the data to it and then lets uPlot pad and round exactly as it would
+    // by default: a tenth of the span, snapped to a tick, zero kept when
+    // the data never crosses it; an empty series stays unranged, as it
+    // would by default too. Everything else takes uPlot's autoscale.
+    const minSpan = config.minSpan;
+    const yRange: uPlot.Range.Function | undefined =
+      barZones && barRange
+        ? (_u, min, max) => barRange(...rangeSpanning(min, max, avgValue))
+        : minSpan
+          ? (_u, min: number | null, max: number | null) =>
+              min == null || max == null
+                ? [null, null]
+                : uPlot.rangeNum(...widenToSpan(min, max, minSpan), 0.1, true)
+          : undefined;
+
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
       height: heightRef.current,
@@ -451,16 +471,13 @@ function SingleChart({
               }
             : {}),
         },
-        // dir:-1 puts small values (fast pace) at the top.
-        ...(config.invertY ? { y: { dir: -1 as const } } : {}),
-        // Bars use the design's padded, tens-rounded range (per metric),
-        // widened first to span the average — bucket-max bars can all sit
-        // above the true mean, which would push the avg line off the plot.
-        ...(barZones && barRange
+        // One y object, so a direction and a range never overwrite each
+        // other. dir:-1 puts small values (fast pace) at the top.
+        ...(config.invertY || yRange
           ? {
               y: {
-                range: (_u: uPlot, min: number, max: number) =>
-                  barRange(...rangeSpanning(min, max, avgValue)),
+                ...(config.invertY ? { dir: -1 as const } : {}),
+                ...(yRange ? { range: yRange } : {}),
               },
             }
           : {}),
