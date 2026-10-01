@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Result};
 
-use crate::models::gear::{Gear, GearInput, GearItem, GearKind, GearStats};
+use crate::models::activity::ActivityFilters;
+use crate::models::gear::{Gear, GearInput, GearItem, GearKind, GearStats, GearTargets, MovedFrom};
 
 const GEAR_COLUMNS: &str = "id, kind, name, brand, model, purchased_at, initial_distance_m, \
     distance_limit_m, retired_at, notes, created_at";
@@ -183,6 +184,54 @@ pub fn set_activity_gear(conn: &Connection, activity_id: &str, gear_id: Option<&
         params![activity_id, gear_id],
     )?;
     Ok(n > 0)
+}
+
+/// The WHERE of a library filter, minus its sort, limit and offset, over
+/// the activities that can carry gear: the facets the list applies (so
+/// what the user sees is what is touched), and no multisport whole.
+fn filtered_targets_sql(filters: &ActivityFilters, params: &mut Vec<Box<dyn rusqlite::types::ToSql>>) -> String {
+    let mut conditions: Vec<String> = Vec::new();
+    let mut idx = params.len() + 1;
+    super::activities::push_facet_conditions(filters, "a.", &mut conditions, params, &mut idx);
+    conditions.push("NOT EXISTS (SELECT 1 FROM activity c WHERE c.parent_id = a.id)".into());
+    conditions.push("NOT EXISTS (SELECT 1 FROM multisport_leg l WHERE l.activity_id = a.id)".into());
+    format!("SELECT a.id FROM activity a WHERE {}", conditions.join(" AND "))
+}
+
+/// What `assign_filtered` onto `gear_id` would do, for the confirmation:
+/// the same rows it would update (so "Put N on X" is the N the toast
+/// will say), and the items they leave, by name.
+pub fn filtered_targets(conn: &Connection, filters: &ActivityFilters, gear_id: &str) -> Result<GearTargets> {
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(gear_id.to_string())];
+    let targets = filtered_targets_sql(filters, &mut params);
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let eligible: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM activity WHERE id IN ({targets}) AND gear_id IS NOT ?1"),
+        refs.as_slice(),
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT g.name, COUNT(*) FROM activity x JOIN gear g ON g.id = x.gear_id \
+         WHERE x.id IN ({targets}) AND x.gear_id <> ?1 \
+         GROUP BY g.id ORDER BY COUNT(*) DESC, g.name COLLATE NOCASE"
+    ))?;
+    let moved_from = stmt
+        .query_map(refs.as_slice(), |r| Ok(MovedFrom { name: r.get(0)?, count: r.get(1)? }))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(GearTargets { eligible, moved_from })
+}
+
+/// The library's bulk action: put the item on every activity the filter
+/// matches (moving the ones already on other gear — the user picked them),
+/// multisport wholes left out. Returns how many were assigned.
+pub fn assign_filtered(conn: &Connection, filters: &ActivityFilters, gear_id: &str) -> Result<usize> {
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(gear_id.to_string())];
+    let targets = filtered_targets_sql(filters, &mut params);
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    conn.execute(
+        &format!("UPDATE activity SET gear_id = ?1 WHERE id IN ({targets}) AND gear_id IS NOT ?1"),
+        refs.as_slice(),
+    )
 }
 
 /// The Garage card's quick action: put the item on every activity of its
@@ -501,6 +550,69 @@ mod tests {
         set_activity_gear(&conn, "before", None).unwrap();
         assert_eq!(assign_history(&conn, &g.id).unwrap(), 1);
         assert!(on_road("before"));
+    }
+
+    #[test]
+    fn a_filtered_assignment_touches_what_the_filter_shows_and_no_multisport_whole() {
+        let conn = db::test_db();
+        let road = insert(&conn, &bike("Road")).unwrap();
+        let gravel = insert(&conn, &bike("Gravel")).unwrap();
+        activity_of(&conn, "jan", "2026-01-10T08:00:00+03:00", "ride", None);
+        activity_of(&conn, "feb", "2026-02-10T08:00:00+03:00", "ride", None);
+        activity_of(&conn, "feb-run", "2026-02-11T08:00:00+03:00", "run", None);
+        activity_of(&conn, "feb-on-gravel", "2026-02-12T08:00:00+03:00", "ride", None);
+        set_activity_gear(&conn, "feb-on-gravel", Some(&gravel.id)).unwrap();
+        activity_of(&conn, "container", "2026-02-13T07:00:00+03:00", "triathlon", None);
+        activity_of(&conn, "leg", "2026-02-13T08:00:00+03:00", "ride", Some("container"));
+        activity_of(&conn, "native", "2026-02-14T07:00:00+03:00", "ride", None);
+        conn.execute(
+            "INSERT INTO multisport_leg (activity_id, leg_number, sport_type) VALUES ('native', 1, 'ride')",
+            [],
+        )
+        .unwrap();
+
+        // February rides: feb and feb-on-gravel; the container and the
+        // native file are out, the leg is hidden from the library (its
+        // parent_id), the run and January are off the filter.
+        let feb_rides = ActivityFilters {
+            sport_types: Some(vec!["ride".into()]),
+            date_from: Some("2026-02-01".into()),
+            limit: Some(1), // the list's page size must not cap a bulk action
+            ..Default::default()
+        };
+        assert_eq!(
+            filtered_targets(&conn, &feb_rides, &road.id).unwrap(),
+            GearTargets { eligible: 2, moved_from: vec![MovedFrom { name: "Gravel".into(), count: 1 }] }
+        );
+        assert_eq!(assign_filtered(&conn, &feb_rides, &road.id).unwrap(), 2);
+        let on_road = |id: &str| gear_of_activity(&conn, id).unwrap().as_deref() == Some(road.id.as_str());
+        assert!(on_road("feb"));
+        assert!(on_road("feb-on-gravel"), "moved: the user filtered it in");
+        assert!(!on_road("jan"));
+        assert!(!on_road("feb-run"));
+        assert!(!on_road("leg"));
+        assert!(!on_road("container"));
+        assert!(!on_road("native"));
+        // Already there: nothing to do, and the preview says so (the count
+        // is of what WOULD change, not of what the filter shows).
+        assert_eq!(assign_filtered(&conn, &feb_rides, &road.id).unwrap(), 0);
+        assert_eq!(filtered_targets(&conn, &feb_rides, &road.id).unwrap(), GearTargets::default());
+        // Onto Gravel the same two would move off Road.
+        assert_eq!(
+            filtered_targets(&conn, &feb_rides, &gravel.id).unwrap(),
+            GearTargets { eligible: 2, moved_from: vec![MovedFrom { name: "Road".into(), count: 2 }] }
+        );
+
+        // No facets at all: the whole library that can carry gear.
+        let all = ActivityFilters::default();
+        assert_eq!(
+            filtered_targets(&conn, &all, &gravel.id).unwrap(),
+            GearTargets { eligible: 4, moved_from: vec![MovedFrom { name: "Road".into(), count: 2 }] }
+        );
+        // The gear facet itself composes: "no gear" rides only.
+        let bare = ActivityFilters { gear_ids: Some(vec!["".into()]), ..Default::default() };
+        assert_eq!(filtered_targets(&conn, &bare, &gravel.id).unwrap(), GearTargets { eligible: 2, moved_from: vec![] });
+        assert_eq!(assign_filtered(&conn, &bare, &gravel.id).unwrap(), 2);
     }
 
     #[test]

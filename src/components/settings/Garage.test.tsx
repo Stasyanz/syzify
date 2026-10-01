@@ -31,6 +31,7 @@ import {
   odometerM,
   readDistanceField,
   wearFraction,
+  wearTip,
 } from "./Garage";
 import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
@@ -102,6 +103,9 @@ describe("Garage helpers", () => {
     expect(wearFraction(pegasus)).toBeCloseTo(0.875);
     expect(wearFraction({ ...pegasus, stats: { ...pegasus.stats, distance_m: 900_000 } })).toBe(1);
     expect(wearFraction({ ...pegasus, distance_limit_m: 0 })).toBeNull();
+    expect(wearTip(pegasus, 0.875)).toBe("700.00 km of 800.00 km · 87 %");
+    expect(wearTip({ ...pegasus, stats: { ...pegasus.stats, distance_m: 796_800 } }, 0.996)).toBe("796.80 km of 800.00 km · 99 %");
+    expect(wearTip({ ...pegasus, stats: { ...pegasus.stats, distance_m: 900_000 } }, 1)).toBe("900.00 km of 800.00 km · past the limit");
   });
 
   it("reads a distance field in the display unit, hands back untouched meters as they were, and flags junk", () => {
@@ -156,7 +160,11 @@ describe("Garage", () => {
     expect(shoes.textContent).not.toContain("last used");
     const bar = within(shoes).getByRole("progressbar");
     expect(bar.getAttribute("aria-valuenow")).toBe("88");
-    expect(bar.getAttribute("aria-label")).toBe("700.00 km of 800.00 km");
+    expect(bar.getAttribute("aria-label")).toBe("700.00 km of 800.00 km · 87 %");
+    expect(bar.getAttribute("data-tip")).toBe("700.00 km of 800.00 km · 87 %");
+    // The tooltip's host does not clip (the track inside it does).
+    expect(bar.className).not.toContain("overflow-hidden");
+    expect(bar.firstElementChild!.className).toContain("overflow-hidden");
 
     // No activities: no row of zeros, just the fact (and the pre-Syzify
     // mileage when there is one).
@@ -187,9 +195,10 @@ describe("Garage", () => {
     ]);
     renderIt();
     await waitFor(() => expect(screen.getAllByRole("progressbar")).toHaveLength(3));
-    const fills = screen.getAllByRole("progressbar").map((bar) => (bar.firstElementChild as HTMLElement).style.background);
+    const fills = screen.getAllByTestId("wear-fill").map((fill) => fill.style.background);
     expect(fills).toEqual(["var(--danger)", "var(--warn)", "var(--good)"]);
     expect(screen.getAllByRole("progressbar")[0].getAttribute("aria-valuenow")).toBe("100");
+    expect(screen.getAllByRole("progressbar")[0].getAttribute("data-tip")).toBe("800.00 km of 800.00 km · past the limit");
     const fresh = screen.getAllByTestId("gear-card")[3];
     expect(fresh.textContent).toContain("No activities yet");
     expect(fresh.textContent).not.toContain("before Syzify");

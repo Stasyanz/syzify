@@ -15,6 +15,7 @@ import type {
   Gear,
   GearInput,
   GearItem,
+  GearTargets,
   WatchFolder,
   ScanResult,
   DeviceStats,
@@ -157,6 +158,14 @@ export const api = {
 
   /** The Garage card's quick action; resolves to how many activities were assigned. */
   assignGearHistory: (id: string) => invoke<number>("assign_gear_history", { id }),
+
+  /** What putting the filtered activities on the item would do. */
+  countGearTargets: (filters: ActivityFilters, gearId: string) =>
+    invoke<GearTargets>("count_gear_targets", { filters, gearId }),
+
+  /** Put every activity the filters match on the item; resolves to how many were assigned. */
+  assignGearToFiltered: (filters: ActivityFilters, gearId: string) =>
+    invoke<number>("assign_gear_to_filtered", { filters, gearId }),
 
   getWatchFolders: () =>
     invoke<WatchFolder[]>("get_watch_folders"),

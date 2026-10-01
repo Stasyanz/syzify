@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Search, ArrowUpNarrowWide, ArrowDownNarrowWide } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { useActivityStore } from "../../stores/activityStore";
@@ -8,6 +8,10 @@ import { SportIcon } from "../brand/SportIcon";
 import { Select } from "../ui/Select";
 import { DateField } from "../ui/DateField";
 import { DeviceSilhouette } from "../brand/DeviceSilhouette";
+import { GearKindIcon } from "../activity/GearChip";
+import { useToastStore } from "../../stores/toastStore";
+import { confirmDialog } from "../../stores/confirmStore";
+import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { groupDevices, devicesForKeys, selectedDeviceKeys } from "../../lib/deviceFilter";
 import {
   useUnits,
@@ -23,6 +27,7 @@ export function countActiveFilters(f: ActivityFilters): number {
   if (f.search && f.search.trim()) n++;
   if (f.sport_types && f.sport_types.length) n++;
   if (f.devices && f.devices.length) n++;
+  if (f.gear_ids && f.gear_ids.length) n++;
   if (f.date_from || f.date_to) n++;
   if (f.distance_min != null || f.distance_max != null) n++;
   if (f.duration_min != null || f.duration_max != null) n++;
@@ -104,6 +109,51 @@ export function FilterDrawer() {
   // group is offered like any other.
   const deviceGroups = groupDevices(detectedDevices);
   const activeCount = countActiveFilters(filters);
+
+  // Gear (ADR 0003): a facet over the items, retired ones included (the
+  // history sits on them), plus "No gear"; and the bulk action that puts
+  // every activity the filters show on one item in use.
+  const { data: gearItems = [] } = useQuery({ queryKey: ["gear"], queryFn: () => api.listGear() });
+  const gearInUse = gearItems.filter((g) => g.retired_at == null);
+  const [bulkGear, setBulkGear] = useState("");
+  const queryClient = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
+  const bulkAssign = useMutation({
+    mutationFn: async () => {
+      const item = gearInUse.find((g) => g.id === bulkGear);
+      // Retired or deleted since it was picked (the registry refreshed).
+      if (!item) throw new Error("That gear is no longer available — pick another");
+      // Sort and paging are the list's; the backend ignores them, but the
+      // confirmation counts the same set — what would change, not what
+      // the list shows (the ones already on the item are not counted).
+      const targets = await api.countGearTargets(filters, item.id);
+      if (targets.eligible === 0) return { item, n: 0, none: true };
+      const moved = targets.moved_from.length
+        ? ` ${targets.moved_from.map((m) => `${m.count} from ${m.name}`).join(", ")} will be moved.`
+        : "";
+      const ok = await confirmDialog({
+        title: `Put ${targets.eligible} activit${targets.eligible === 1 ? "y" : "ies"} on ${item.name}?`,
+        message: `Every activity matching the filters — all dates unless filtered — that is not on ${item.name} yet; multisport events are left out.${moved}`,
+        confirmLabel: "Assign",
+      });
+      if (!ok) return null;
+      return { item, n: await api.assignGearToFiltered(filters, item.id), none: false };
+    },
+    onSuccess: (done) => {
+      if (!done) return;
+      if (done.none) {
+        addToast("info", `Nothing to assign: every matching activity is on ${done.item.name} already, or cannot carry gear`);
+        return;
+      }
+      addToast("success", `${done.item.name} assigned to ${done.n} activit${done.n === 1 ? "y" : "ies"}`);
+      invalidateActivityData(queryClient);
+    },
+    onError: (e: unknown) => {
+      addToast("error", `Could not assign gear: ${e instanceof Error ? e.message : String(e)}`);
+      // A pick the registry no longer has must not stay selected.
+      if (!gearInUse.some((g) => g.id === bulkGear)) setBulkGear("");
+    },
+  });
 
   return (
     <>
@@ -212,6 +262,56 @@ export function FilterDrawer() {
                   icon: <DeviceSilhouette form={g.form} size={18} />,
                 }))}
               />
+            </div>
+          )}
+
+          {/* Gear (ADR 0003) */}
+          {gearItems.length > 0 && (
+            <div className="fgroup">
+              <div className="fh">Gear</div>
+              <Select
+                multiple
+                ariaLabel="Gear"
+                className="w-full"
+                values={filters.gear_ids ?? []}
+                onChange={(ids) => setFilters({ gear_ids: ids.length ? ids : undefined })}
+                placeholder="All gear"
+                clearLabel="All gear"
+                options={[
+                  ...gearItems.map((g) => ({
+                    value: g.id,
+                    label: `${g.name}${g.retired_at ? " (retired)" : ""} (${g.stats.activities})`,
+                    icon: <GearKindIcon kind={g.kind} size={18} />,
+                  })),
+                  { value: "", label: "No gear" },
+                ]}
+              />
+              {/* The bulk action, once a filter narrows the library: put
+                  what the LIST shows on one item. List only: the calendar
+                  adds its month and the map drops what has no track, so
+                  there "what you see" and the filters part ways. */}
+              {viewMode === "list" && activeCount > 0 && gearInUse.length > 0 && (
+                <div className="mt-2 flex items-center gap-2" data-testid="bulk-gear">
+                  <Select
+                    ariaLabel="Put the filtered activities on"
+                    className="min-w-0 flex-1"
+                    value={bulkGear}
+                    onChange={setBulkGear}
+                    options={[
+                      { value: "", label: "Put them on…" },
+                      ...gearInUse.map((g) => ({ value: g.id, label: g.name, icon: <GearKindIcon kind={g.kind} size={16} /> })),
+                    ]}
+                  />
+                  <button
+                    type="button"
+                    className="btn primary !px-2.5 !py-1 !text-xs shrink-0"
+                    disabled={!bulkGear || bulkAssign.isPending}
+                    onClick={() => bulkAssign.mutate()}
+                  >
+                    {bulkAssign.isPending ? "Assigning…" : "Assign"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

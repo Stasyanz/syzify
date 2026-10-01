@@ -257,6 +257,8 @@ export interface ActivityFilters {
   /** Match ANY of these recording devices, as stored in `source_device`
    * (raw strings); "" means "no device". Unset/empty = all. */
   devices?: string[];
+  /** Match ANY of these gear items by id; "" means "no gear". Unset/empty = all. */
+  gear_ids?: string[];
   /** true = only with a GPS track, false = only without, unset = both. */
   has_gps?: boolean;
   sort_by?: string;
@@ -394,6 +396,13 @@ export interface GearStats {
   duration_s: number;
   elev_gain_m: number;
   last_used: string | null;
+}
+
+/** What a bulk assignment from the library would do: how many activities
+ * change, and which other items they leave, by name. */
+export interface GearTargets {
+  eligible: number;
+  moved_from: { name: string; count: number }[];
 }
 
 /** A Garage card: the item's fields, its totals and its default sports. */

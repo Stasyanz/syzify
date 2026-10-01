@@ -268,7 +268,7 @@ fn search_condition(term: Option<&str>, idx: usize, prefix: &str) -> Option<(Str
 /// qualifier (`"a."` for aliased queries, `""` otherwise). Sort/limit/offset
 /// are NOT handled here. Shared by the list, calendar and map so every view
 /// honours the same filters.
-fn push_facet_conditions(
+pub(crate) fn push_facet_conditions(
     filters: &ActivityFilters,
     prefix: &str,
     conditions: &mut Vec<String>,
@@ -365,6 +365,30 @@ fn push_facet_conditions(
             // The same set get_detected_devices files under "" (COALESCE):
             // NULL and, should one ever be stored, the empty string.
             parts.push(format!("({prefix}source_device IS NULL OR {prefix}source_device = '')"));
+        }
+        if !parts.is_empty() {
+            conditions.push(format!("({})", parts.join(" OR ")));
+        }
+    }
+    if let Some(ref gear) = filters.gear_ids {
+        // Item ids; "" stands for "no gear" (NULL). Same shape as devices.
+        let none = gear.iter().any(|g| g.is_empty());
+        let named: Vec<&String> = gear.iter().filter(|g| !g.is_empty()).collect();
+        let mut parts: Vec<String> = Vec::new();
+        if !named.is_empty() {
+            let placeholders: Vec<String> = named
+                .iter()
+                .map(|g| {
+                    params.push(Box::new((*g).clone()));
+                    let p = format!("?{}", *idx);
+                    *idx += 1;
+                    p
+                })
+                .collect();
+            parts.push(format!("{prefix}gear_id IN ({})", placeholders.join(", ")));
+        }
+        if none {
+            parts.push(format!("{prefix}gear_id IS NULL"));
         }
         if !parts.is_empty() {
             conditions.push(format!("({})", parts.join(" OR ")));
@@ -1687,6 +1711,36 @@ mod tests {
         assert_eq!(ids(vec![]).len(), 5);
         // The raw string is matched exactly: a label is not a value.
         assert!(ids(vec!["fenix 6X Pro"]).is_empty());
+    }
+
+    /// The gear facet matches item ids; "" selects the activities without
+    /// gear; both together OR; an empty list is "all".
+    #[test]
+    fn get_activities_filters_by_gear() {
+        let conn = db::test_db();
+        for id in ["r1", "r2", "g1", "none"] {
+            insert_activity(&conn, &sample_activity(id)).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO gear (id, kind, name) VALUES ('road', 'bike', 'Road'), ('gravel', 'bike', 'Gravel');
+             UPDATE activity SET gear_id = 'road' WHERE id IN ('r1', 'r2');
+             UPDATE activity SET gear_id = 'gravel' WHERE id = 'g1';",
+        )
+        .unwrap();
+        let ids = |gear: Vec<&str>| -> Vec<String> {
+            let f = ActivityFilters {
+                gear_ids: Some(gear.into_iter().map(str::to_string).collect()),
+                ..Default::default()
+            };
+            let mut v: Vec<String> = get_activities(&conn, &f).unwrap().into_iter().map(|a| a.id).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(vec!["road"]), vec!["r1", "r2"]);
+        assert_eq!(ids(vec![""]), vec!["none"]);
+        assert_eq!(ids(vec!["gravel", ""]), vec!["g1", "none"]);
+        assert_eq!(ids(vec![]).len(), 4);
+        assert!(ids(vec!["ghost"]).is_empty());
     }
 
     #[test]

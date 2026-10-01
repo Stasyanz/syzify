@@ -22,13 +22,14 @@ describe("countActiveFilters", () => {
         search: "x",
         sport_types: ["run", "ride"],
         devices: ["Garmin fenix6x"],
+        gear_ids: ["g-road"],
         date_from: "2026-01-01",
         distance_min: 1000,
         duration_max: 3600,
         elev_gain_min: 100,
         has_gps: false,
       })
-    ).toBe(8);
+    ).toBe(9);
   });
 
   it("counts the GPS facet for BOTH explicit states, not just true", () => {
@@ -39,6 +40,8 @@ describe("countActiveFilters", () => {
 
   it("treats an empty list facet and empty date range as inactive", () => {
     expect(countActiveFilters({ devices: [] })).toBe(0);
+    expect(countActiveFilters({ gear_ids: [] })).toBe(0);
+    expect(countActiveFilters({ gear_ids: [""] })).toBe(1);
     expect(countActiveFilters({ sport_types: [] })).toBe(0);
     expect(countActiveFilters({ date_from: undefined, date_to: undefined })).toBe(0);
   });

@@ -1,7 +1,8 @@
 use tauri::State;
 
 use crate::db;
-use crate::models::gear::{Gear, GearInput, GearItem};
+use crate::models::activity::ActivityFilters;
+use crate::models::gear::{Gear, GearInput, GearItem, GearTargets};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -113,6 +114,41 @@ pub(crate) fn assign_gear_history_core(state: &AppState, id: &str) -> Result<usi
     db::gear::assign_history(&conn, id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn count_gear_targets(
+    filters: ActivityFilters,
+    gear_id: String,
+    state: State<AppState>,
+) -> Result<GearTargets, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::gear::filtered_targets(&conn, &filters, &gear_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn assign_gear_to_filtered(
+    filters: ActivityFilters,
+    gear_id: String,
+    state: State<AppState>,
+) -> Result<usize, String> {
+    assign_gear_to_filtered_core(&state, &filters, &gear_id)
+}
+
+/// The library's bulk action (see `db::gear::assign_filtered`); a retired
+/// item is refused, as it takes no new activities.
+pub(crate) fn assign_gear_to_filtered_core(
+    state: &AppState,
+    filters: &ActivityFilters,
+    gear_id: &str,
+) -> Result<usize, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    match db::gear::is_retired(&conn, gear_id).map_err(|e| e.to_string())? {
+        None => return Err(format!("Gear not found: {gear_id}")),
+        Some(true) => return Err("Bring the gear back before assigning activities to it".into()),
+        Some(false) => {}
+    }
+    db::gear::assign_filtered(&conn, filters, gear_id).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +239,23 @@ mod tests {
         assert_eq!(assign_gear_history_core(&state, &road.id), Ok(0));
         assert!(assign_gear_history_core(&state, &old.id).unwrap_err().contains("Bring the gear back"));
         assert_eq!(assign_gear_history_core(&state, "nope").unwrap_err(), "Gear not found: nope");
+    }
+
+    #[test]
+    fn filtered_assignment_counts_and_refuses_a_retired_item() {
+        let state = test_state();
+        let (road, old) = {
+            let conn = state.db.lock().unwrap();
+            let old = db::gear::insert(&conn, &bike("Old", None)).unwrap();
+            db::gear::set_retired(&conn, &old.id, true).unwrap();
+            (db::gear::insert(&conn, &bike("Road", None)).unwrap(), old)
+        };
+        activity(&state, "a1", "ride", None);
+        activity(&state, "r1", "run", None);
+        let rides = ActivityFilters { sport_types: Some(vec!["ride".into()]), ..Default::default() };
+        assert_eq!(assign_gear_to_filtered_core(&state, &rides, &road.id), Ok(1));
+        assert_eq!(assign_gear_to_filtered_core(&state, &rides, &road.id), Ok(0));
+        assert!(assign_gear_to_filtered_core(&state, &rides, &old.id).unwrap_err().contains("Bring the gear back"));
+        assert_eq!(assign_gear_to_filtered_core(&state, &rides, "nope").unwrap_err(), "Gear not found: nope");
     }
 }

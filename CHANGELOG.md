@@ -29,6 +29,15 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   click. A multisport event carries no gear of its own (its aggregate
   spans several sports); its legs do. For plugins, the activity rows
   that `host_query` returns gain `gear_id`.
+- The library filters get a Gear facet (#166): every item with its
+  activity count, retired ones marked, plus "No gear"; the list,
+  calendar and map honour it, and it counts toward the active-filter
+  badge. In the list, once a filter narrows the library, the drawer
+  offers to put every matching activity on one item: the confirmation
+  says how many will change and which other items they leave ("2 from
+  Gravel will be moved"); the ones already on it and multisport events
+  are left out. The Garage card's wear bar now shows its numbers on
+  hover ("7305.82 km of 8000.00 km · 91 %").
 
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:

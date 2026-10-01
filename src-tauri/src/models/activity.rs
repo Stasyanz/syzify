@@ -461,6 +461,9 @@ pub struct ActivityFilters {
     /// (raw strings, e.g. "Garmin fenix6x"); an empty string means
     /// "no device". None/empty = all devices.
     pub devices: Option<Vec<String>>,
+    /// Match ANY of these gear items by id; an empty string means "no
+    /// gear". None/empty = all.
+    pub gear_ids: Option<Vec<String>>,
     /// Some(true) = only activities WITH a GPS track, Some(false) = only
     /// those without, None = both. "Has a track" means at least one
     /// trackpoint carries a latitude — see push_facet_conditions.

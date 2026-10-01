@@ -153,6 +153,21 @@ pub struct GearStats {
     pub last_used: Option<String>,
 }
 
+/// What a bulk assignment from the library would do: the activities the
+/// filter matches that can carry gear and are not on the target item
+/// already, and which other items they would be moved off, by name.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GearTargets {
+    pub eligible: i64,
+    pub moved_from: Vec<MovedFrom>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MovedFrom {
+    pub name: String,
+    pub count: i64,
+}
+
 /// A Garage card: the item, its totals and the sports it is the default for.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GearItem {

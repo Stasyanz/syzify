@@ -71,6 +71,16 @@ export function distanceInputValue(meters: number | null): string {
   return String(Math.round(v * 100) / 100);
 }
 
+/** The wear bar's tooltip: "7305.82 km of 8000.00 km · 91 %", or "past
+ * the limit" once over it. */
+export function wearTip(item: Pick<GearItem, "initial_distance_m" | "stats" | "distance_limit_m">, wear: number): string {
+  const odo = formatDistance(odometerM(item));
+  const limit = formatDistance(item.distance_limit_m);
+  const over = odometerM(item) >= (item.distance_limit_m ?? Infinity);
+  // floor: 99.6 % must not read as 100 % while the limit is not reached.
+  return `${odo} of ${limit} · ${over ? "past the limit" : `${Math.floor(wear * 100)} %`}`;
+}
+
 function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
@@ -239,22 +249,28 @@ export function Garage() {
                       </div>
                     )}
                     {wear != null && (
+                      // The tooltip hangs off a wrapper with a bit of hover
+                      // room: the track itself clips its overflow, which
+                      // would cut the tooltip off, and is too thin to hit.
                       <div
-                        className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-border"
+                        className="mt-1 w-full max-w-xs py-1"
                         role="progressbar"
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={Math.round(wear * 100)}
-                        aria-label={`${formatDistance(odometerM(item))} of ${formatDistance(item.distance_limit_m)}`}
-                        data-tip={`${formatDistance(odometerM(item))} of ${formatDistance(item.distance_limit_m)}`}
+                        aria-label={wearTip(item, wear)}
+                        data-tip={wearTip(item, wear)}
                       >
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${wear * 100}%`,
-                            background: wear >= 1 ? "var(--danger)" : wear >= 0.8 ? "var(--warn)" : "var(--good)",
-                          }}
-                        />
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                          <div
+                            className="h-full rounded-full"
+                            data-testid="wear-fill"
+                            style={{
+                              width: `${wear * 100}%`,
+                              background: wear >= 1 ? "var(--danger)" : wear >= 0.8 ? "var(--warn)" : "var(--good)",
+                            }}
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
