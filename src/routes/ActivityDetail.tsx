@@ -33,7 +33,7 @@ import { LapsTable } from "../components/activity/LapsTable";
 import { EditActivityModal } from "../components/activity/EditActivityModal";
 import { FtpMismatchHint } from "../components/activity/FtpMismatchHint";
 import { DeviceChip } from "../components/activity/DeviceChip";
-import { GearChip } from "../components/activity/GearChip";
+import { GearChip, gearChipVisible } from "../components/activity/GearChip";
 import { describeDevice } from "../lib/devices";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
 import { ShareModal } from "../components/activity/ShareModal";
@@ -162,6 +162,12 @@ export function ActivityDetailPage() {
     queryKey: ["activity", parentId],
     queryFn: () => api.getActivityDetail(parentId!),
     enabled: !!parentId,
+  });
+
+  const { data: gearItems = [] } = useQuery({
+    queryKey: ["gear"],
+    queryFn: () => api.listGear(),
+    enabled: !!data && !data.is_multisport,
   });
 
   const { data: recordBadges = [] } = useQuery({
@@ -306,8 +312,12 @@ export function ActivityDetailPage() {
   }
 
   // The chips row: the badges on the right take the slack only when a chip
-  // is in the middle to push against.
-  const hasDevice = describeDevice(activity.source_device) != null || data.gear_id != null;
+  // is in the middle to push against — the gear chip by the same rule it
+  // shows itself by (the registry is cached under ["gear"], no second
+  // request).
+  const hasDevice =
+    describeDevice(activity.source_device) != null ||
+    gearChipVisible(gearItems, data.gear_id, activity.sport_type, data.is_multisport);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -366,7 +376,17 @@ export function ActivityDetailPage() {
         </div>
 
         <DeviceChip source={activity.source_device} />
-        <GearChip gearId={data.gear_id} onClick={() => setEditing(true)} />
+        <GearChip
+          activityId={activity.id}
+          gearId={data.gear_id}
+          sport={activity.sport_type}
+          locked={data.is_multisport}
+          onChanged={() => {
+            queryClient.invalidateQueries({ queryKey: ["activity", id] });
+            // The Garage's mileage and the library row follow the gear.
+            invalidateActivityData(queryClient);
+          }}
+        />
 
         <div className={`flex items-center justify-end gap-2.5 ${hasDevice ? "flex-1" : "shrink-0"}`}>
           {recordBadges.length > 0 && (

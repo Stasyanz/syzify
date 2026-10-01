@@ -18,6 +18,11 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - Activities carry their gear (#165): a Gear field in Edit Activity
   offering the items that fit the sport, a chip next to the device in
   the activity header, and the sport's default item on every new import.
+  The chip opens a menu of the items that fit the sport, and a pick is
+  written at once; an activity without gear shows a muted chip named
+  for what its sport takes — "Bike" on a ride, "Shoes" on a run — as
+  the way in when there is gear that fits, and a multisport event
+  shows none (#172).
   The Garage card offers "Assign to all Ride activities since 1 Jan
   2024" — the item's default sports from its purchase date on, only
   activities without gear — so the history gets its mileage in one
