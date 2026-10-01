@@ -92,7 +92,6 @@ export interface ActivitySummary {
   avg_hr: number | null;
   location_name: string | null;
   source_device: string | null;
-  tags: string[];
 }
 
 export interface MultisportLeg {
@@ -119,7 +118,6 @@ export interface MultisportLeg {
 export interface ActivityDetail {
   activity: Activity;
   trackpoints: TrackPointColumns;
-  tags: string[];
   laps: Lap[];
   legs: MultisportLeg[];
   lengths: SwimLength[];
@@ -249,7 +247,6 @@ export interface ActivityFilters {
   duration_max?: number;
   elev_gain_min?: number;
   elev_gain_max?: number;
-  tag_ids?: number[];
   /** Match ANY of these recording devices, as stored in `source_device`
    * (raw strings); "" means "no device". Unset/empty = all. */
   devices?: string[];
@@ -321,15 +318,6 @@ export interface FailedFile {
   path: string;
   reason: string;
 }
-
-export interface Tag {
-  id: number;
-  name: string;
-}
-
-/** Max tags shown per activity (extras collapse into a "+N" chip) and the
- * most that can be assigned to a single activity while editing. */
-export const MAX_TAGS_PER_ACTIVITY = 3;
 
 /** Title length cap (in-place rename + edit modal) — keeps the detail
  * header and list rows readable; Strava caps similarly. */

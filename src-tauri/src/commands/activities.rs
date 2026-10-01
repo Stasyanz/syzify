@@ -18,16 +18,15 @@ pub fn get_activities(
     filters: ActivityFilters,
     state: State<AppState>,
 ) -> Result<Vec<ActivitySummary>, String> {
+    get_activities_core(&state, &filters)
+}
+
+pub(crate) fn get_activities_core(
+    state: &AppState,
+    filters: &ActivityFilters,
+) -> Result<Vec<ActivitySummary>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut activities = db::activities::get_activities(&conn, &filters).map_err(|e| e.to_string())?;
-
-    // Fill tags for each activity
-    for activity in &mut activities {
-        activity.tags = db::tags::get_tags_for_activity(&conn, &activity.id)
-            .unwrap_or_default();
-    }
-
-    Ok(activities)
+    db::activities::get_activities(&conn, filters).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -44,7 +43,6 @@ pub fn get_activity_detail(
     let trackpoints = db::trackpoints::get_trackpoints_columnar(&conn, &id)
         .map_err(|e| e.to_string())?;
 
-    let tags = db::tags::get_tags_for_activity(&conn, &id).unwrap_or_default();
     let laps = db::laps::get_laps(&conn, &id).map_err(|e| e.to_string())?;
     let legs = db::multisport_legs::get_legs(&conn, &id).map_err(|e| e.to_string())?;
     let lengths = db::swim_lengths::get_swim_lengths(&conn, &id).map_err(|e| e.to_string())?;
@@ -61,7 +59,6 @@ pub fn get_activity_detail(
     Ok(ActivityDetail {
         activity,
         trackpoints,
-        tags,
         laps,
         legs,
         lengths,
@@ -76,7 +73,6 @@ pub fn get_activity_detail(
 pub struct ActivityDetail {
     pub activity: Activity,
     pub trackpoints: TrackPointColumns,
-    pub tags: Vec<String>,
     pub laps: Vec<Lap>,
     pub legs: Vec<crate::models::multisport_leg::MultisportLeg>,
     pub lengths: Vec<SwimLength>,
@@ -693,6 +689,22 @@ mod tests {
             lon: 32.09,
             kind: "suburb".to_string(),
         }
+    }
+
+    /// The list is the db query as it is: one summary per stored activity,
+    /// nothing filled in afterwards.
+    #[test]
+    fn get_activities_core_lists_the_stored_summaries() {
+        let state = state_with_activity();
+        let rows = get_activities_core(&state, &ActivityFilters::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "act-1");
+        let none = get_activities_core(
+            &state,
+            &ActivityFilters { search: Some("nowhere".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert!(none.is_empty());
     }
 
     /// The suggestion search never touches the network for a query too short

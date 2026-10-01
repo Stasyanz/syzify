@@ -207,7 +207,6 @@ fn row_to_activity(row: &rusqlite::Row) -> Result<Activity> {
 }
 
 /// Build an [`ActivitySummary`] from a row selected with [`SUMMARY_COLUMNS`].
-/// `tags` are populated separately by the caller.
 fn row_to_summary(row: &rusqlite::Row) -> Result<ActivitySummary> {
     Ok(ActivitySummary {
         id: row.get(0)?,
@@ -221,7 +220,6 @@ fn row_to_summary(row: &rusqlite::Row) -> Result<ActivitySummary> {
         avg_hr: row.get(8)?,
         location_name: row.get(9)?,
         source_device: row.get(10)?,
-        tags: Vec::new(),
     })
 }
 
@@ -263,7 +261,7 @@ fn search_condition(term: Option<&str>, idx: usize, prefix: &str) -> Option<(Str
 }
 
 /// Append all faceted WHERE conditions from `filters` — search, sport, date
-/// range, distance, duration, elevation and tags — to `conditions`, binding
+/// range, distance, duration, elevation and devices — to `conditions`, binding
 /// their values into `params` and advancing `idx`. `prefix` is the column
 /// qualifier (`"a."` for aliased queries, `""` otherwise). Sort/limit/offset
 /// are NOT handled here. Shared by the list, calendar and map so every view
@@ -343,23 +341,6 @@ fn push_facet_conditions(
         conditions.push(format!("{prefix}elev_gain_m <= ?{idx}"));
         params.push(Box::new(max));
         *idx += 1;
-    }
-    if let Some(ref ids) = filters.tag_ids {
-        if !ids.is_empty() {
-            let placeholders: Vec<String> = ids
-                .iter()
-                .map(|id| {
-                    params.push(Box::new(*id));
-                    let p = format!("?{}", *idx);
-                    *idx += 1;
-                    p
-                })
-                .collect();
-            conditions.push(format!(
-                "{prefix}id IN (SELECT activity_id FROM activity_tag WHERE tag_id IN ({}))",
-                placeholders.join(", ")
-            ));
-        }
     }
     if let Some(ref devices) = filters.devices {
         // Raw source_device values; "" stands for "no device" (NULL).
@@ -664,7 +645,7 @@ pub fn get_calendar_data(
     };
 
     // The displayed month bounds the query; the remaining facets (sport,
-    // distance, search, tags, …) are intersected on top so the calendar honours
+    // distance, search, devices, …) are intersected on top so the calendar honours
     // the same filters as the list. The drawer's own date range, if set, is
     // applied too — it just narrows within the month.
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =

@@ -18,7 +18,6 @@ const summary = (source_device: string | null): ActivitySummary => ({
   avg_hr: 140,
   location_name: "Mahmutlar, Alanya",
   source_device: source_device,
-  tags: [],
 });
 
 describe("ActivityListItem device line", () => {

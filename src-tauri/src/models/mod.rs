@@ -12,7 +12,6 @@ pub mod raw_file;
 pub mod recovery;
 pub mod segment;
 pub mod swim_length;
-pub mod tag;
 pub mod time_in_zone;
 pub mod trackpoint;
 pub mod update;

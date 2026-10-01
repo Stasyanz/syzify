@@ -21,7 +21,7 @@ describe("countActiveFilters", () => {
       countActiveFilters({
         search: "x",
         sport_types: ["run", "ride"],
-        tag_ids: [1, 2],
+        devices: ["Garmin fenix6x"],
         date_from: "2026-01-01",
         distance_min: 1000,
         duration_max: 3600,
@@ -37,8 +37,8 @@ describe("countActiveFilters", () => {
     expect(countActiveFilters({ has_gps: undefined })).toBe(0);
   });
 
-  it("treats an empty tag list and empty date range as inactive", () => {
-    expect(countActiveFilters({ tag_ids: [] })).toBe(0);
+  it("treats an empty list facet and empty date range as inactive", () => {
+    expect(countActiveFilters({ devices: [] })).toBe(0);
     expect(countActiveFilters({ sport_types: [] })).toBe(0);
     expect(countActiveFilters({ date_from: undefined, date_to: undefined })).toBe(0);
   });

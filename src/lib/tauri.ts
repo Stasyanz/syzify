@@ -9,7 +9,6 @@ import type {
   RecordBadge,
   ImportResult,
   ImportDatasource,
-  Tag,
   DaySummary,
   DashboardData,
   CacheInfo,
@@ -114,13 +113,6 @@ export const api = {
 
   getActivityLocations: (filters?: ActivityFilters) =>
     invoke<ActivityLocation[]>("get_activity_locations", { filters: filters ?? null }),
-
-  getTags: () => invoke<Tag[]>("get_tags"),
-
-  createTag: (name: string) => invoke<Tag>("create_tag", { name }),
-
-  setActivityTags: (activityId: string, tagIds: number[]) =>
-    invoke<void>("set_activity_tags", { activityId, tagIds }),
 
   getCalendarData: (year: number, month: number, filters?: ActivityFilters) =>
     invoke<DaySummary[]>("get_calendar_data", { year, month, filters: filters ?? null }),

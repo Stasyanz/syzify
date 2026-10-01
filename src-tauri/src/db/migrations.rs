@@ -38,6 +38,7 @@ fn migration_list() -> Vec<M<'static>> {
         M::up(include_str!("../../migrations/029_segment_effort_power.sql")),
         M::up(include_str!("../../migrations/030_monitoring.sql")),
         M::up(include_str!("../../migrations/031_plugin_secret.sql")),
+        M::up(include_str!("../../migrations/032_drop_tags.sql")),
     ]
 }
 
@@ -109,6 +110,40 @@ mod tests {
         run_migrations(&mut conn).unwrap();
         let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(after, migrations_count() as i64);
+    }
+
+    /// 032 drops the tag tables from a vault that still holds tags (#157),
+    /// with foreign keys enforced; the activities they referenced survive
+    /// and stay deletable afterwards.
+    #[test]
+    fn drop_tags_migration_clears_a_populated_vault() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let list = migration_list();
+        let before_drop = list.len() - 1;
+        Migrations::new(list[..before_drop].to_vec()).to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO activity (id, start_time) VALUES ('a1', '2026-01-01T10:00:00+00:00');
+             INSERT INTO tag (id, name) VALUES (1, 'hills');
+             INSERT INTO activity_tag (activity_id, tag_id) VALUES ('a1', 1);",
+        )
+        .unwrap();
+
+        run_migrations(&mut conn).unwrap();
+
+        let leftovers: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name IN ('tag', 'activity_tag', 'idx_activity_tag_tag')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftovers, 0);
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, migrations_count() as i64);
+        let activities: i64 = conn.query_row("SELECT count(*) FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(activities, 1);
+        conn.execute("DELETE FROM activity WHERE id = 'a1'", []).unwrap();
     }
 
     /// A genuinely empty DB (no schema) must NOT be treated as recovery — it

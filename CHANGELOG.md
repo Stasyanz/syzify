@@ -6,6 +6,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Removed
+- Activity tags (#157). They added nothing and cluttered the interface:
+  the chips on list rows and on the activity page, the Tags editor in
+  Edit Activity and the Tags filter are gone. Tags you had assigned are
+  deleted when the vault is next opened; they were never part of any
+  export. For plugins, the activity rows that `host_query` returns no
+  longer carry the `tags` field, which was always empty.
+
 ### Fixed
 - The Vault tab of Settings was a few pixels narrower than the other
   tabs: it is the only one tall enough to scroll, and the scrollbar took

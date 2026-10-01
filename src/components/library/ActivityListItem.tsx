@@ -1,5 +1,5 @@
 import type { ActivitySummary } from "../../lib/types";
-import { SPORT_LABELS, MAX_TAGS_PER_ACTIVITY, type SportType } from "../../lib/types";
+import { SPORT_LABELS, type SportType } from "../../lib/types";
 import { SportIcon } from "../brand/SportIcon";
 import { DeviceSilhouette } from "../brand/DeviceSilhouette";
 import { describeDevice } from "../../lib/devices";
@@ -44,19 +44,6 @@ export function ActivityListItem({ activity, onClick, showDevice = true }: Props
           <span className="font-medium text-ink truncate">
             {activity.title ?? label}
           </span>
-          {activity.tags.slice(0, MAX_TAGS_PER_ACTIVITY).map((tag) => (
-            <span
-              key={tag}
-              className="text-xs bg-accent-soft text-accent-2 px-1.5 py-0.5 rounded"
-            >
-              {tag}
-            </span>
-          ))}
-          {activity.tags.length > MAX_TAGS_PER_ACTIVITY && (
-            <span className="text-xs text-faint" title={activity.tags.slice(MAX_TAGS_PER_ACTIVITY).join(", ")}>
-              +{activity.tags.length - MAX_TAGS_PER_ACTIVITY}
-            </span>
-          )}
         </div>
         {/* The meta line clips instead of spilling onto the numbers: the
             date and the device keep their width, a long location truncates. */}

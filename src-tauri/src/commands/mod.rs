@@ -8,5 +8,4 @@ pub mod plugins;
 pub mod recovery;
 pub mod segments;
 pub mod settings;
-pub mod tags;
 pub mod tiles;

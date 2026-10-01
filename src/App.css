@@ -604,11 +604,8 @@ body {
 .dp-foot:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Chips & segmented control ── */
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--card); color: var(--muted); cursor: pointer; }
 .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.chip.tag.on { background: var(--accent-soft); color: var(--accent-2); border-color: #f0c4ac; }
-.dark .chip.tag.on { border-color: rgba(239, 106, 44, 0.45); }
 .btn { font: inherit; font-weight: 600; font-size: 13px; border-radius: 9px; padding: 8px 14px; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
 .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }

@@ -2,26 +2,13 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Activity, Tag } from "../../lib/types";
-
-const { tags } = vi.hoisted(() => ({
-  tags: [
-    { id: 1, name: "tag-a" },
-    { id: 2, name: "tag-b" },
-    { id: 3, name: "tag-c" },
-    { id: 4, name: "tag-d" },
-    { id: 5, name: "tag-e" },
-  ] as Tag[],
-}));
+import type { Activity } from "../../lib/types";
 
 const addToast = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   api: {
-    getTags: vi.fn().mockResolvedValue(tags),
-    createTag: vi.fn(),
     updateActivity: vi.fn().mockResolvedValue(undefined),
-    setActivityTags: vi.fn().mockResolvedValue(undefined),
     updateActivityLocation: vi.fn().mockResolvedValue({ geocoded: true, geocoding_off: false, location_name: "" }),
     searchLocations: vi.fn().mockResolvedValue([]),
     setActivityLocationNamed: vi.fn().mockResolvedValue({ geocoded: true, geocoding_off: false, location_name: "" }),
@@ -50,7 +37,6 @@ function renderModal() {
     <QueryClientProvider client={qc}>
       <EditActivityModal
         activity={activity}
-        currentTags={[]}
         onClose={() => {}}
         onSaved={() => {}}
         onDeleted={() => {}}
@@ -58,36 +44,6 @@ function renderModal() {
     </QueryClientProvider>
   );
 }
-
-describe("EditActivityModal tag cap", () => {
-  it("blocks selecting a 4th tag", async () => {
-    const { getByRole, getByPlaceholderText } = renderModal();
-
-    await waitFor(() => getByRole("button", { name: "tag-a" }));
-
-    // Select three tags.
-    fireEvent.click(getByRole("button", { name: "tag-a" }));
-    fireEvent.click(getByRole("button", { name: "tag-b" }));
-    fireEvent.click(getByRole("button", { name: "tag-c" }));
-
-    // The remaining (unselected) tags are now disabled, and so is the new-tag
-    // input — you can't add a 4th.
-    await waitFor(() => {
-      expect((getByRole("button", { name: "tag-d" }) as HTMLButtonElement).disabled).toBe(true);
-      expect((getByRole("button", { name: "tag-e" }) as HTMLButtonElement).disabled).toBe(true);
-    });
-    expect((getByPlaceholderText("Up to 3 tags selected") as HTMLInputElement).disabled).toBe(true);
-
-    // Clicking a disabled tag does nothing; deselecting one frees a slot again.
-    fireEvent.click(getByRole("button", { name: "tag-d" }));
-    expect((getByRole("button", { name: "tag-d" }) as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.click(getByRole("button", { name: "tag-a" })); // deselect a-tag
-    await waitFor(() => {
-      expect((getByRole("button", { name: "tag-d" }) as HTMLButtonElement).disabled).toBe(false);
-    });
-  });
-});
 
 describe("location suggestions", () => {
   const mahmutlar: LocationHit = { name: "Mahmutlar", detail: "Alanya, Türkiye", lat: 36.49, lon: 32.09, kind: "suburb" };
@@ -227,7 +183,7 @@ describe("location suggestions", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { getByPlaceholderText, getByRole, queryByRole, getByText } = render(
       <QueryClientProvider client={qc}>
-        <EditActivityModal activity={saved} currentTags={[]} onClose={() => {}} onSaved={() => {}} onDeleted={() => {}} />
+        <EditActivityModal activity={saved} onClose={() => {}} onSaved={() => {}} onDeleted={() => {}} />
       </QueryClientProvider>,
     );
     const input = getByPlaceholderText("City, address...") as HTMLInputElement;
@@ -332,7 +288,6 @@ describe("FTP correction", () => {
       <QueryClientProvider client={qc}>
         <EditActivityModal
           activity={{ ...activity, ...over } as Activity}
-          currentTags={[]}
           onClose={() => {}}
           onSaved={() => {}}
           onDeleted={() => {}}
@@ -362,7 +317,6 @@ describe("FTP correction", () => {
         <QueryClientProvider client={qc}>
           <EditActivityModal
             activity={{ ...activity, ...over } as Activity}
-            currentTags={[]}
             onClose={() => {}}
             onSaved={() => {}}
             onDeleted={() => {}}

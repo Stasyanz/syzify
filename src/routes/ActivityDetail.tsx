@@ -41,7 +41,7 @@ import { ActionMenu } from "../components/ui/ActionMenu";
 import type { Photo } from "../lib/types";
 import { useActivityStore } from "../stores/activityStore";
 import { useToastStore } from "../stores/toastStore";
-import { SPORT_LABELS, SPORT_TYPES, MAX_TAGS_PER_ACTIVITY, type SportType } from "../lib/types";
+import { SPORT_LABELS, SPORT_TYPES, type SportType } from "../lib/types";
 
 /** Strava's smallest privacy-zone radius — hides this much track around the
  * start and finish in the privacy GPX export. */
@@ -117,7 +117,6 @@ export function ActivityDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
-  const setFilters = useActivityStore((s) => s.setFilters);
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
@@ -141,11 +140,6 @@ export function ActivityDetailPage() {
     setFocusedLegNo(null);
     scrollRef.current?.scrollTo(0, 0);
   }, [id]);
-
-  const { data: allTags = [] } = useQuery({
-    queryKey: ["tags"],
-    queryFn: () => api.getTags(),
-  });
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["activity", id],
@@ -235,7 +229,7 @@ export function ActivityDetailPage() {
     );
   }
 
-  const { activity, trackpoints, tags, laps } = data;
+  const { activity, trackpoints, laps } = data;
   // A merged triathlon container: its legs link back to standalone activities
   // and it owns no track. Its map/charts/laps live on the legs' pages.
   const isMergedContainer = data.legs.some((l) => l.source_activity_id);
@@ -363,31 +357,6 @@ export function ActivityDetailPage() {
                   <Trophy size={11} />
                   {parent?.activity.title ?? "Multisport"}
                 </button>
-              )}
-              {tags.slice(0, MAX_TAGS_PER_ACTIVITY).map((tagName) => {
-                const tagObj = allTags.find((t) => t.name === tagName);
-                return (
-                  <button
-                    key={tagName}
-                    onClick={() => {
-                      if (tagObj) {
-                        setFilters({ tag_ids: [tagObj.id] });
-                        navigate("/library");
-                      }
-                    }}
-                    className="text-xs bg-accent-soft text-accent-2 px-2 py-0.5 rounded hover:opacity-80 cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    {tagName}
-                  </button>
-                );
-              })}
-              {tags.length > MAX_TAGS_PER_ACTIVITY && (
-                <span
-                  className="text-xs text-faint whitespace-nowrap shrink-0"
-                  title={tags.slice(MAX_TAGS_PER_ACTIVITY).join(", ")}
-                >
-                  +{tags.length - MAX_TAGS_PER_ACTIVITY}
-                </span>
               )}
             </div>
           </div>
@@ -613,7 +582,6 @@ export function ActivityDetailPage() {
       {editing && (
         <EditActivityModal
           activity={activity}
-          currentTags={tags}
           focusFtp={editFocusFtp}
           onClose={() => {
             setEditing(false);

@@ -16,7 +16,6 @@ pub mod segment_efforts;
 pub mod segments;
 pub mod settings;
 pub mod swim_lengths;
-pub mod tags;
 pub mod time_in_zones;
 pub mod training_load;
 pub mod trackpoints;

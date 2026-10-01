@@ -29,7 +29,6 @@ const summary = (i: number): ActivitySummary => ({
   avg_hr: 150,
   location_name: null,
   source_device: null,
-  tags: [],
 });
 
 const page = (n: number) => Array.from({ length: n }, (_, i) => summary(i));

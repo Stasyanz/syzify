@@ -324,7 +324,6 @@ pub struct ActivitySummary {
     /// The recording device as the file named it (see `describeDevice` in
     /// the frontend for the display form).
     pub source_device: Option<String>,
-    pub tags: Vec<String>,
 }
 
 #[cfg(test)]
@@ -456,7 +455,6 @@ pub struct ActivityFilters {
     pub duration_max: Option<f64>,
     pub elev_gain_min: Option<f64>,
     pub elev_gain_max: Option<f64>,
-    pub tag_ids: Option<Vec<i64>>,
     /// Match ANY of these recording devices, as stored in `source_device`
     /// (raw strings, e.g. "Garmin fenix6x"); an empty string means
     /// "no device". None/empty = all devices.

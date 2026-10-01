@@ -31,7 +31,6 @@ export function countActiveFilters(f: ActivityFilters): number {
   let n = 0;
   if (f.search && f.search.trim()) n++;
   if (f.sport_types && f.sport_types.length) n++;
-  if (f.tag_ids && f.tag_ids.length) n++;
   if (f.devices && f.devices.length) n++;
   if (f.date_from || f.date_to) n++;
   if (f.distance_min != null || f.distance_max != null) n++;
@@ -267,7 +266,6 @@ export function FilterDrawer() {
     }, 95);
   };
 
-  const { data: allTags = [] } = useQuery({ queryKey: ["tags"], queryFn: () => api.getTags() });
   const { data: usedSports = [] } = useQuery({
     queryKey: ["usedSportTypes"],
     queryFn: () => api.getUsedSportTypes(),
@@ -285,15 +283,7 @@ export function FilterDrawer() {
   // model ("Garmin fenix6x" and "Garmin fenix6x_asia"), and the "no device"
   // group is offered like any other.
   const deviceGroups = groupDevices(detectedDevices);
-  const activeTagIds = filters.tag_ids ?? [];
   const activeCount = countActiveFilters(filters);
-
-  function toggleTagFilter(id: number) {
-    const next = activeTagIds.includes(id)
-      ? activeTagIds.filter((t) => t !== id)
-      : [...activeTagIds, id];
-    setFilters({ tag_ids: next.length > 0 ? next : undefined });
-  }
 
   return (
     <>
@@ -429,24 +419,6 @@ export function FilterDrawer() {
               </button>
             </div>
           </div>
-
-          {/* Tags */}
-          {allTags.length > 0 && (
-            <div className="fgroup">
-              <div className="fh">Tags</div>
-              <div className="chips">
-                {allTags.map((tag) => (
-                  <span
-                    key={tag.id}
-                    className={`chip tag${activeTagIds.includes(tag.id) ? " on" : ""}`}
-                    onClick={() => toggleTagFilter(tag.id)}
-                  >
-                    {tag.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Distance */}
           <div className="fgroup">

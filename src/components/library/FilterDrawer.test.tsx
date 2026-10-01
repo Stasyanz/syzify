@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("../../lib/tauri", () => ({
-  api: { getTags: vi.fn(), getActivityYearRange: vi.fn(), getDetectedDevices: vi.fn() },
+  api: { getActivityYearRange: vi.fn(), getDetectedDevices: vi.fn() },
 }));
 
 import { FilterDrawer } from "./FilterDrawer";
@@ -24,7 +24,6 @@ describe("FilterDrawer date picker day rollover", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 8, 30, 23, 59, 30));
-    vi.mocked(api.getTags).mockResolvedValue([]);
     vi.mocked(api.getActivityYearRange).mockResolvedValue([2026, 2026]);
     vi.mocked(api.getDetectedDevices).mockResolvedValue([]);
   });
@@ -53,7 +52,6 @@ describe("FilterDrawer date picker day rollover", () => {
 describe("FilterDrawer device filter", () => {
   const stat = (device_name: string, activity_count: number) => ({ device_name, activity_count, last_activity: "2026-09-16T08:00:00+00:00" });
   beforeEach(() => {
-    vi.mocked(api.getTags).mockResolvedValue([]);
     vi.mocked(api.getActivityYearRange).mockResolvedValue([2026, 2026]);
     useActivityStore.getState().resetFilters();
   });
