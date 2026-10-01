@@ -27,6 +27,7 @@ const road: GearItem = {
   created_at: "2026-10-01T10:00:00",
   stats: { activities: 1, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
   default_for: [],
+  rules: [],
 };
 const gravel: GearItem = { ...road, id: "g-gravel", name: "Gravel", brand: null, model: null };
 const oldRoad: GearItem = { ...road, id: "g-old", name: "Old road", retired_at: "2026-01-01T00:00:00" };

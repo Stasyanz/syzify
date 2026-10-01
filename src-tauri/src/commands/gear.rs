@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::db;
 use crate::models::activity::ActivityFilters;
-use crate::models::gear::{Gear, GearInput, GearItem, GearTargets};
+use crate::models::gear::{Gear, GearInput, GearItem, GearTargets, RuleCandidates};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -149,6 +149,18 @@ pub(crate) fn assign_gear_to_filtered_core(
     db::gear::assign_filtered(&conn, filters, gear_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn gear_rule_candidates(state: State<AppState>) -> Result<RuleCandidates, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::gear_rules::candidates(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn apply_gear_rules(state: State<AppState>) -> Result<usize, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::gear_rules::apply_all(&conn).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +192,7 @@ mod tests {
             distance_limit_m: None,
             notes: None,
             default_for: vec!["ride".into()],
+            rules: vec![],
         }
     }
 

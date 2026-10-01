@@ -66,6 +66,67 @@ pub struct GearInput {
     /// for. Replaces the item's previous defaults; a sport named here is
     /// taken over from whichever item held it.
     pub default_for: Vec<String>,
+    /// What puts an activity on this item at import (checked before the
+    /// sport default). Replaces the item's previous rules; a value named
+    /// here is taken over from whichever item held it.
+    #[serde(default)]
+    pub rules: Vec<GearRule>,
+}
+
+/// What a rule matches on (ADR 0003, stage 4).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GearRuleKind {
+    /// The activity profile the device recorded under (FIT `sport.name`).
+    ProfileName,
+    /// A paired sensor's serial number (a power meter on one bike).
+    SensorSerial,
+}
+
+impl GearRuleKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GearRuleKind::ProfileName => "profile_name",
+            GearRuleKind::SensorSerial => "sensor_serial",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "profile_name" => Some(GearRuleKind::ProfileName),
+            "sensor_serial" => Some(GearRuleKind::SensorSerial),
+            _ => None,
+        }
+    }
+}
+
+/// "Put the activity on this item when …". A value belongs to one item.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GearRule {
+    pub kind: GearRuleKind,
+    pub value: String,
+}
+
+/// What the vault has seen that a rule could match, with how often.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RuleCandidates {
+    pub profiles: Vec<ProfileCandidate>,
+    pub sensors: Vec<SensorCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProfileCandidate {
+    pub value: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SensorCandidate {
+    pub serial: String,
+    pub device_type: Option<String>,
+    pub manufacturer: Option<String>,
+    pub product: Option<String>,
+    pub count: i64,
 }
 
 /// The longest name the registry stores; the modal caps at the same.
@@ -124,6 +185,21 @@ impl GearInput {
         }
         default_for.sort();
         default_for.dedup();
+        let mut rules: Vec<GearRule> = Vec::new();
+        for r in &self.rules {
+            let value = r.value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            if value.chars().count() > MAX_GEAR_FIELD_CHARS {
+                return Err(format!("A rule value is longer than {MAX_GEAR_FIELD_CHARS} characters"));
+            }
+            // Case folds like the table's NOCASE: "Road" and "ROAD" are one rule.
+            let dup = rules.iter().any(|x| x.kind == r.kind && x.value.eq_ignore_ascii_case(value));
+            if !dup {
+                rules.push(GearRule { kind: r.kind, value: value.to_string() });
+            }
+        }
         Ok(GearInput {
             kind: self.kind,
             name: name.to_string(),
@@ -134,6 +210,7 @@ impl GearInput {
             distance_limit_m: self.distance_limit_m,
             notes: capped("Notes", blank_to_none(&self.notes), MAX_GEAR_NOTES_CHARS)?,
             default_for,
+            rules,
         })
     }
 }
@@ -175,6 +252,7 @@ pub struct GearItem {
     pub gear: Gear,
     pub stats: GearStats,
     pub default_for: Vec<String>,
+    pub rules: Vec<GearRule>,
 }
 
 #[cfg(test)]
@@ -192,6 +270,12 @@ mod tests {
             distance_limit_m: None,
             notes: None,
             default_for: vec![" ride".into(), "ride".into(), "".into(), "mountain_bike".into()],
+            rules: vec![
+                GearRule { kind: GearRuleKind::ProfileName, value: " ROAD ".into() },
+                GearRule { kind: GearRuleKind::ProfileName, value: "Road".into() },
+                GearRule { kind: GearRuleKind::SensorSerial, value: "".into() },
+                GearRule { kind: GearRuleKind::SensorSerial, value: "3632674300".into() },
+            ],
         }
     }
 
@@ -203,6 +287,13 @@ mod tests {
         assert_eq!(n.model.as_deref(), Some("CF SL"));
         assert_eq!(n.purchased_at.as_deref(), Some("2025-03-01"));
         assert_eq!(n.default_for, vec!["mountain_bike", "ride"]);
+        assert_eq!(
+            n.rules,
+            vec![
+                GearRule { kind: GearRuleKind::ProfileName, value: "ROAD".into() },
+                GearRule { kind: GearRuleKind::SensorSerial, value: "3632674300".into() },
+            ]
+        );
     }
 
     #[test]
@@ -252,6 +343,17 @@ mod tests {
         let mut i = input();
         i.notes = Some("n".repeat(MAX_GEAR_NOTES_CHARS));
         assert!(i.normalized().is_ok());
+        let mut i = input();
+        i.rules = vec![GearRule { kind: GearRuleKind::ProfileName, value: "p".repeat(MAX_GEAR_FIELD_CHARS + 1) }];
+        assert!(i.normalized().unwrap_err().contains("rule value"));
+    }
+
+    #[test]
+    fn rule_kind_round_trips_its_string() {
+        for k in [GearRuleKind::ProfileName, GearRuleKind::SensorSerial] {
+            assert_eq!(GearRuleKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(GearRuleKind::parse("colour"), None);
     }
 
     #[test]

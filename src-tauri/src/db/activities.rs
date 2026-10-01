@@ -805,6 +805,15 @@ pub fn get_activity_year_range(conn: &Connection) -> Result<Option<(i32, i32)>> 
     )
 }
 
+/// The activity profile the file was recorded under (ADR 0003, rules).
+pub fn set_profile_name(conn: &Connection, id: &str, profile: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE activity SET profile_name = ?1 WHERE id = ?2",
+        params![profile, id],
+    )?;
+    Ok(())
+}
+
 /// Overwrite the recording device an activity names (the #144 backfill).
 pub fn set_source_device(conn: &Connection, id: &str, device: Option<&str>) -> Result<()> {
     conn.execute(

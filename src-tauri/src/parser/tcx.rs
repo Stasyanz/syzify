@@ -297,6 +297,8 @@ pub fn parse_tcx_bytes(bytes: &[u8], activity_id: &str) -> Result<ParsedActivity
         time_in_zones: Vec::new(),
         hrv_samples: Vec::new(),
         legs: Vec::new(),
+        profile_name: None,
+        sensors: Vec::new(),
     })
 }
 

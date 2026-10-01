@@ -8,7 +8,7 @@ use crate::models::swim_length::SwimLength;
 use crate::models::time_in_zone::TimeInZone;
 use crate::models::trackpoint::TrackPoint;
 use crate::models::multisport_leg::MultisportLeg;
-use crate::parser::{ParsedActivity, SessionMetrics};
+use crate::parser::{ParsedActivity, SensorInfo, SessionMetrics};
 
 /// Test convenience: the app itself always parses in-memory bytes (the import
 /// pipeline reads + size-gates files before parsing).
@@ -147,6 +147,109 @@ pub fn source_device_of_bytes(data: &[u8]) -> Option<String> {
     fitparser::from_bytes(data)
         .ok()
         .and_then(|messages| source_device_of(&messages))
+}
+
+/// The activity profile the device recorded under: the `name` of the
+/// `sport` message ("ROAD" on an Edge, "Bike" on a fenix). Garmin users
+/// keep one profile per bike, so it is the key gear rules match on.
+pub fn profile_name_of(messages: &[fitparser::FitDataRecord]) -> Option<String> {
+    messages.iter().find(|m| m.kind() == MesgNum::Sport).and_then(|m| {
+        m.fields()
+            .iter()
+            .find(|f| f.name() == "name")
+            .map(|f| format!("{}", f.value()).trim().to_string())
+            .filter(|n| !n.is_empty())
+    })
+}
+
+/// The paired sensors the file names with a serial number: every
+/// `device_info` that is not the recording device itself, one entry per
+/// serial — a sensor reports its battery several times over a ride, and
+/// the later reports fill in what the first left out. The recording
+/// device is known by `source_type` local or the creator index, and by
+/// its serial: some watches (a vivoactive) also list themselves in a
+/// `device_info` with neither marker, so any serial that `file_id` or the
+/// creator row carries is the watch, not a sensor. The product field is
+/// manufacturer-specific (`garmin_product`, `favero_product`, …); the SDK
+/// resolves known ones to names ("assioma_duo"), unknown ones stay numeric.
+pub fn sensors_of(messages: &[fitparser::FitDataRecord]) -> Vec<SensorInfo> {
+    let field = |msg: &fitparser::FitDataRecord, name: &str| -> Option<String> {
+        msg.fields()
+            .iter()
+            .find(|f| f.name() == name)
+            .map(|f| format!("{}", f.value()))
+            .filter(|v| !v.is_empty() && v != "0")
+    };
+    // The watch's own serials: file_id's, and every device_info marked
+    // local or creator.
+    let mut own: Vec<String> = Vec::new();
+    for msg in messages {
+        let is_own = match msg.kind() {
+            MesgNum::FileId => true,
+            MesgNum::DeviceInfo => {
+                field(msg, "source_type").as_deref() == Some("local")
+                    || field(msg, "device_index").as_deref() == Some("creator")
+            }
+            _ => false,
+        };
+        if is_own {
+            if let Some(serial) = field(msg, "serial_number") {
+                own.push(serial);
+            }
+        }
+    }
+    let mut out: Vec<SensorInfo> = Vec::new();
+    for msg in messages.iter().filter(|m| m.kind() == MesgNum::DeviceInfo) {
+        let mut serial = None;
+        let mut device_type = None;
+        let mut manufacturer = None;
+        let mut product = None;
+        let mut local = false;
+        for f in msg.fields() {
+            let val = format!("{}", f.value());
+            if val.is_empty() || val == "0" {
+                continue;
+            }
+            match f.name() {
+                "serial_number" => serial = Some(val),
+                "antplus_device_type" | "ble_device_type" | "ant_device_type" | "device_type" => {
+                    device_type = Some(val)
+                }
+                "manufacturer" => manufacturer = Some(val),
+                "source_type" if val == "local" => local = true,
+                "device_index" if val == "creator" => local = true,
+                n if n == "product" || n.ends_with("_product") => product = Some(val),
+                _ => {}
+            }
+        }
+        let Some(serial) = serial else { continue };
+        if local || own.contains(&serial) {
+            continue;
+        }
+        match out.iter_mut().find(|s| s.serial == serial) {
+            Some(seen) => {
+                // A later report fills what the first left out.
+                if seen.device_type.is_none() {
+                    seen.device_type = device_type;
+                }
+                if seen.manufacturer.is_none() {
+                    seen.manufacturer = manufacturer;
+                }
+                if seen.product.is_none() {
+                    seen.product = product;
+                }
+            }
+            None => out.push(SensorInfo { serial, device_type, manufacturer, product }),
+        }
+    }
+    out
+}
+
+/// Both gear keys over raw file bytes — for the one-time backfill that
+/// re-reads stored FIT files (#167). Undecodable bytes give None.
+pub fn gear_keys_of_bytes(data: &[u8]) -> Option<(Option<String>, Vec<SensorInfo>)> {
+    let messages = fitparser::from_bytes(data).ok()?;
+    Some((profile_name_of(&messages), sensors_of(&messages)))
 }
 
 /// Decode a FIT left/right balance value to the RIGHT-pedal percentage.
@@ -903,6 +1006,8 @@ pub fn parse_fit_records(
     }
 
     let source_device = source_device_of(messages);
+    let profile_name = profile_name_of(messages);
+    let sensors = sensors_of(messages);
 
     let legs = sessions_to_legs(activity_id, &sessions);
     let session_sports: Vec<String> =
@@ -929,6 +1034,8 @@ pub fn parse_fit_records(
         time_in_zones: select_time_in_zones(time_in_zone_groups),
         hrv_samples,
         legs,
+        profile_name,
+        sensors,
     })
 }
 
@@ -1096,6 +1203,57 @@ mod tests {
             ));
         }
         msg
+    }
+
+    /// The gear keys (#167): the profile from `sport.name`, trimmed, and
+    /// every non-local device_info with a serial, once per serial.
+    #[test]
+    fn gear_keys_are_the_profile_name_and_the_paired_sensors() {
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("manufacturer", "garmin"), ("garmin_product", "edge_830")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "creator"), ("manufacturer", "garmin"), ("serial_number", "3424354665"), ("garmin_product", "edge_830"), ("source_type", "local")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "1"), ("local_device_type", "barometer"), ("source_type", "local")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "3"), ("antplus_device_type", "heart_rate"), ("manufacturer", "garmin"), ("serial_number", "3384016267"), ("garmin_product", "OHR"), ("source_type", "antplus")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "4"), ("antplus_device_type", "bike_power"), ("manufacturer", "favero_electronics"), ("serial_number", "3632674300"), ("favero_product", "assioma_duo"), ("source_type", "antplus")]),
+            // The pedals report again mid-ride: still one sensor, and a
+            // bare first report is completed by the fuller one.
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "5"), ("serial_number", "3945193103"), ("source_type", "antplus")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "5"), ("antplus_device_type", "heart_rate"), ("manufacturer", "garmin"), ("serial_number", "3945193103"), ("garmin_product", "hrm_tri"), ("source_type", "antplus")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "4"), ("antplus_device_type", "bike_power"), ("manufacturer", "favero_electronics"), ("serial_number", "3632674300"), ("favero_product", "assioma_duo"), ("source_type", "antplus")]),
+            // A battery report without a serial names nothing.
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "4"), ("battery_status", "ok")]),
+            // The watch listing itself with neither marker (a vivoactive
+            // does): its serial is the creator's, so it is no sensor.
+            device_msg(MesgNum::DeviceInfo, &[("manufacturer", "garmin"), ("serial_number", "3424354665"), ("garmin_product", "edge_830")]),
+            device_msg(MesgNum::Sport, &[("sport", "cycling"), ("sub_sport", "road"), ("name", " ROAD ")]),
+        ];
+        assert_eq!(profile_name_of(&msgs).as_deref(), Some("ROAD"));
+        let sensors = sensors_of(&msgs);
+        assert_eq!(sensors.iter().map(|s| s.serial.as_str()).collect::<Vec<_>>(), vec!["3384016267", "3632674300", "3945193103"]);
+        assert_eq!(sensors[0].device_type.as_deref(), Some("heart_rate"));
+        assert_eq!(sensors[1].manufacturer.as_deref(), Some("favero_electronics"));
+        assert_eq!(sensors[1].product.as_deref(), Some("assioma_duo"));
+        assert_eq!(sensors[1].device_type.as_deref(), Some("bike_power"));
+        assert_eq!(sensors[2].product.as_deref(), Some("hrm_tri"), "filled in by the later report");
+        assert_eq!(sensors[2].device_type.as_deref(), Some("heart_rate"));
+        // The watch's serial only in file_id: still excluded.
+        let by_file_id = vec![
+            device_msg(MesgNum::FileId, &[("manufacturer", "garmin"), ("serial_number", "3314747279"), ("garmin_product", "vivoactive4")]),
+            device_msg(MesgNum::DeviceInfo, &[("manufacturer", "garmin"), ("serial_number", "3314747279"), ("garmin_product", "vivoactive4")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_type", "7"), ("serial_number", "555"), ("source_type", "bluetooth_low_energy")]),
+        ];
+        let s2 = sensors_of(&by_file_id);
+        assert_eq!(s2.len(), 1);
+        assert_eq!(s2[0].serial, "555");
+        assert_eq!(s2[0].device_type.as_deref(), Some("7"));
+        // No sport message, no sensors: nothing.
+        let bare = vec![device_msg(MesgNum::FileId, &[("manufacturer", "garmin")])];
+        assert_eq!(profile_name_of(&bare), None);
+        assert!(sensors_of(&bare).is_empty());
+        // An empty name is no profile.
+        let unnamed = vec![device_msg(MesgNum::Sport, &[("sport", "cycling"), ("name", "  ")])];
+        assert_eq!(profile_name_of(&unnamed), None);
+        assert_eq!(gear_keys_of_bytes(b"not a fit file"), None);
     }
 
     /// #144: a paired sensor listed before the watch must not become the

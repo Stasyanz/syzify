@@ -387,6 +387,10 @@ export interface GearInput {
   distance_limit_m: number | null;
   notes: string | null;
   default_for: SportType[];
+  /** What puts an activity on this item at import, before the sport
+   * default. Replaces the item's rules; a value named here moves over
+   * from whichever item held it. */
+  rules: GearRule[];
 }
 
 /** What the activities on an item add up to; computed on read. */
@@ -405,10 +409,34 @@ export interface GearTargets {
   moved_from: { name: string; count: number }[];
 }
 
-/** A Garage card: the item's fields, its totals and its default sports. */
+/** What a rule matches on: the activity profile the device recorded under
+ * (FIT `sport.name`), or a paired sensor's serial number. */
+export type GearRuleKind = "profile_name" | "sensor_serial";
+
+/** "Put the activity on this item when …". A value belongs to one item. */
+export interface GearRule {
+  kind: GearRuleKind;
+  value: string;
+}
+
+/** What the vault has seen that a rule could match, most frequent first. */
+export interface RuleCandidates {
+  profiles: { value: string; count: number }[];
+  sensors: {
+    serial: string;
+    device_type: string | null;
+    manufacturer: string | null;
+    product: string | null;
+    count: number;
+  }[];
+}
+
+/** A Garage card: the item's fields, its totals, its default sports and
+ * its rules. */
 export interface GearItem extends Gear {
   stats: GearStats;
   default_for: SportType[];
+  rules: GearRule[];
 }
 
 /** Name cap in the Garage modal (the backend refuses longer). */

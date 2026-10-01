@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GearItem } from "./types";
-import { gearChoicesFor, kindSports, kindsForSport } from "./gear";
+import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel } from "./gear";
 
 const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => ({
   id,
@@ -16,6 +16,7 @@ const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => 
   created_at: "2026-01-01T00:00:00",
   stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
   default_for: [],
+  rules: [],
 });
 
 describe("gear kinds and sports", () => {
@@ -38,5 +39,34 @@ describe("gear kinds and sports", () => {
     // pair of shoes on a ride, odd as that is.
     expect(ids("ride", "old-road")).toEqual(["road", "old-road", "helmet"]);
     expect(ids("ride", "pegasus")).toEqual(["road", "pegasus", "helmet"]);
+  });
+});
+
+describe("rule labels", () => {
+  const assioma = { serial: "3632674300", device_type: "bike_power", manufacturer: "favero_electronics", product: "assioma_duo", count: 169 };
+  const bare = { serial: "111", device_type: null, manufacturer: null, product: null, count: 2 };
+  const typed = { serial: "222", device_type: "bike_speed", manufacturer: null, product: null, count: 1 };
+
+  it("names a sensor from its maker and model, else its type and serial", () => {
+    expect(sensorLabel(assioma)).toBe("Favero Electronics Assioma Duo (bike power)");
+    expect(sensorLabel(typed)).toBe("Bike Speed 222");
+    expect(sensorLabel(bare)).toBe("Sensor 111");
+    expect(sensorLabel({ ...assioma, device_type: null })).toBe("Favero Electronics Assioma Duo");
+  });
+
+  it("summarises an item's rules, naming a sensor the vault knows and showing the serial of one it does not", () => {
+    const candidates = { profiles: [{ value: "ROAD", count: 169 }], sensors: [assioma] };
+    expect(
+      rulesSummary(
+        [
+          { kind: "profile_name", value: "ROAD" },
+          { kind: "sensor_serial", value: "3632674300" },
+          { kind: "sensor_serial", value: "999" },
+        ],
+        candidates,
+      ),
+    ).toBe("profile ROAD · sensor Favero Electronics Assioma Duo (bike power) · sensor 999");
+    expect(rulesSummary([{ kind: "sensor_serial", value: "3632674300" }], undefined)).toBe("sensor 3632674300");
+    expect(rulesSummary([], candidates)).toBe("");
   });
 });

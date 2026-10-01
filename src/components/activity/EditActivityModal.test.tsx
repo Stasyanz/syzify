@@ -377,6 +377,7 @@ describe("gear", () => {
     created_at: "2026-01-01T00:00:00",
     stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
     default_for: [],
+    rules: [],
   });
   const registry = [item("road", "bike"), item("old-road", "bike", true), item("pegasus", "shoes"), item("helmet", "other")];
 
@@ -461,6 +462,7 @@ describe("gear refusals and sport changes", () => {
     created_at: "2026-01-01T00:00:00",
     stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
     default_for: [],
+    rules: [],
   });
 
   beforeEach(() => {

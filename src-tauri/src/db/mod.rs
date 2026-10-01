@@ -1,9 +1,11 @@
 pub mod activities;
+pub mod activity_sensors;
 pub mod best_efforts;
 pub mod dashboard;
 pub mod dbcrypt;
 pub mod exercise_sets;
 pub mod gear;
+pub mod gear_rules;
 pub mod hrv_samples;
 pub mod laps;
 pub mod migrations;

@@ -2,6 +2,7 @@ pub mod best_effort;
 pub mod datasource;
 pub mod dedup;
 pub mod device_backfill;
+pub mod gear_keys_backfill;
 pub mod geocoding;
 pub mod pipeline;
 pub mod power_curve;

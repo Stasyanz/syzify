@@ -31,6 +31,23 @@ pub struct ParsedActivity {
     pub hrv_samples: Vec<HrvSample>,
     /// Per-leg breakdown for multisport files (empty for single-sport).
     pub legs: Vec<MultisportLeg>,
+    /// The activity profile the device recorded under (FIT `sport.name`:
+    /// "ROAD", "Bike") — the key gear rules match on (ADR 0003).
+    pub profile_name: Option<String>,
+    /// The paired sensors the file lists with a serial number.
+    pub sensors: Vec<SensorInfo>,
+}
+
+/// A paired sensor named in a FIT file's `device_info` with its serial
+/// number: a power meter, a speed sensor — the thing that stays on one
+/// bike and so identifies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensorInfo {
+    pub serial: String,
+    /// ANT+/BLE device type ("bike_power", "bike_speed", "heart_rate").
+    pub device_type: Option<String>,
+    pub manufacturer: Option<String>,
+    pub product: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

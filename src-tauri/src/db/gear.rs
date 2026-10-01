@@ -65,7 +65,8 @@ pub fn list(conn: &Connection) -> Result<Vec<GearItem>> {
     for row in rows {
         let (gear, stats) = row?;
         let default_for = defaults_of(conn, &gear.id)?;
-        items.push(GearItem { gear, stats, default_for });
+        let rules = super::gear_rules::rules_of(conn, &gear.id)?;
+        items.push(GearItem { gear, stats, default_for, rules });
     }
     Ok(items)
 }
@@ -123,6 +124,7 @@ pub fn insert(conn: &Connection, input: &GearInput) -> Result<Gear> {
         ],
     )?;
     set_defaults(&tx, &id, &input.default_for)?;
+    super::gear_rules::set_rules(&tx, &id, &input.rules)?;
     let gear = get(&tx, &id)?;
     tx.commit()?;
     Ok(gear.expect("the row just inserted"))
@@ -155,6 +157,9 @@ pub fn update(conn: &Connection, id: &str, input: &GearInput) -> Result<bool> {
     )?;
     let defaults: &[String] = if retired { &[] } else { &input.default_for };
     set_defaults(&tx, id, defaults)?;
+    // Rules stay with a retired item (they sleep, see gear_rules::gear_for)
+    // and wake with it.
+    super::gear_rules::set_rules(&tx, id, &input.rules)?;
     tx.commit()?;
     Ok(true)
 }
@@ -328,6 +333,7 @@ mod tests {
             distance_limit_m: None,
             notes: None,
             default_for: vec!["ride".into()],
+            rules: vec![],
         }
     }
 

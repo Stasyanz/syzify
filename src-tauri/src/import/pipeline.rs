@@ -637,6 +637,38 @@ pub(crate) fn import_format(source_path: &Path) -> Result<(FileFormat, Option<St
 /// by its extension; it is recorded as the raw file's `original_path` and
 /// never read from disk here. Everything after the read of a dropped file
 /// is this function, so a plugin import and a drop import cannot drift.
+/// Keep what the file carried that names the gear — the profile it was
+/// recorded under and the paired sensors, for the rules at import and over
+/// the history — and put the activity on its gear: a rule match first,
+/// else the sport's default, both only if the item was already bought
+/// when the activity happened. A native multisport file (`multisport`)
+/// gets none: its one activity spans several sports.
+pub(crate) fn assign_gear(
+    conn: &rusqlite::Connection,
+    activity_id: &str,
+    profile_name: Option<&str>,
+    sensors: &[crate::parser::SensorInfo],
+    multisport: bool,
+    sport_type: &str,
+    start_time: &str,
+) -> rusqlite::Result<Option<String>> {
+    if profile_name.is_some() {
+        db::activities::set_profile_name(conn, activity_id, profile_name)?;
+    }
+    if !sensors.is_empty() {
+        db::activity_sensors::replace(conn, activity_id, sensors)?;
+    }
+    if multisport {
+        return Ok(None);
+    }
+    let serials: Vec<String> = sensors.iter().map(|s| s.serial.clone()).collect();
+    let gear = db::gear_rules::gear_for_import(conn, profile_name, &serials, sport_type, start_time)?;
+    if let Some(ref g) = gear {
+        db::gear::set_activity_gear(conn, activity_id, Some(g))?;
+    }
+    Ok(gear)
+}
+
 pub fn import_bytes(
     conn: &Connection,
     vault_path: &Path,
@@ -890,14 +922,19 @@ pub fn import_bytes(
     // 9b². Insert multisport legs if present (triathlon per-leg breakdown)
     if !parsed.legs.is_empty() {
         db::multisport_legs::insert_legs(conn, &parsed.legs).map_err(|e| e.to_string())?;
-    } else if let Some(gear) =
-        db::gear::default_for_sport(conn, sport.as_str(), &start_time).map_err(|e| e.to_string())?
-    {
-        // 9b³. The sport's default gear (ADR 0003), if it was already bought
-        // when the activity happened. A native multisport file gets none:
-        // its one activity spans several sports.
-        db::gear::set_activity_gear(conn, &activity_id, Some(&gear)).map_err(|e| e.to_string())?;
     }
+
+    // 9b³. The gear keys and the gear itself (ADR 0003).
+    assign_gear(
+        conn,
+        &activity_id,
+        parsed.profile_name.as_deref(),
+        &parsed.sensors,
+        !parsed.legs.is_empty(),
+        sport.as_str(),
+        &start_time,
+    )
+    .map_err(|e| e.to_string())?;
 
     // 9c. Insert swim lengths if present
     if !parsed.lengths.is_empty() {
@@ -2117,6 +2154,55 @@ mod tests {
         assert_eq!((tz, confirmed), (3 * 3600, 1));
     }
 
+    /// The gear step on what a FIT file carries (no FIT fixture is checked
+    /// in; the keys are what `parser::fit` yields): keys stored, a rule
+    /// beats the default, a multisport whole stores its keys and gets no gear.
+    #[test]
+    fn assign_gear_keeps_the_keys_and_takes_a_rule_before_the_default() {
+        use crate::models::gear::{GearInput, GearKind, GearRule, GearRuleKind};
+        use crate::parser::SensorInfo;
+        let conn = crate::db::test_db();
+        let mut road = GearInput {
+            kind: GearKind::Bike,
+            name: "Road".into(),
+            brand: None,
+            model: None,
+            purchased_at: None,
+            initial_distance_m: 0.0,
+            distance_limit_m: None,
+            notes: None,
+            default_for: vec!["ride".into()],
+            rules: vec![],
+        };
+        let road_id = crate::db::gear::insert(&conn, &road).unwrap().id;
+        road.name = "MTB".into();
+        road.default_for = vec![];
+        road.rules = vec![GearRule { kind: GearRuleKind::SensorSerial, value: "777".into() }];
+        let mtb_id = crate::db::gear::insert(&conn, &road).unwrap().id;
+        for id in ["a", "b", "c"] {
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES (?1, '2026-01-01T08:00:00+03:00', 'ride')",
+                [id],
+            )
+            .unwrap();
+        }
+        let pedals = SensorInfo { serial: "777".into(), device_type: Some("bike_power".into()), manufacturer: None, product: None };
+
+        // Keys stored, the sensor rule wins over the ride default.
+        assert_eq!(assign_gear(&conn, "a", Some("ROAD"), &[pedals.clone()], false, "ride", "2026-01-01").unwrap().as_deref(), Some(mtb_id.as_str()));
+        let profile: Option<String> = conn.query_row("SELECT profile_name FROM activity WHERE id = 'a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(profile.as_deref(), Some("ROAD"));
+        assert_eq!(crate::db::activity_sensors::serials_of(&conn, "a").unwrap(), vec!["777"]);
+        // No keys: the default.
+        assert_eq!(assign_gear(&conn, "b", None, &[], false, "ride", "2026-01-01").unwrap().as_deref(), Some(road_id.as_str()));
+        let none: Option<String> = conn.query_row("SELECT profile_name FROM activity WHERE id = 'b'", [], |r| r.get(0)).unwrap();
+        assert_eq!(none, None);
+        // A multisport whole keeps its keys but carries no gear.
+        assert_eq!(assign_gear(&conn, "c", Some("Tri"), &[pedals], true, "triathlon", "2026-01-01").unwrap(), None);
+        assert_eq!(crate::db::gear::gear_of_activity(&conn, "c").unwrap(), None);
+        assert_eq!(crate::db::activity_sensors::serials_of(&conn, "c").unwrap(), vec!["777"]);
+    }
+
     #[test]
     fn import_gpx_file_integration() {
         let conn = crate::db::test_db();
@@ -2168,6 +2254,7 @@ mod tests {
                 distance_limit_m: None,
                 notes: None,
                 default_for: vec!["run".into()],
+                rules: vec![],
             },
         )
         .unwrap();
@@ -2197,6 +2284,7 @@ mod tests {
             distance_limit_m: None,
             notes: None,
             default_for: vec!["run".into()],
+            rules: vec![],
         };
         crate::db::gear::update(&conn, &shoes.id, &later).unwrap();
         let third = vault_dir.join("test_run_3.gpx");

@@ -307,6 +307,7 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         // below holds the lock for its whole run, so it must come after.
         run_power_curve_backfill(&state);
         import::device_backfill::run(&state);
+        import::gear_keys_backfill::run(&state);
         run_monitoring_recompute(&state);
         let conn = match state.db.lock() {
             Ok(c) => c,
@@ -557,6 +558,8 @@ pub fn run() {
             commands::gear::assign_gear_history,
             commands::gear::count_gear_targets,
             commands::gear::assign_gear_to_filtered,
+            commands::gear::gear_rule_candidates,
+            commands::gear::apply_gear_rules,
             commands::settings::get_watch_folders,
             commands::settings::add_watch_folder,
             commands::settings::remove_watch_folder,

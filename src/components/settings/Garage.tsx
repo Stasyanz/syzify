@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { History, Pencil, Plus, Trash2, X } from "lucide-react";
+import { History, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../../lib/tauri";
 import {
   SPORT_LABELS,
@@ -8,9 +8,11 @@ import {
   type GearInput,
   type GearItem,
   type GearKind,
+  type GearRule,
+  type RuleCandidates,
   type SportType,
 } from "../../lib/types";
-import { kindSports } from "../../lib/gear";
+import { kindSports, rulesSummary, sensorLabel } from "../../lib/gear";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatDistance, formatDurationHM, formatElevation } from "../../lib/format";
 import { useUnits, isImperial, distanceUnit, M_PER_MILE } from "../../lib/units";
@@ -95,7 +97,31 @@ export function Garage() {
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const { data: items = [], isPending, error } = useQuery({ queryKey: ["gear"], queryFn: () => api.listGear() });
+  // What the files carried, for the rules: named on the cards and offered
+  // in the modal. Under the activity-derived prefixes so an import refreshes it.
+  const { data: candidates } = useQuery({ queryKey: ["gear-rule-candidates"], queryFn: () => api.gearRuleCandidates() });
   const [editing, setEditing] = useState<GearItem | "new" | null>(null);
+  const anyRules = items.some((g) => g.retired_at == null && g.rules.length > 0);
+
+  // Put the rules over the history: every activity without gear that a
+  // rule matches, multisport events left out.
+  const applyRules = useMutation({
+    mutationFn: async () => {
+      const ok = await confirmDialog({
+        title: "Apply the rules to the history?",
+        message: "Every activity without gear that a profile or sensor rule matches goes on that item — including ones you took off their gear by hand. Activities on gear and multisport events are left alone.",
+        confirmLabel: "Apply",
+      });
+      if (!ok) return null;
+      return api.applyGearRules();
+    },
+    onSuccess: (n) => {
+      if (n == null) return;
+      addToast(n > 0 ? "success" : "info", n > 0 ? `Rules put ${n} activit${n === 1 ? "y" : "ies"} on their gear` : "Nothing to assign: no unassigned activity matches a rule");
+      if (n > 0) invalidateActivityData(queryClient);
+    },
+    onError: (e: unknown) => addToast("error", `Could not apply the rules: ${e instanceof Error ? e.message : String(e)}`),
+  });
 
   const changed = () => queryClient.invalidateQueries({ queryKey: ["gear"] });
 
@@ -163,10 +189,18 @@ export function Garage() {
           <div className="sl">Garage</div>
           <div className="sd">Your bikes, shoes and other gear, with the mileage their activities add up to</div>
         </div>
-        <button onClick={() => setEditing("new")} className="btn primary shrink-0">
-          <Plus size={15} />
-          Add gear
-        </button>
+        <div className="flex shrink-0 gap-2">
+          {anyRules && (
+            <button onClick={() => applyRules.mutate()} disabled={applyRules.isPending} className="btn ghost" data-testid="apply-rules">
+              <Wand2 size={15} />
+              {applyRules.isPending ? "Applying…" : "Apply rules"}
+            </button>
+          )}
+          <button onClick={() => setEditing("new")} className="btn primary">
+            <Plus size={15} />
+            Add gear
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -248,6 +282,11 @@ export function Garage() {
                         )}
                       </div>
                     )}
+                    {item.rules.length > 0 && (
+                      <div className="mt-1 text-xs text-faint" data-testid="gear-rules">
+                        Auto-assign by {rulesSummary(item.rules, candidates)}
+                      </div>
+                    )}
                     {wear != null && (
                       // The tooltip hangs off a wrapper with a bit of hover
                       // room: the track itself clips its overflow, which
@@ -309,6 +348,7 @@ export function Garage() {
       {editing && (
         <GearModal
           item={editing === "new" ? null : editing}
+          candidates={candidates}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -324,10 +364,13 @@ export function Garage() {
  * take the display unit and are stored in meters. */
 export function GearModal({
   item,
+  candidates,
   onClose,
   onSaved,
 }: {
   item: GearItem | null;
+  /** What the vault's files carried, for the rules; absent = still loading. */
+  candidates?: RuleCandidates;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -348,6 +391,12 @@ export function GearModal({
   const [limit, setLimit] = useState(limitText0);
   const [notes, setNotes] = useState(item?.notes ?? "");
   const [defaultFor, setDefaultFor] = useState<SportType[]>(item?.default_for ?? []);
+  const [ruleProfiles, setRuleProfiles] = useState<string[]>(
+    (item?.rules ?? []).filter((r) => r.kind === "profile_name").map((r) => r.value),
+  );
+  const [ruleSensors, setRuleSensors] = useState<string[]>(
+    (item?.rules ?? []).filter((r) => r.kind === "sensor_serial").map((r) => r.value),
+  );
   const unit = distanceUnit();
   const retired = item?.retired_at != null;
   const initialField = readDistanceField(initial, initialText0, item?.initial_distance_m ?? null);
@@ -375,6 +424,10 @@ export function GearModal({
         notes: notes || null,
         // A retired item is no default for anything (the field is hidden).
         default_for: retired ? [] : defaultFor,
+        rules: [
+          ...ruleProfiles.map((value): GearRule => ({ kind: "profile_name", value })),
+          ...ruleSensors.map((value): GearRule => ({ kind: "sensor_serial", value })),
+        ],
       };
       if (item) await api.updateGear(item.id, input);
       else await api.createGear(input);
@@ -387,6 +440,17 @@ export function GearModal({
   });
 
   const sportOptions = kindSports(kind).map((s) => ({ value: s, label: SPORT_LABELS[s] }));
+  // A rule's value the vault has not seen (set elsewhere, files gone) stays
+  // offered so the save keeps it.
+  const profileOptions = [
+    ...(candidates?.profiles ?? []).map((p) => ({ value: p.value, label: `${p.value} (${p.count})` })),
+    ...ruleProfiles.filter((v) => !candidates?.profiles.some((p) => p.value === v)).map((v) => ({ value: v, label: v })),
+  ];
+  const sensorOptions = [
+    ...(candidates?.sensors ?? []).map((s) => ({ value: s.serial, label: `${sensorLabel(s)} · ${s.serial} (${s.count})` })),
+    ...ruleSensors.filter((v) => !candidates?.sensors.some((s) => s.serial === v)).map((v) => ({ value: v, label: v })),
+  ];
+  const rulesOffered = profileOptions.length > 0 || sensorOptions.length > 0;
 
   return (
     // No backdrop-click close (app-wide modal policy): closing is explicit.
@@ -491,6 +555,41 @@ export function GearModal({
             </div>
           )}
         </div>
+
+        {rulesOffered && (
+          // Auto-assignment (ADR 0003): what a file carries that names the
+          // bike — the profile it was recorded under, the paired sensors.
+          <div className="grid grid-cols-2 gap-3" data-testid="gear-rules-form">
+            <div className="col-span-2 text-xs text-muted">
+              Auto-assign new activities when…
+              {retired && <span className="text-faint"> (asleep while the gear is retired)</span>}
+            </div>
+            <div>
+              <label className="text-xs text-muted block mb-1">The profile is</label>
+              <Select
+                multiple
+                ariaLabel="Profile is"
+                className="w-full"
+                values={ruleProfiles}
+                onChange={setRuleProfiles}
+                options={profileOptions}
+                placeholder="Any profile"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted block mb-1">A sensor is paired</label>
+              <Select
+                multiple
+                ariaLabel="Sensor is paired"
+                className="w-full"
+                values={ruleSensors}
+                onChange={setRuleSensors}
+                options={sensorOptions}
+                placeholder="Any sensor"
+              />
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-xs text-muted block mb-1">Notes</label>

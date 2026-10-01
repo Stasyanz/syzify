@@ -38,6 +38,7 @@ const gearItem = (id: string, name: string, kind: GearItem["kind"], activities: 
   created_at: "2026-01-01T00:00:00",
   stats: { activities, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
   default_for: [],
+  rules: [],
 });
 
 let qcRef: QueryClient | null = null;

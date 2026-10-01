@@ -13,6 +13,8 @@ vi.mock("../../lib/tauri", () => ({
     setGearRetired: vi.fn(),
     deleteGear: vi.fn(),
     assignGearHistory: vi.fn(),
+    gearRuleCandidates: vi.fn(),
+    applyGearRules: vi.fn(),
   },
 }));
 vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
@@ -51,6 +53,7 @@ const road: GearItem = {
   created_at: "2026-10-01T10:00:00",
   stats: { activities: 2, distance_m: 50_000, duration_s: 6_000, elev_gain_m: 200, last_used: "2026-09-29T08:44:29+03:00" },
   default_for: ["ride"],
+  rules: [],
 };
 const pegasus: GearItem = {
   id: "g-peg",
@@ -66,6 +69,7 @@ const pegasus: GearItem = {
   created_at: "2026-10-01T10:00:00",
   stats: { activities: 12, distance_m: 700_000, duration_s: 0, elev_gain_m: 0, last_used: null },
   default_for: [],
+  rules: [],
 };
 const oldShoes: GearItem = {
   ...pegasus,
@@ -133,6 +137,13 @@ describe("Garage", () => {
     // Queued once-answers must not leak from a test that stopped early.
     vi.mocked(confirmDialog).mockReset();
     vi.mocked(api.listGear).mockResolvedValue([road, pegasus, oldShoes]);
+    vi.mocked(api.gearRuleCandidates).mockResolvedValue({
+      profiles: [
+        { value: "ROAD", count: 169 },
+        { value: "Bike", count: 12 },
+      ],
+      sensors: [{ serial: "3632674300", device_type: "bike_power", manufacturer: "favero_electronics", product: "assioma_duo", count: 169 }],
+    });
   });
   afterEach(() => {
     cleanup();
@@ -401,6 +412,72 @@ describe("Garage", () => {
     renderIt();
     await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
     expect(screen.getByRole("button", { name: "Assign to all Ride activities" })).toBeTruthy();
+  });
+
+  it("offers the profiles and sensors the files carried as rules, keeps a value the vault no longer has, and saves them", async () => {
+    vi.mocked(api.updateGear).mockResolvedValue(undefined);
+    vi.mocked(api.listGear).mockResolvedValue([
+      { ...road, rules: [{ kind: "profile_name", value: "ROAD" }, { kind: "sensor_serial", value: "999" }] },
+    ]);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    // The card names the rules, a known sensor by its name, an unknown by its serial.
+    await waitFor(() => expect(screen.getByTestId("gear-rules").textContent).toBe("Auto-assign by profile ROAD · sensor 999"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Road" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit gear" });
+    await waitFor(() => expect(within(dialog).getByTestId("gear-rules-form")).toBeTruthy());
+    fireEvent.click(within(dialog).getByLabelText("Profile is"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["ROAD (169)", "Bike (12)"]);
+    fireEvent.click(screen.getByRole("option", { name: "Bike (12)" }));
+    // A multi-select stays open after a toggle; close it before the next one.
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(within(dialog).getByLabelText("Sensor is paired"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Favero Electronics Assioma Duo (bike power) · 3632674300 (169)",
+      "999",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: /Assioma/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.updateGear).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.updateGear).mock.calls[0][1].rules).toEqual([
+      { kind: "profile_name", value: "ROAD" },
+      { kind: "profile_name", value: "Bike" },
+      { kind: "sensor_serial", value: "3632674300" },
+      { kind: "sensor_serial", value: "999" },
+    ]);
+  });
+
+  it("hides the rules form while the vault has nothing a rule could match", async () => {
+    vi.mocked(api.gearRuleCandidates).mockResolvedValue({ profiles: [], sensors: [] });
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(3));
+    fireEvent.click(screen.getByRole("button", { name: "Add gear" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("gear-rules-form")).toBeNull();
+    expect(screen.queryByTestId("apply-rules")).toBeNull();
+  });
+
+  it("applies the rules to the history on request, with a confirmation, and says what happened", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([{ ...road, rules: [{ kind: "profile_name", value: "ROAD" }] }, pegasus]);
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+    vi.mocked(api.applyGearRules).mockResolvedValueOnce(140).mockResolvedValueOnce(0);
+    renderIt();
+    await waitFor(() => expect(screen.getByTestId("apply-rules")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(api.applyGearRules).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Rules put 140 activities on their gear"));
+    await waitFor(() => expect(api.listGear).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("info", expect.stringContaining("no unassigned activity matches")));
+    expect(api.listGear).toHaveBeenCalledTimes(2);
+    // A rule on a retired item alone does not offer the button.
+    cleanup();
+    vi.mocked(api.listGear).mockResolvedValue([{ ...oldShoes, rules: [{ kind: "profile_name", value: "Run" }] }]);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    expect(screen.queryByTestId("apply-rules")).toBeNull();
   });
 
   it("deletes only after a confirmation that counts the activities, and never on cancel", async () => {

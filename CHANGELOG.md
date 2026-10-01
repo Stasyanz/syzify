@@ -38,6 +38,19 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   Gravel will be moved"); the ones already on it and multisport events
   are left out. The Garage card's wear bar now shows its numbers on
   hover ("7305.82 km of 8000.00 km · 91 %").
+- Gear can be assigned by rule (#167): an item can say "put new
+  activities on me when the profile is ROAD" or "… when this sensor is
+  paired", chosen from the profiles and sensors the vault's FIT files
+  carried — the activity profile the device recorded under ("ROAD" on
+  an Edge, "Bike" or "Run" on a watch) and every paired sensor with its
+  serial. A rule only fires for a sport the item's kind takes, so the
+  heart-rate strap worn on every workout cannot put the runs on the
+  bike. A rule wins over the sport default at import, a profile rule
+  over a sensor rule, and neither puts an activity on an item bought
+  after it. "Apply rules" in the Garage puts them over the history, for
+  the activities without gear. Existing activities get their profile and
+  sensors filled in once at startup from their stored files — once the
+  activities are unlocked, for an encrypted vault.
 
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:

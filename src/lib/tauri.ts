@@ -16,6 +16,7 @@ import type {
   GearInput,
   GearItem,
   GearTargets,
+  RuleCandidates,
   WatchFolder,
   ScanResult,
   DeviceStats,
@@ -166,6 +167,12 @@ export const api = {
   /** Put every activity the filters match on the item; resolves to how many were assigned. */
   assignGearToFiltered: (filters: ActivityFilters, gearId: string) =>
     invoke<number>("assign_gear_to_filtered", { filters, gearId }),
+
+  /** The profile names and sensors the vault's files carried, for the rules. */
+  gearRuleCandidates: () => invoke<RuleCandidates>("gear_rule_candidates"),
+
+  /** Put the rules over the history; resolves to how many activities were assigned. */
+  applyGearRules: () => invoke<number>("apply_gear_rules"),
 
   getWatchFolders: () =>
     invoke<WatchFolder[]>("get_watch_folders"),
