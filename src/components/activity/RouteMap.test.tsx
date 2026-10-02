@@ -57,7 +57,9 @@ function mount(props: Partial<Parameters<typeof RouteMap>[0]> = {}) {
       <RouteMap trackpoints={track} sport="ride" activityId="act-1" {...props} />
     </QueryClientProvider>,
   );
-  const map = mapSpy.mock.results[0]!.value as L.Map;
+  // spyOn on an already-spied method returns the same spy: take the map
+  // of THIS mount, not of the first one in the test.
+  const map = mapSpy.mock.results.at(-1)!.value as L.Map;
   return { ...utils, map, invalidate };
 }
 
@@ -302,8 +304,11 @@ describe("RouteMap destination point (#179)", () => {
   it("shows no flag for a location off the route or no location at all", () => {
     expect(flagOf(mount({ location: [55.701, 37.62], locationName: "Alanya" }).map)).toBeUndefined();
     cleanup();
-    // ~11 m off a vertex: a picked place, not the menu's point.
-    expect(flagOf(mount({ location: [55.7011, 37.6], locationName: "Café" }).map)).toBeUndefined();
+    // 75 m off a vertex: past the click's own snap radius.
+    expect(flagOf(mount({ location: [55.701, 37.6012], locationName: "Café" }).map)).toBeUndefined();
+    cleanup();
+    // 31 m beside the track, as a road-level point sits (#185): flagged.
+    expect(flagOf(mount({ location: [55.701, 37.6005], locationName: "Yol" }).map)).toBeDefined();
     cleanup();
     expect(flagOf(mount({ location: null }).map)).toBeUndefined();
   });

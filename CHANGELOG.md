@@ -22,6 +22,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   card and sits a clear notch of lightness below the one before it, so
   the bands tell apart by lightness alone — measured under simulated
   red-green color blindness too.
+- The destination flag now shows for a point a few metres off the track
+  (#185): a road-level place or a point set by an earlier version sits
+  up to ~30 m from the nearest track vertex, and the flag demanded the
+  vertex itself. It uses the same radius a click uses to mean a route
+  point, so a typed locality gets a flag only when the route passes
+  within that radius of it.
 
 ## [0.9.0] - 2026-10-02
 

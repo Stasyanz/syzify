@@ -139,19 +139,22 @@ describe("flagPosition", () => {
     lon: [37.6, 37.6, 37.6],
   });
 
-  it("puts the flag on the activity's location point when it is a vertex of the route", () => {
-    // The point as stored by the menu (a snapped trackpoint), and float
-    // noise around it (~0.01 m).
+  it("puts the flag on the activity's location point when it lies on the route", () => {
+    // The point as stored by the menu (a snapped trackpoint)…
     expect(flagPosition(track, [55.701, 37.6])).toEqual([55.701, 37.6]);
-    expect(flagPosition(track, [55.7010000001, 37.6])).toEqual([55.7010000001, 37.6]);
+    // …one ~11 m along the track between two vertices…
+    expect(flagPosition(track, [55.7011, 37.6])).toEqual([55.7011, 37.6]);
+    // …and ones beside it: 31 m east (the farthest road-level point in a
+    // real vault, #185) and 45 m, just inside the click's own radius.
+    expect(flagPosition(track, [55.701, 37.6005])).toEqual([55.701, 37.6005]);
+    expect(flagPosition(track, [55.701, 37.60072])).toEqual([55.701, 37.60072]);
   });
 
-  it("shows no flag for a location near but not on the route — a picked place is not a destination", () => {
-    // ~11 m north of a vertex: a place picked from the suggestions, or a
-    // village centroid the route happens to pass. Inside the click snap
-    // radius, outside the flag's.
-    expect(flagPosition(track, [55.7011, 37.6])).toBeNull();
-    // ~1.1 km east: the centroid of a town typed in Edit Activity.
+  it("shows no flag for a location off the route — a typed locality is not a destination", () => {
+    // 55 m east of a vertex: just past the snap radius, as a click there
+    // would be (the 45 m case above pins the other side of the edge).
+    expect(flagPosition(track, [55.701, 37.60088])).toBeNull();
+    // ~1.25 km east: the centroid of a town typed in Edit Activity.
     expect(flagPosition(track, [55.701, 37.62])).toBeNull();
   });
 

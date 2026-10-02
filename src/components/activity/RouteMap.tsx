@@ -74,16 +74,23 @@ const flagIcon = L.divIcon({
   </svg>`,
 });
 
-/** How far the stored location point may sit from a track vertex and
- * still be the destination flag: the menu saves the vertex itself, so
- * anything beyond float noise is another kind of point. */
-export const FLAG_TOLERANCE_M = 1;
+/** How far from the track a point still means a route point: the snap
+ * radius of a click, and of the destination flag (#185). The distance is
+ * to the nearest VERTEX, not the line — with smart recording the
+ * vertices on a straight sit tens of metres apart, so a point right on
+ * the line can be 30 m from any of them. */
+export const ROUTE_SNAP_M = 50;
 
 /** Where the destination flag goes: the activity's location point when
- * it IS a vertex of the route, else nowhere. The same stored triple also
- * holds what Edit Activity writes — a locality centroid, a picked place —
- * and that is a location, not a destination: no flag, even when the
- * route happens to pass it. Exported pure for tests. */
+ * it lies on the route — within ROUTE_SNAP_M of a vertex: one radius,
+ * one meaning. The menu saves the snapped vertex itself, but points from
+ * earlier versions and from a road-level place pick sit beside the track
+ * (1.5–31 m in a real vault) and are on the route for any purpose the
+ * flag serves. The same stored triple also holds what Edit Activity
+ * writes, a locality centroid, usually hundreds of metres off: no flag.
+ * Accepted: a centroid the route happens to pass within ROUTE_SNAP_M
+ * gets a flag too — the point's origin is not stored, so the two cannot
+ * be told apart. Exported pure for tests. */
 export function flagPosition(
   trackpoints: TrackPointColumns,
   location: [number, number] | null | undefined,
@@ -91,7 +98,7 @@ export function flagPosition(
   if (!location) return null;
   const [lat, lon] = location;
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  return findNearestPointIndex(trackpoints, L.latLng(lat, lon), FLAG_TOLERANCE_M) >= 0 ? [lat, lon] : null;
+  return findNearestPointIndex(trackpoints, L.latLng(lat, lon), ROUTE_SNAP_M) >= 0 ? [lat, lon] : null;
 }
 
 /** The flag is a mark, not a control: a click on it must not open the
@@ -240,7 +247,7 @@ function SelectedSegment({ trackpoints }: { trackpoints: TrackPointColumns }) {
 export function findNearestPointIndex(
   trackpoints: TrackPointColumns,
   latlng: L.LatLng,
-  maxDistanceM = 50,
+  maxDistanceM = ROUTE_SNAP_M,
 ): number {
   let minDist = Infinity;
   let minIdx = -1;
