@@ -333,6 +333,20 @@ describe("FTP correction", () => {
     expect(document.activeElement).not.toBe(off.getByLabelText("FTP (W)"));
   });
 
+  // A Tauri command refuses with a bare string, not an Error: the toast
+  // must carry its words, not "undefined" (#174).
+  it("says a refused save and a refused delete in the backend's words", async () => {
+    vi.mocked(api.updateActivity).mockRejectedValueOnce("The vault is locked");
+    const { getByText } = renderWith({});
+    fireEvent.click(getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Failed to update: The vault is locked"));
+
+    vi.mocked(api.deleteActivity).mockRejectedValueOnce("The vault is locked");
+    fireEvent.click(getByText("Delete"));
+    fireEvent.click(getByText("Confirm delete"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Failed to delete: The vault is locked"));
+  });
+
   it("reports a refused FTP by name and still saves the rest", async () => {
     vi.mocked(api.setActivityFtp).mockRejectedValueOnce("this activity has no normalized power, so IF and TSS cannot be recomputed");
     const { getByLabelText, getByText } = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
@@ -489,7 +503,7 @@ describe("gear refusals and sport changes", () => {
   }
 
   it("reports a refused gear by name and still finishes the save, FTP included", async () => {
-    vi.mocked(api.setActivityGear).mockRejectedValueOnce(new Error("Bring the gear back"));
+    vi.mocked(api.setActivityGear).mockRejectedValueOnce("Bring the gear back");
     const onSaved = renderWith(
       { sport_type: "ride", normalized_power_w: 200, threshold_power_w: 200, duration_s: 3600 },
       null,

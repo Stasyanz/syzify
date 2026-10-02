@@ -20,6 +20,7 @@ import {
   M_PER_MILE,
   FT_PER_M,
 } from "../../lib/units";
+import { errorText } from "../../lib/errors";
 
 /** Number of active filter facets — drives the navbar badge. */
 export function countActiveFilters(f: ActivityFilters): number {
@@ -149,7 +150,7 @@ export function FilterDrawer() {
       invalidateActivityData(queryClient);
     },
     onError: (e: unknown) => {
-      addToast("error", `Could not assign gear: ${e instanceof Error ? e.message : String(e)}`);
+      addToast("error", `Could not assign gear: ${errorText(e)}`);
       // A pick the registry no longer has must not stay selected.
       if (!gearInUse.some((g) => g.id === bulkGear)) setBulkGear("");
     },

@@ -145,6 +145,24 @@ describe("useDropImport on an activity page", () => {
     expect(importFiles).not.toHaveBeenCalled();
   });
 
+  it("says a refused attach in the backend's words — a bare string, not an Error (#174)", async () => {
+    attachPhotos.mockRejectedValueOnce("The vault is locked");
+    const { fire } = await renderDropImport("/activity/act-1");
+    fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith("error", "Failed to attach photos: The vault is locked")
+    );
+  });
+
+  it("says a refused import in the backend's words", async () => {
+    importFiles.mockRejectedValueOnce("The vault is locked");
+    const { fire } = await renderDropImport("/");
+    fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith("error", "Import failed: The vault is locked")
+    );
+  });
+
   it("refuses workout files with a pointer back out", async () => {
     const { fire } = await renderDropImport("/activity/act-1");
     fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });

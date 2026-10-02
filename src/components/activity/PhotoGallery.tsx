@@ -8,6 +8,7 @@ import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import type { Photo } from "../../lib/types";
 import { photoUrl } from "./photoUrl";
+import { errorText } from "../../lib/errors";
 
 interface Props {
   activityId: string;
@@ -41,13 +42,13 @@ export function PhotoGallery({ activityId, onShare }: Props) {
       const tone = res.failed.length > 0 ? "warning" : "success";
       if (parts.length) addToast(tone, parts.join(", "));
     },
-    onError: (e: Error) => addToast("error", `Failed to attach photos: ${e.message}`),
+    onError: (e: unknown) => addToast("error", `Failed to attach photos: ${errorText(e)}`),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (photoId: string) => api.deletePhoto(photoId),
     onSuccess: () => invalidate(),
-    onError: (e: Error) => addToast("error", e.message),
+    onError: (e: unknown) => addToast("error", errorText(e)),
   });
 
   const captionMutation = useMutation({
@@ -57,13 +58,13 @@ export function PhotoGallery({ activityId, onShare }: Props) {
       invalidate();
       setEditingCaption(null);
     },
-    onError: (e: Error) => addToast("error", e.message),
+    onError: (e: unknown) => addToast("error", errorText(e)),
   });
 
   const reorderMutation = useMutation({
     mutationFn: (ids: string[]) => api.reorderPhotos(ids),
-    onError: (e: Error) => {
-      addToast("error", `Failed to reorder: ${e.message}`);
+    onError: (e: unknown) => {
+      addToast("error", `Failed to reorder: ${errorText(e)}`);
       invalidate();
     },
   });

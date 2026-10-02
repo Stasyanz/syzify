@@ -6,6 +6,7 @@ import { useToastStore } from "../stores/toastStore";
 import { formatImportSummary } from "../lib/importSummary";
 import { isImagePath, isImportablePath } from "../lib/fileTypes";
 import { invalidateActivityData } from "../lib/activityInvalidation";
+import { errorText } from "../lib/errors";
 
 export type DropKind = "workout" | "photo";
 
@@ -30,8 +31,8 @@ export function useDropImport() {
       const { level, text } = formatImportSummary(data);
       addToast(level, text);
     },
-    onError: (error: Error) => {
-      addToast("error", `Import failed: ${error.message ?? "Unknown error"}`);
+    onError: (error: unknown) => {
+      addToast("error", `Import failed: ${errorText(error)}`);
     },
   });
 
@@ -47,7 +48,7 @@ export function useDropImport() {
       if (parts.length)
         addToast(res.failed.length > 0 ? "warning" : "success", parts.join(", "));
     },
-    onError: (e: Error) => addToast("error", `Failed to attach photos: ${e.message}`),
+    onError: (e: unknown) => addToast("error", `Failed to attach photos: ${errorText(e)}`),
   });
 
   // The Tauri listener is subscribed once; refs carry the latest route and

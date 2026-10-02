@@ -6,6 +6,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- A refused action said "undefined" instead of why (#174): changing the
+  sport from the badge, editing or deleting an activity, deleting,
+  captioning or reordering photos, saving or assigning gear, and a
+  failed import or photo drop all read the message off an error the
+  backend had sent as plain text. Every toast now carries the backend's
+  words.
+
 ## [0.9.0] - 2026-10-02
 
 ### Added

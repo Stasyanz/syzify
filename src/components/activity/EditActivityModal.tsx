@@ -14,6 +14,7 @@ import { SportIcon } from "../brand/SportIcon";
 import { GearKindIcon } from "./GearChip";
 import { gearChoicesFor } from "../../lib/gear";
 import { useToastStore } from "../../stores/toastStore";
+import { errorText } from "../../lib/errors";
 
 interface Props {
   activity: Activity;
@@ -210,7 +211,7 @@ export function EditActivityModal({
           await api.setActivityGear(activity.id, gear === NO_GEAR ? null : gear);
         } catch (err) {
           gearRefused = true;
-          addToast("error", `Gear not changed: ${err instanceof Error ? err.message : String(err)}`);
+          addToast("error", `Gear not changed: ${errorText(err)}`);
         }
       }
 
@@ -225,7 +226,7 @@ export function EditActivityModal({
             await api.setActivityFtp(activity.id, ftp);
           } catch (err) {
             ftpRefused = true;
-            addToast("error", `FTP not changed: ${err instanceof Error ? err.message : String(err)}`);
+            addToast("error", `FTP not changed: ${errorText(err)}`);
           }
         }
       }
@@ -262,8 +263,8 @@ export function EditActivityModal({
       addToast("success", unchanged ? `Activity updated (${unchanged} unchanged)` : "Activity updated");
       onSaved();
     },
-    onError: (err: Error) => {
-      addToast("error", `Failed to update: ${err.message}`);
+    onError: (err: unknown) => {
+      addToast("error", `Failed to update: ${errorText(err)}`);
     },
   });
 
@@ -273,8 +274,8 @@ export function EditActivityModal({
       addToast("success", "Activity deleted");
       onDeleted();
     },
-    onError: (err: Error) => {
-      addToast("error", `Failed to delete: ${err.message}`);
+    onError: (err: unknown) => {
+      addToast("error", `Failed to delete: ${errorText(err)}`);
     },
   });
 

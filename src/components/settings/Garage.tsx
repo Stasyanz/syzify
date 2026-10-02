@@ -22,6 +22,7 @@ import { Select } from "../ui/Select";
 import { DateField } from "../ui/DateField";
 import { GearKindIcon } from "../activity/GearChip";
 import { useToday } from "../../hooks/useToday";
+import { errorText } from "../../lib/errors";
 
 /** How far back the purchase-date picker's year list reaches. */
 export const PURCHASE_YEARS_BACK = 25;
@@ -97,7 +98,7 @@ export function Garage() {
       addToast(n > 0 ? "success" : "info", n > 0 ? `Rules put ${n} activit${n === 1 ? "y" : "ies"} on their gear` : "Nothing to assign: no unassigned activity matches a rule");
       if (n > 0) invalidateActivityData(queryClient);
     },
-    onError: (e: unknown) => addToast("error", `Could not apply the rules: ${e instanceof Error ? e.message : String(e)}`),
+    onError: (e: unknown) => addToast("error", `Could not apply the rules: ${errorText(e)}`),
   });
 
   const changed = () => queryClient.invalidateQueries({ queryKey: ["gear"] });
@@ -105,7 +106,7 @@ export function Garage() {
   const retire = useMutation({
     mutationFn: ({ id, retired }: { id: string; retired: boolean }) => api.setGearRetired(id, retired),
     onSuccess: changed,
-    onError: (e: Error) => addToast("error", `Could not update gear: ${e.message}`),
+    onError: (e: unknown) => addToast("error", `Could not update gear: ${errorText(e)}`),
   });
 
   /** The sentence the quick action offers: the item's default sports,
@@ -136,7 +137,7 @@ export function Garage() {
       // own totals are among the activity-derived queries this refreshes.
       invalidateActivityData(queryClient);
     },
-    onError: (e: Error) => addToast("error", `Could not assign gear: ${e.message}`),
+    onError: (e: unknown) => addToast("error", `Could not assign gear: ${errorText(e)}`),
   });
 
   async function remove(item: GearItem) {
@@ -155,7 +156,7 @@ export function Garage() {
       await api.deleteGear(item.id);
       changed();
     } catch (e) {
-      addToast("error", `Could not delete gear: ${e instanceof Error ? e.message : String(e)}`);
+      addToast("error", `Could not delete gear: ${errorText(e)}`);
     }
   }
 
@@ -180,9 +181,9 @@ export function Garage() {
         </div>
       </div>
 
-      {error && (
+      {error != null && (
         <p className="sd pb-4" style={{ color: "var(--danger)" }} role="alert">
-          Could not load the garage: {error instanceof Error ? error.message : String(error)}
+          Could not load the garage: {errorText(error)}
         </p>
       )}
 
@@ -413,7 +414,7 @@ export function GearModal({
       addToast("success", item ? "Gear updated" : "Gear added");
       onSaved();
     },
-    onError: (e: Error) => addToast("error", `Could not save gear: ${e.message}`),
+    onError: (e: unknown) => addToast("error", `Could not save gear: ${errorText(e)}`),
   });
 
   const sportOptions = kindSports(kind).map((s) => ({ value: s, label: SPORT_LABELS[s] }));

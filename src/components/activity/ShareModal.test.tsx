@@ -296,6 +296,20 @@ describe("ShareModal EXIF orientation (natural ≠ stored dims)", () => {
     });
   });
 
+  /// A Tauri command refuses with a bare string, not an Error: the toast
+  /// must carry its words, not "undefined" (#174).
+  it("says a refused export in the backend's words", async () => {
+    useToastStore.setState({ toasts: [] });
+    vi.mocked(api.getPhotoDataUrl).mockRejectedValueOnce("The vault is locked");
+    const { getByText } = renderModal();
+    await waitFor(() => expect((getByText("Save PNG").closest("button") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(getByText("Save PNG"));
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts.map((t) => `${t.type}: ${t.message}`)).toContain("error: Export failed: The vault is locked");
+    });
+  });
+
   it("shows an error toast when the full photo fails to load", async () => {
     imageMode = { "ph-1": "error" };
     renderModal();

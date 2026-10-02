@@ -6,6 +6,7 @@ import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatImportSummary } from "../../lib/importSummary";
+import { errorText } from "../../lib/errors";
 
 /** "icon" → compact navbar button; "button" → full accent CTA (empty state). */
 export function ImportDialog({ variant = "button" }: { variant?: "icon" | "button" }) {
@@ -20,7 +21,7 @@ export function ImportDialog({ variant = "button" }: { variant?: "icon" | "butto
       addToast(level, text);
     },
     onError: (error) => {
-      addToast("error", `Import failed: ${error.message ?? "Unknown error"}`);
+      addToast("error", `Import failed: ${errorText(error)}`);
     },
   });
 

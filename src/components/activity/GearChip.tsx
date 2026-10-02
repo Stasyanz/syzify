@@ -5,6 +5,7 @@ import { api } from "../../lib/tauri";
 import { gearChoicesFor, kindsForSport } from "../../lib/gear";
 import type { GearItem, GearKind } from "../../lib/types";
 import { useToastStore } from "../../stores/toastStore";
+import { errorText } from "../../lib/errors";
 
 /** The kind's icon, shared with the Garage cards. */
 export function GearKindIcon({ kind, size = 16, className }: { kind: GearKind; size?: number; className?: string }) {
@@ -105,7 +106,7 @@ export function GearChip({
       onChanged();
     },
     // A Tauri command's refusal arrives as a bare string, not an Error.
-    onError: (e: unknown) => addToast("error", `Gear not changed: ${e instanceof Error ? e.message : String(e)}`),
+    onError: (e: unknown) => addToast("error", `Gear not changed: ${errorText(e)}`),
   });
 
   if (!gearChipVisible(items, gearId, sport, locked)) return null;

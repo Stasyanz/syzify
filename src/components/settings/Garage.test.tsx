@@ -191,7 +191,7 @@ describe("Garage", () => {
     renderIt();
     await waitFor(() => expect(screen.getByText(/Nothing here yet/)).toBeTruthy());
     cleanup();
-    vi.mocked(api.listGear).mockRejectedValue(new Error("database is locked"));
+    vi.mocked(api.listGear).mockRejectedValue("database is locked");
     renderIt();
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Could not load the garage: database is locked"));
     expect(screen.queryByText(/Nothing here yet/)).toBeNull();
@@ -334,7 +334,7 @@ describe("Garage", () => {
   });
 
   it("reports a refused save and keeps the modal open", async () => {
-    vi.mocked(api.createGear).mockRejectedValue(new Error("Name is required"));
+    vi.mocked(api.createGear).mockRejectedValue("Name is required");
     renderIt();
     await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(3));
     fireEvent.click(screen.getByRole("button", { name: "Add gear" }));
@@ -359,8 +359,9 @@ describe("Garage", () => {
     await waitFor(() => expect(api.setGearRetired).toHaveBeenCalledWith("g-old", false));
     expect(confirmDialog).not.toHaveBeenCalled();
     await waitFor(() => expect(api.listGear).toHaveBeenCalledTimes(3));
-    // A refusal is said, not swallowed.
-    vi.mocked(api.setGearRetired).mockRejectedValueOnce(new Error("Gear not found: g-road"));
+    // A refusal is said, not swallowed — and a Tauri command refuses with
+    // a bare string, not an Error (#174).
+    vi.mocked(api.setGearRetired).mockRejectedValueOnce("Gear not found: g-road");
     fireEvent.click(screen.getByRole("button", { name: "Retire Road" }));
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not update gear: Gear not found: g-road"),
@@ -400,7 +401,7 @@ describe("Garage", () => {
 
     // A refusal is said.
     vi.mocked(confirmDialog).mockResolvedValueOnce(true);
-    vi.mocked(api.assignGearHistory).mockRejectedValueOnce(new Error("Bring the gear back"));
+    vi.mocked(api.assignGearHistory).mockRejectedValueOnce("Bring the gear back");
     fireEvent.click(offer);
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not assign gear: Bring the gear back"),
@@ -472,6 +473,11 @@ describe("Garage", () => {
     fireEvent.click(screen.getByTestId("apply-rules"));
     await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("info", expect.stringContaining("no unassigned activity matches")));
     expect(api.listGear).toHaveBeenCalledTimes(2);
+    // A refusal is said in the backend's words — a bare string (#174).
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
+    vi.mocked(api.applyGearRules).mockRejectedValueOnce("database is locked");
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not apply the rules: database is locked"));
     // A rule on a retired item alone does not offer the button.
     cleanup();
     vi.mocked(api.listGear).mockResolvedValue([{ ...oldShoes, rules: [{ kind: "profile_name", value: "Run" }] }]);
@@ -501,7 +507,7 @@ describe("Garage", () => {
 
     // A refused delete is said.
     vi.mocked(confirmDialog).mockResolvedValueOnce(true);
-    vi.mocked(api.deleteGear).mockRejectedValueOnce(new Error("database is locked"));
+    vi.mocked(api.deleteGear).mockRejectedValueOnce("database is locked");
     fireEvent.click(screen.getByRole("button", { name: "Delete Pegasus" }));
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not delete gear: database is locked"),

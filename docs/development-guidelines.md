@@ -150,6 +150,12 @@ never persisted. Test against the loopback `test_server` in `net.rs` (set
 **General**
 - ❌ Don't add a dependency for something small/standard; prefer the std/existing crates.
 - ❌ No `unwrap()`/`expect()` on fallible paths in production code; propagate errors.
+- ❌ Frontend: no `err.message` on a caught or rejected value — a Tauri command
+  rejects with a bare `String`, so that reads "undefined". Use `errorText(e)`
+  from `src/lib/errors.ts` (the query error type is registered as `unknown`
+  in `src/queryRegister.d.ts`, so `onError: (e) => e.message` will not compile —
+  but an explicit `(e: Error) =>` annotation would, so never write one;
+  `src/lib/errors.scan.test.ts` fails the suite on it).
 - ❌ Don't break a published contract (IPC shapes, Host SDK, manifest) without versioning.
 
 **Privacy invariants (non-negotiable, PRD §16)**

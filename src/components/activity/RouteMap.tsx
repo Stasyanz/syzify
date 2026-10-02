@@ -11,6 +11,7 @@ import { useUnits } from "../../lib/units";
 import { api, isTauri } from "../../lib/tauri";
 import { useResizeGrip } from "./useResizeGrip";
 import { protocolBase } from "../../lib/protocolUrl";
+import { errorText } from "../../lib/errors";
 
 interface Props {
   trackpoints: TrackPointColumns;
@@ -553,9 +554,7 @@ export function RouteMap({ trackpoints, sport, activityId, location, locationNam
                   flight when another menu opened must not report into it. */}
               {setDestination.isError && setDestination.variables?.seq === menu.seq && (
                 <p className="px-2 pt-1 text-xs text-red-500 max-w-56">
-                  {setDestination.error instanceof Error
-                    ? setDestination.error.message
-                    : String(setDestination.error)}
+                  {errorText(setDestination.error)}
                 </p>
               )}
             </div>

@@ -36,6 +36,7 @@ import {
   type BlockScales,
   type CropRect,
 } from "./shareLayout";
+import { errorText } from "../../lib/errors";
 
 interface Props {
   activity: Activity;
@@ -381,7 +382,7 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
       addToast("success", "Share image saved");
       onClose();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       addToast("error", `Export failed: ${msg}`);
     } finally {
       setExporting(false);
