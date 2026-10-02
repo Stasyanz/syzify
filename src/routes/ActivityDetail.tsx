@@ -517,6 +517,12 @@ export function ActivityDetailPage() {
                 trackpoints={viewTrackpoints!}
                 sport={focusedLeg?.sport_type ?? activity.sport_type}
                 activityId={activity.id}
+                location={
+                  activity.start_lat != null && activity.start_lon != null
+                    ? [activity.start_lat, activity.start_lon]
+                    : null
+                }
+                locationName={activity.location_name}
               />
 
               {/* Charts — key forces uPlot remount on navigation */}

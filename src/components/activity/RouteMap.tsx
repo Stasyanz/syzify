@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, PopupAt, useMap, useMapEvents } from "../map/leaflet";
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, Maximize, Minimize, MapPin } from "lucide-react";
 import type { TrackPointColumns } from "../../lib/types";
 import { useActivityStore } from "../../stores/activityStore";
+import { useToastStore } from "../../stores/toastStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { api, isTauri } from "../../lib/tauri";
@@ -15,6 +16,11 @@ interface Props {
   trackpoints: TrackPointColumns;
   sport: string;
   activityId: string;
+  /** The activity's location point (`start_lat`/`start_lon`), if any —
+   * shown as the destination flag when it lies on the route. */
+  location?: [number, number] | null;
+  /** The location's name, for the flag's tooltip. */
+  locationName?: string | null;
 }
 
 // No Leaflet default markers anywhere (every marker is a CSS divIcon), so
@@ -50,6 +56,56 @@ const finishIcon = L.divIcon({
   </svg>`,
 });
 
+/** The destination flag (#179): a filled pennant on a short pole, its
+ * anchor at the pole's foot so the flag "stands" on the picked track
+ * point. Blue, so it reads against the orange route, the green start and
+ * the red finish on every tile style. */
+const flagIcon = L.divIcon({
+  className: "route-flag",
+  iconSize: [22, 22],
+  iconAnchor: [4, 21],
+  tooltipAnchor: [7, -20],
+  html: `<svg width="22" height="22" viewBox="0 0 22 22">
+    <path d="M4 21V2" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M4 3h13l-3.5 4.5L17 12H4z" fill="#2563eb" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M4 21V2" stroke="#1e3a8a" stroke-width="2" stroke-linecap="round"/>
+    <path d="M4 3h13l-3.5 4.5L17 12H4z" fill="#2563eb"/>
+  </svg>`,
+});
+
+/** How far the stored location point may sit from a track vertex and
+ * still be the destination flag: the menu saves the vertex itself, so
+ * anything beyond float noise is another kind of point. */
+export const FLAG_TOLERANCE_M = 1;
+
+/** Where the destination flag goes: the activity's location point when
+ * it IS a vertex of the route, else nowhere. The same stored triple also
+ * holds what Edit Activity writes — a locality centroid, a picked place —
+ * and that is a location, not a destination: no flag, even when the
+ * route happens to pass it. Exported pure for tests. */
+export function flagPosition(
+  trackpoints: TrackPointColumns,
+  location: [number, number] | null | undefined,
+): [number, number] | null {
+  if (!location) return null;
+  const [lat, lon] = location;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return findNearestPointIndex(trackpoints, L.latLng(lat, lon), FLAG_TOLERANCE_M) >= 0 ? [lat, lon] : null;
+}
+
+/** The flag is a mark, not a control: a click on it must not open the
+ * menu on its own point (the map would get the click otherwise and snap
+ * it right there), and a right-click on it neither. It still closes a
+ * menu that is open — the map's preclick runs before the marker gets the
+ * event — which is what any click-away does. Leaflet's stopPropagation
+ * takes its own event too (typed for DOM ones): on a layer event it flags
+ * the DOM event as stopped, which is what the map's dispatcher checks
+ * before firing its own handlers. */
+const stopHere = (e: L.LeafletEvent) => {
+  L.DomEvent.stopPropagation(e as unknown as Event);
+};
+const flagEvents: L.LeafletEventHandlerFnMap = { click: stopHere, contextmenu: stopHere };
+
 function FitBounds({ positions }: { positions: L.LatLngExpression[] }) {
   const map = useMap();
   useEffect(() => {
@@ -78,7 +134,19 @@ export function hoverLines(tp: TrackPointColumns, i: number, sport: string): str
   return lines;
 }
 
-function HoverMarker({ trackpoints, sport }: { trackpoints: TrackPointColumns; sport: string }) {
+/** The dot on the hovered track point with its readings. On `quietAt` —
+ * the point the destination menu is open on — the dot stays but the
+ * readings go: they would sit right under the menu (it opens on the
+ * hovered point). Elsewhere the hover reads as usual. */
+function HoverMarker({
+  trackpoints,
+  sport,
+  quietAt,
+}: {
+  trackpoints: TrackPointColumns;
+  sport: string;
+  quietAt?: [number, number] | null;
+}) {
   const hoveredIndex = useActivityStore((s) => s.hoveredPointIndex);
 
   if (hoveredIndex == null) return null;
@@ -86,7 +154,8 @@ function HoverMarker({ trackpoints, sport }: { trackpoints: TrackPointColumns; s
   const lon = trackpoints.lon[hoveredIndex];
   if (lat == null || lon == null) return null;
 
-  const lines = hoverLines(trackpoints, hoveredIndex, sport);
+  const quiet = quietAt != null && quietAt[0] === lat && quietAt[1] === lon;
+  const lines = quiet ? [] : hoverLines(trackpoints, hoveredIndex, sport);
 
   return (
     <CircleMarker
@@ -189,27 +258,34 @@ export function findNearestPointIndex(
 
 function MapClickHandler({
   trackpoints,
-  onRouteContextMenu,
+  onRouteMenu,
 }: {
   trackpoints: TrackPointColumns;
-  onRouteContextMenu: (point: [number, number] | null) => void;
+  /** A click (either button) snapped to the route — where the menu opens;
+   * clicks off the route do not call. */
+  onRouteMenu: (point: [number, number]) => void;
 }) {
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
+
+  const menuAt = (latlng: L.LatLng) => {
+    const idx = findNearestPointIndex(trackpoints, latlng);
+    const lat = idx >= 0 ? trackpoints.lat[idx] : null;
+    const lon = idx >= 0 ? trackpoints.lon[idx] : null;
+    if (lat != null && lon != null) onRouteMenu([lat, lon]);
+  };
 
   useMapEvents({
     click(e) {
       const idx = findNearestPointIndex(trackpoints, e.latlng);
       setHoveredPointIndex(idx >= 0 ? idx : null);
+      menuAt(e.latlng);
     },
     mousemove(e) {
       const idx = findNearestPointIndex(trackpoints, e.latlng);
       setHoveredPointIndex(idx >= 0 ? idx : null);
     },
     contextmenu(e) {
-      const idx = findNearestPointIndex(trackpoints, e.latlng);
-      const lat = idx >= 0 ? trackpoints.lat[idx] : null;
-      const lon = idx >= 0 ? trackpoints.lon[idx] : null;
-      onRouteContextMenu(lat != null && lon != null ? [lat, lon] : null);
+      menuAt(e.latlng);
     },
   });
 
@@ -322,7 +398,7 @@ function useRoutePositions(trackpoints: TrackPointColumns) {
   }, [trackpoints]);
 }
 
-export function RouteMap({ trackpoints, sport, activityId }: Props) {
+export function RouteMap({ trackpoints, sport, activityId, location, locationName }: Props) {
   useUnits();
   const positions = useRoutePositions(trackpoints);
 
@@ -343,20 +419,56 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [layer, setLayer] = useState<LayerId>("osm");
   const { height, grip } = useResizeGrip(MAP_DEFAULT_HEIGHT_PX, clampMapHeight, "map_height");
-  // Right-click on the route: the snapped track point the menu was opened on.
-  const [menuPoint, setMenuPoint] = useState<[number, number] | null>(null);
+  // A click on the route (either button, #179 — it used to take a
+  // right-click) opens the one-item menu on the snapped track point. The
+  // sequence number remounts the popup on every route click: Leaflet closes
+  // the open popup on the map's preclick, and a second click on the SAME
+  // point would otherwise leave the state "open" over a popup that is gone.
+  // The counter lives in a ref, not in the state: preclick's onClose
+  // (menu → null) and the click land in one React batch, and a counter
+  // kept in the state would restart from the null it sees.
+  const [menu, setMenu] = useState<{ point: [number, number]; seq: number } | null>(null);
+  const menuSeq = useRef(0);
 
   const queryClient = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
   const setDestination = useMutation({
-    mutationFn: ([lat, lon]: [number, number]) =>
+    mutationFn: ({ point: [lat, lon] }: { point: [number, number]; seq: number }) =>
       api.setActivityLocationPoint(activityId, lat, lon),
-    onSuccess: () => {
-      setMenuPoint(null);
+    onSuccess: (result, { seq }) => {
+      // Close the menu this save came from — not one the user has since
+      // opened on another point.
+      setMenu((m) => (m?.seq === seq ? null : m));
+      // The toast names what was saved: a slip over a hand-typed location
+      // name is visible, and the next click fixes it. Geocoding off is the
+      // user's choice; a lookup that found no name (network, or nothing
+      // there) is worth a warning — the old name is gone for coordinates.
+      if (result.geocoded || result.geocoding_off) {
+        addToast("success", `Destination point: ${result.location_name}`);
+      } else {
+        addToast("warning", `Destination point saved as coordinates (${result.location_name}): no place name found.`);
+      }
       queryClient.invalidateQueries({ queryKey: ["activity", activityId] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
       queryClient.invalidateQueries({ queryKey: ["activity-locations"] });
     },
   });
+  // The tuple is a fresh array every parent render; key the memo on its
+  // numbers so the O(N) vertex search runs only when the point moves.
+  const [locLat, locLon] = location ?? [null, null];
+  const { isPending: saving, reset: forgetLastSave } = setDestination;
+  const onRouteMenu = useCallback(
+    (point: [number, number]) => {
+      // A fresh menu must not open with the last save's refusal in it.
+      if (!saving) forgetLastSave();
+      setMenu({ point, seq: ++menuSeq.current });
+    },
+    [saving, forgetLastSave],
+  );
+  const flag = useMemo(
+    () => flagPosition(trackpoints, locLat != null && locLon != null ? [locLat, locLon] : null),
+    [trackpoints, locLat, locLon],
+  );
 
   useEffect(() => {
     if (savedLayer && MAP_LAYERS.some((l) => l.id === savedLayer)) {
@@ -406,30 +518,44 @@ export function RouteMap({ trackpoints, sport, activityId }: Props) {
         <SelectedSegment trackpoints={trackpoints} />
         <Marker position={start} icon={startIcon} />
         <Marker position={end} icon={finishIcon} />
-        <HoverMarker trackpoints={trackpoints} sport={sport} />
-        <MapClickHandler trackpoints={trackpoints} onRouteContextMenu={setMenuPoint} />
-        {menuPoint && (
+        <HoverMarker trackpoints={trackpoints} sport={sport} quietAt={menu?.point} />
+        {flag && (
+          <Marker position={flag} icon={flagIcon} zIndexOffset={1000} eventHandlers={flagEvents}>
+            <Tooltip direction="top">
+              <span style={{ fontSize: "11px", lineHeight: "1.4" }}>
+                {locationName ? `Destination · ${locationName}` : "Destination point"}
+              </span>
+            </Tooltip>
+          </Marker>
+        )}
+        <MapClickHandler trackpoints={trackpoints} onRouteMenu={onRouteMenu} />
+        {menu && (
           <PopupAt
-            position={menuPoint}
+            key={menu.seq}
+            position={menu.point}
             className="mp-popup"
             offset={[0, -6]}
-            onClose={() => setMenuPoint(null)}
+            onClose={() => setMenu(null)}
           >
             <div className="map-menu">
               <button
                 type="button"
                 className="cal-pop-row disabled:opacity-60"
                 disabled={setDestination.isPending}
-                onClick={() => setDestination.mutate(menuPoint)}
+                onClick={() => setDestination.mutate(menu)}
               >
                 <MapPin size={15} className="text-muted flex-shrink-0" />
                 <span className="cal-pop-t">
                   {setDestination.isPending ? "Saving…" : "Set as destination point"}
                 </span>
               </button>
-              {setDestination.isError && (
+              {/* A refusal belongs to the menu it came from: a save still in
+                  flight when another menu opened must not report into it. */}
+              {setDestination.isError && setDestination.variables?.seq === menu.seq && (
                 <p className="px-2 pt-1 text-xs text-red-500 max-w-56">
-                  {String(setDestination.error)}
+                  {setDestination.error instanceof Error
+                    ? setDestination.error.message
+                    : String(setDestination.error)}
                 </p>
               )}
             </div>

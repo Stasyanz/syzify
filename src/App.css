@@ -350,6 +350,11 @@ body {
 .map-menu .cal-pop-row:hover .lucide {
   color: #fff;
 }
+/* The destination flag on the route map (#179) is a mark, not a control:
+   no hand cursor (the doubled selector outranks Leaflet's own
+   .leaflet-interactive rule whatever the stylesheet order). Its stacking
+   above the start/finish dots is the marker's zIndexOffset. */
+.leaflet-marker-icon.route-flag { cursor: default; }
 /* Leaflet scrolls the popup content itself when maxHeight is set — match
    the themed scrollbar so long cluster lists look native to the app. */
 .mp-popup .leaflet-popup-content::-webkit-scrollbar { width: 10px; }

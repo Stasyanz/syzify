@@ -166,18 +166,23 @@ export function Polyline({
 interface MarkerProps {
   position: L.LatLngExpression;
   icon?: L.Icon | L.DivIcon;
+  /** Stacking among markers (Leaflet orders them by latitude otherwise). */
+  zIndexOffset?: number;
   eventHandlers?: L.LeafletEventHandlerFnMap;
   children?: ReactNode;
 }
 
-export function Marker({ position, icon, eventHandlers, children }: MarkerProps) {
+export function Marker({ position, icon, zIndexOffset, eventHandlers, children }: MarkerProps) {
   const map = useMap();
   const [marker, setMarker] = useState<L.Marker | null>(null);
-  const initial = useRef({ position, icon });
+  const initial = useRef({ position, icon, zIndexOffset });
 
   useEffect(() => {
     const opts = initial.current;
-    const m = L.marker(opts.position, opts.icon ? { icon: opts.icon } : undefined).addTo(map);
+    const m = L.marker(opts.position, {
+      ...(opts.icon ? { icon: opts.icon } : {}),
+      ...(opts.zIndexOffset != null ? { zIndexOffset: opts.zIndexOffset } : {}),
+    }).addTo(map);
     setMarker(m);
     return () => {
       setMarker(null);

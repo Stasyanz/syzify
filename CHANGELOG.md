@@ -64,6 +64,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   with the app's own checks — a sync plugin can carry the gear a service
   assigned. `examples/plugins/gear-demo` shows both calls.
 
+### Changed
+- The "Set as destination point" menu on the route map opens on a
+  plain click on the route, not only on a right-click (#179), and the
+  point now shows on the activity page's map as a blue flag, with the
+  location name on hover, that moves when a new point is set.
+
 ### Removed
 - Activity tags (#157). They added nothing and cluttered the interface:
   the chips on list rows and on the activity page, the Tags editor in

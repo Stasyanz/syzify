@@ -4,6 +4,7 @@ import L from "leaflet";
 import {
   hoverLines,
   findNearestPointIndex,
+  flagPosition,
   clampMapHeight,
   segmentPositions,
   MAP_DEFAULT_HEIGHT_PX,
@@ -128,6 +129,36 @@ describe("findNearestPointIndex", () => {
     // ~111 m from the nearest point: outside 50 m, inside 200 m.
     expect(findNearestPointIndex(track, L.latLng(55.703, 37.6))).toBe(-1);
     expect(findNearestPointIndex(track, L.latLng(55.703, 37.6), 200)).toBe(2);
+  });
+});
+
+describe("flagPosition", () => {
+  const track = tp({
+    t: [0, 1, 2],
+    lat: [55.7, 55.701, 55.702],
+    lon: [37.6, 37.6, 37.6],
+  });
+
+  it("puts the flag on the activity's location point when it is a vertex of the route", () => {
+    // The point as stored by the menu (a snapped trackpoint), and float
+    // noise around it (~0.01 m).
+    expect(flagPosition(track, [55.701, 37.6])).toEqual([55.701, 37.6]);
+    expect(flagPosition(track, [55.7010000001, 37.6])).toEqual([55.7010000001, 37.6]);
+  });
+
+  it("shows no flag for a location near but not on the route — a picked place is not a destination", () => {
+    // ~11 m north of a vertex: a place picked from the suggestions, or a
+    // village centroid the route happens to pass. Inside the click snap
+    // radius, outside the flag's.
+    expect(flagPosition(track, [55.7011, 37.6])).toBeNull();
+    // ~1.1 km east: the centroid of a town typed in Edit Activity.
+    expect(flagPosition(track, [55.701, 37.62])).toBeNull();
+  });
+
+  it("shows no flag without a location point or with a broken one", () => {
+    expect(flagPosition(track, null)).toBeNull();
+    expect(flagPosition(track, undefined)).toBeNull();
+    expect(flagPosition(track, [Number.NaN, 37.6])).toBeNull();
   });
 });
 
