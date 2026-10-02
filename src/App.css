@@ -63,6 +63,17 @@
   --warn-soft: #f6ecd6;   /* warning tint background */
   --danger: #be3d2a;      /* error / destructive */
   --danger-soft: #fbe2db; /* error tint background */
+  /* Grade ladder for the elevation profile's climb fill (#126): five
+     steps, 1.5–5 / 5–8 / 8–12 / 12–16 / 16 %+, each ≥3:1 against the
+     white card and ≥8 L* below the one before it, in both theme ladders,
+     so the fill reads by lightness alone. src/lib/chartTheme.ts reads
+     them and must list the same values; chartZones.test.ts checks that
+     and measures the ladders. */
+  --grade-1: #b98e03;
+  --grade-2: #b66f02;
+  --grade-3: #b44a00;
+  --grade-4: #a82309;
+  --grade-5: #8e0014;
 
   /* shape */
   --radius: 12px;         /* cards, panels */
@@ -107,6 +118,15 @@
   --warn-soft: rgba(214, 164, 74, 0.16);
   --danger: #e0705c;
   --danger-soft: rgba(224, 112, 92, 0.16);
+  /* The dark card is L* 13 and the hypsometric band tints on it sit at
+     L* 36–49: the ladder runs from pale gold DOWN to a wall red that
+     still stays ≥6 L* above the brightest band and 4.5:1 on the card,
+     8 L* a step. */
+  --grade-1: #feda92;
+  --grade-2: #ffba70;
+  --grade-3: #fe975b;
+  --grade-4: #fe6f4a;
+  --grade-5: #eb5049;
 }
 
 /* Expose the tokens to Tailwind so utilities like `bg-surface`,

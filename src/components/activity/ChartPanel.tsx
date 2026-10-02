@@ -20,6 +20,7 @@ import {
   gradeCategories,
   gradeCategory,
   gradeRunAverages,
+  gradeColors,
   gradeFillStops,
   gradeGradientStops,
   gradeSeries,
@@ -212,6 +213,9 @@ function SingleChart({
     const tickColor = chartTextColor();
     const gridColor = chartGridColor();
     const inkColor = chartInkColor();
+    // The theme's grade ladder, read once per plot (the effect re-runs on
+    // `dark`): the line's and the fill's gradients both paint from it.
+    const gradePalette = gradeColors();
     const surfaceColor = chartSurfaceColor();
 
     // The "avg" reference, drawn in the draw hook so it sits ON TOP of bars
@@ -275,6 +279,7 @@ function SingleChart({
                 (x) => u.valToPos(x, "x", true),
                 left,
                 width,
+                gradePalette,
               );
               for (const s of stops) grad.addColorStop(s.offset, s.color);
               return grad;
@@ -332,6 +337,7 @@ function SingleChart({
             (x) => u.valToPos(x, "x", true),
             left,
             width,
+            gradePalette,
           );
           for (const st of stops) grad.addColorStop(st.offset, st.color);
           return grad;

@@ -13,6 +13,15 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   failed import or photo drop all read the message off an error the
   backend had sent as plain text. Every toast now carries the backend's
   words.
+- The climb colors under the elevation profile now read on both themes
+  (#126): the dark theme gets a ladder of its own, from pale gold down
+  to a wall red that still stands out against the dark card (the old
+  wall red was the least visible band there, under 2:1), and the light
+  theme's ladder starts from a deeper ochre instead of a gold that was
+  the palest thing on the white card. Every step clears 3:1 against its
+  card and sits a clear notch of lightness below the one before it, so
+  the bands tell apart by lightness alone — measured under simulated
+  red-green color blindness too.
 
 ## [0.9.0] - 2026-10-02
 

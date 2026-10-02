@@ -73,7 +73,7 @@ vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 
 import { ChartPanel, clampWideChartHeight, CHART_HEIGHT_PX, WIDE_CHART_MAX_HEIGHT_PX } from "./ChartPanel";
 import { api } from "../../lib/tauri";
-import { GRADE_COLORS } from "./chartZones";
+import { GRADE_COLORS, GRADE_COLORS_DARK } from "./chartZones";
 import { useActivityStore } from "../../stores/activityStore";
 
 /** A trackpoint column set with every column null-filled to `n`, then the
@@ -290,6 +290,43 @@ describe("ChartPanel elevation layers", () => {
     const colors = barCfgs[barCfgs.length - 1].disp.fill.values(fakePlot().u);
     expect(colors).toHaveLength(2);
     expect(colors.every((c) => /^#[0-9a-f]{6}e0$/i.test(c))).toBe(true);
+  });
+
+  it("paints the climb from the live theme's grade ladder (#126)", () => {
+    const climb = columns(N, {
+      distance_m: seq((i) => i * 100),
+      altitude_m: seq((i) => (i < 6 ? 100 : i < 14 ? 100 + (i - 6) * 10 : 180)),
+      hr: seq((i) => 120 + i),
+    });
+    // The dark theme's tokens, as App.css sets them under `.dark`.
+    const root = document.documentElement;
+    GRADE_COLORS_DARK.slice(1).forEach((c, i) => root.style.setProperty(`--grade-${i + 1}`, c));
+    try {
+      renderPanel(climb, vi.fn());
+      const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+      const withLine = elevation.opts.series[2];
+      for (const painter of [withLine.fill, withLine.stroke] as Painter[]) {
+        const { u, stops } = fakePlot();
+        painter(u);
+        const inner = stops.filter((s) => s.offset > 0 && s.offset < 1);
+        expect(inner.some((s) => s.color === GRADE_COLORS_DARK[3])).toBe(true);
+        expect(inner.some((s) => s.color === GRADE_COLORS[3])).toBe(false);
+      }
+      // The flats keep the line's own teal in either theme.
+      const { u, stops } = fakePlot();
+      (withLine.stroke as Painter)(u);
+      expect(stops[0].color).toBe(GRADE_COLORS[0]);
+      // The ladder is read once when the plot is built and handed to both
+      // painters — a token change without a rebuild does not leak into a
+      // redraw (the plot is rebuilt on a theme change anyway).
+      for (let i = 1; i <= 5; i++) root.style.removeProperty(`--grade-${i}`);
+      const again = fakePlot();
+      (withLine.fill as Painter)(again.u);
+      expect(again.stops.some((s) => s.color === GRADE_COLORS_DARK[3])).toBe(true);
+      expect(again.stops.some((s) => s.color === GRADE_COLORS[3])).toBe(false);
+    } finally {
+      for (let i = 1; i <= 5; i++) root.style.removeProperty(`--grade-${i}`);
+    }
   });
 
   it("labels a painted climb with one average for the whole band, elsewhere the point's grade", () => {

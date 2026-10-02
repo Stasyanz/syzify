@@ -28,3 +28,18 @@ export function chartInkColor(): string {
 export function chartSurfaceColor(): string {
   return readVar("--surface", "#faf7f1");
 }
+
+/** The light theme's five climb-grade steps (gentle → wall), the fallback
+ * when no token is set. Kept here, not in App.css only, so the pure chart
+ * helpers and their tests see the same ladder. */
+export const GRADE_STEPS_LIGHT = ["#b98e03", "#b66f02", "#b44a00", "#a82309", "#8e0014"];
+
+/** The dark theme's five climb-grade steps, as App.css sets them —
+ * exported for the palette tests, which measure both ladders. */
+export const GRADE_STEPS_DARK = ["#feda92", "#ffba70", "#fe975b", "#fe6f4a", "#eb5049"];
+
+/** The five climb-grade steps of the live theme (#126): the dark card
+ * needs a ladder of its own — the light ladder's wall red disappears on it. */
+export function chartGradeSteps(): string[] {
+  return GRADE_STEPS_LIGHT.map((fallback, i) => readVar(`--grade-${i + 1}`, fallback));
+}

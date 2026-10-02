@@ -1,3 +1,4 @@
+import { chartGradeSteps, GRADE_STEPS_DARK, GRADE_STEPS_LIGHT } from "../../lib/chartTheme";
 import type { TimeInZone } from "../../lib/types";
 
 /** A bpm range and the color HR bars falling into it are painted with. */
@@ -324,28 +325,38 @@ export const GRADE_VOTE_MIN_PCT = GRADE_FILL_MIN_PCT * 0.75;
  * grind should not wear one color); 16%+ is wall territory. */
 export const GRADE_BOUNDS_PCT = [GRADE_FILL_MIN_PCT, 5, 8, 12, 16];
 
-/** Grade palette, flat → wall. Index 0 is the elevation line's own teal so
- * flat terrain looks unchanged; the climb steps darken monotonically from
- * gold to wall red (CIE L* ≈ 77 → 70 → 62 → 45 → 31: the two gentle steps
- * 7–8 apart and shifting hue from yellow to orange as well, the hard ones
- * at least 14 apart), so neighbors differ in lightness, not just hue (the
- * standing a11y rule) — and now that the fill paints them as blocks, the
- * rule carries the whole area, not a 2 px line. Honest caveat: to a
- * dichromat the yellow-to-orange hue turn is invisible and the gentle
- * steps shrink to ≈4 of L*, so 2–5, 5–8 and 8–12 % read as one band; six
- * steps cannot fit between 77 and 31 any wider — gold cannot go lighter
- * (1.74:1 on the light card already) and amber cannot go darker without
- * landing on orange. The tooltip's number is the ground truth for the
- * gentle steps (#126). Plain #rrggbb only: the zone bars append an alpha
- * suffix and the fill uses the entries verbatim. */
-export const GRADE_COLORS = [
-  "#0e7490", // < GRADE_FILL_MIN_PCT (1.5%): flat / descent (the elevation line color)
-  "#e5b83f", // 1.5–5%: gentle
-  "#e39c3b", // 5–8%: noticeable
-  "#e07c3a", // 8–12%: hard
-  "#c0392b", // 12–16%: steep
-  "#8e1a0e", // 16%+: wall
-];
+/** The flat / descent color — the elevation line's own teal, so flat
+ * terrain looks unchanged. Index 0 of every grade palette. */
+export const GRADE_FLAT_COLOR = "#0e7490";
+
+/** Grade palette, flat → wall, for the LIVE theme (#126): index 0 is the
+ * flat teal, then the theme's five climb steps from App.css (`--grade-1…5`,
+ * read through chartTheme like every other chart color). One ladder per
+ * theme, because one could not serve both: the fill paints whole areas,
+ * and against the white card the old gold sat at 1.9:1 while against the
+ * dark card the old wall red sat at 1.8:1 — the steepest band was the
+ * least visible one. Each ladder is built so that every step clears 3:1
+ * on its own card (the non-text contrast floor), sits ≥ 8 L* below the
+ * step before it, and stays ≥ 6 L* away from every hypsometric band tint
+ * it can border on that card (the flat ground on either side of a climb)
+ * — so the bands read by lightness alone; the hue turn from gold to red
+ * is a bonus a dichromat does not get, and chartZones.test.ts measures
+ * all of it under simulated protanopia and deuteranopia too. One accepted
+ * residue: under protanopia the dark theme's wall red loses lightness
+ * and its SIDE edge against the 500–1000 m band tint thins to ≈1.7 L*;
+ * the line above it still changes color at the same sample. The tokens
+ * in App.css and the constants here must agree (a parity test reads the
+ * stylesheet). Plain #rrggbb only: the fill uses the entries verbatim. */
+export function gradeColors(steps: string[] = chartGradeSteps()): string[] {
+  return [GRADE_FLAT_COLOR, ...steps];
+}
+
+/** The light-theme palette, fixed — what the pure helpers use outside a
+ * document (tests), and the fallback when a token is missing. */
+export const GRADE_COLORS = gradeColors(GRADE_STEPS_LIGHT);
+
+/** The dark-theme palette, fixed, for the tests that measure it. */
+export const GRADE_COLORS_DARK = gradeColors(GRADE_STEPS_DARK);
 
 /** Palette index for one grade value (null/NaN → flat). */
 export function gradeCategory(pct: number | null): number {
@@ -735,8 +746,9 @@ export function gradeGradientStops(
   xPosOf: (x: number) => number,
   left: number,
   width: number,
+  colors: string[] = gradeColors(),
 ): { offset: number; color: string }[] {
-  return sharpStops(xs, (i) => GRADE_COLORS[cats[i] ?? 0], xPosOf, left, width);
+  return sharpStops(xs, (i) => colors[cats[i] ?? 0], xPosOf, left, width);
 }
 
 /** The fill's "nothing here" — a stop that paints nothing. */
@@ -748,14 +760,17 @@ export const GRADE_FILL_NONE = "rgba(0, 0, 0, 0)";
  * lightness step between neighboring categories and let the altitude band
  * underneath move the lightness more than the category did — the
  * colorblind rule in the palette's header was gone. Under a climb the
- * grade replaces the altitude tint outright. Built once — the stops walk
- * every sample of the track on every redraw. */
-const GRADE_FILL_COLORS = GRADE_COLORS.map((c, i) => (i === 0 ? GRADE_FILL_NONE : c));
+ * grade replaces the altitude tint outright. Six entries, built per call;
+ * the stops that walk every sample of the track build it once. */
+function gradeFillPalette(colors: string[]): string[] {
+  return colors.map((c, i) => (i === 0 ? GRADE_FILL_NONE : c));
+}
 
-/** Fill color under one grade sample: the line's category, so the band
- * under the line starts and ends exactly where the line changes color. */
-export function gradeFillColor(pct: number | null): string {
-  return GRADE_FILL_COLORS[gradeCategory(pct)];
+/** Fill color under one grade sample from the given palette: the line's
+ * category, so the band under the line starts and ends exactly where the
+ * line changes color. */
+export function gradeFillColor(pct: number | null, colors: string[]): string {
+  return gradeFillPalette(colors)[gradeCategory(pct)];
 }
 
 /**
@@ -769,8 +784,10 @@ export function gradeFillStops(
   xPosOf: (x: number) => number,
   left: number,
   width: number,
+  colors: string[] = gradeColors(),
 ): { offset: number; color: string }[] {
-  return sharpStops(xs, (i) => GRADE_FILL_COLORS[cats[i] ?? 0], xPosOf, left, width);
+  const fill = gradeFillPalette(colors);
+  return sharpStops(xs, (i) => fill[cats[i] ?? 0], xPosOf, left, width);
 }
 
 /**

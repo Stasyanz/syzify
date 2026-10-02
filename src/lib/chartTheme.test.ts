@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  chartGradeSteps,
   chartGridColor,
   chartInkColor,
   chartSurfaceColor,
   chartTextColor,
+  GRADE_STEPS_DARK,
+  GRADE_STEPS_LIGHT,
 } from "./chartTheme";
 
 describe("chartTheme", () => {
@@ -17,6 +20,17 @@ describe("chartTheme", () => {
     expect(chartGridColor()).toBe("#e6dfd1");
     expect(chartInkColor()).toBe("#221f1a");
     expect(chartSurfaceColor()).toBe("#faf7f1");
+    expect(chartGradeSteps()).toEqual(GRADE_STEPS_LIGHT);
+  });
+
+  it("reads the theme's grade ladder from its tokens, step by step", () => {
+    const root = document.documentElement;
+    GRADE_STEPS_DARK.forEach((c, i) => root.style.setProperty(`--grade-${i + 1}`, ` ${c} `));
+    expect(chartGradeSteps()).toEqual(GRADE_STEPS_DARK);
+    // A single missing token falls back on its own step, not the whole ladder.
+    root.style.removeProperty("--grade-3");
+    expect(chartGradeSteps()[2]).toBe(GRADE_STEPS_LIGHT[2]);
+    expect(chartGradeSteps()[4]).toBe(GRADE_STEPS_DARK[4]);
   });
 
   it("reads the live CSS tokens, trimmed", () => {

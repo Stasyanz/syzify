@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   bandGradientStops,
   bucketMaxBars,
@@ -8,6 +10,9 @@ import {
   DEFAULT_HR_RANGES,
   GRADE_BOUNDS_PCT,
   GRADE_COLORS,
+  GRADE_COLORS_DARK,
+  GRADE_FLAT_COLOR,
+  gradeColors,
   gradeCategory,
   gradeCategories,
   gradeFillColor,
@@ -386,12 +391,112 @@ describe("gradeCategory", () => {
     expect(gradeCategory(45)).toBe(5);
   });
 
-  it("has one color per category", () => {
-    expect(GRADE_COLORS.length).toBe(GRADE_BOUNDS_PCT.length + 1);
-    // Plain #rrggbb only: the zone bars append an alpha suffix to a color
-    // and the fill palette reuses these verbatim — an rgba() entry would
-    // make one of them an invalid color and addColorStop would throw.
-    for (const c of GRADE_COLORS) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+  it("has one color per category, in both themes, flat first", () => {
+    for (const palette of [GRADE_COLORS, GRADE_COLORS_DARK]) {
+      expect(palette.length).toBe(GRADE_BOUNDS_PCT.length + 1);
+      expect(palette[0]).toBe(GRADE_FLAT_COLOR);
+      // Plain #rrggbb only: the zone bars append an alpha suffix to a color
+      // and the fill palette reuses these verbatim — an rgba() entry would
+      // make one of them an invalid color and addColorStop would throw.
+      for (const c of palette) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    // Outside a document the live palette is the light one.
+    expect(gradeColors()).toEqual(GRADE_COLORS);
+    expect(gradeColors(["#111111", "#222222", "#333333", "#444444", "#555555"])[1]).toBe("#111111");
+  });
+});
+
+/** sRGB → relative luminance (WCAG) and CIE L*; Viénot (1999) dichromacy
+ * on linear RGB. Enough color science to measure the ladders, no more. */
+const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const rgbLin = (hex: string) => [1, 3, 5].map((i) => lin(parseInt(hex.slice(i, i + 2), 16) / 255));
+const lumOf = ([r, g, b]: number[]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+const lstarOfY = (y: number) => (y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y);
+const lstar = (hex: string) => lstarOfY(lumOf(rgbLin(hex)));
+const contrast = (a: string, b: string) => {
+  const [hi, lo] = [lumOf(rgbLin(a)), lumOf(rgbLin(b))].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+const PROTAN = [[0.11238, 0.88762, 0], [0.11238, 0.88762, 0], [0.004, -0.004, 1]];
+const DEUTAN = [[0.29275, 0.70725, 0], [0.29275, 0.70725, 0], [-0.02234, 0.02234, 1]];
+const simulatedLstar = (hex: string, m: number[][]) => {
+  const v = rgbLin(hex);
+  return lstarOfY(Math.max(0, lumOf(m.map((row) => row.reduce((acc, k, j) => acc + k * v[j], 0)))));
+};
+
+describe("grade ladders (#126)", () => {
+  const LIGHT_CARD = "#ffffff";
+  const DARK_CARD = "#241f18";
+  const steps = (palette: string[]) => palette.slice(1);
+
+  it("every climb step clears 3:1 on its theme's card — the non-text contrast floor", () => {
+    for (const c of steps(GRADE_COLORS)) expect(contrast(c, LIGHT_CARD), c).toBeGreaterThanOrEqual(3);
+    for (const c of steps(GRADE_COLORS_DARK)) expect(contrast(c, DARK_CARD), c).toBeGreaterThanOrEqual(3);
+  });
+
+  it("darkens monotonically, ≥ 8 L* a step, in both themes", () => {
+    for (const palette of [GRADE_COLORS, GRADE_COLORS_DARK]) {
+      const ls = steps(palette).map(lstar);
+      for (let i = 1; i < ls.length; i++) expect(ls[i - 1] - ls[i], palette[i + 1]).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  /** A hypsometric band tint composited over the card, as the canvas
+   * paints it on the flat ground beside a climb. The snow band above
+   * 4500 m is left out on purpose: it is near-white, ≈1 L* from the dark
+   * theme's gentle step, and ground that high is accepted as a rarity. */
+  const bandOn = (card: string) =>
+    ELEVATION_BANDS_M.filter((b) => b.to <= 4500).map((b) => {
+      const [r, g, bl, a] = b.color.match(/[\d.]+/g)!.map(Number);
+      const c = [1, 3, 5].map((i) => parseInt(card.slice(i, i + 2), 16));
+      const mix = (fg: number, bg: number) => Math.round(fg * a + bg * (1 - a));
+      return "#" + [mix(r, c[0]), mix(g, c[1]), mix(bl, c[2])].map((v) => v.toString(16).padStart(2, "0")).join("");
+    });
+
+  it("keeps ≥ 6 L* between every climb step and every band tint it can border, on its card", () => {
+    for (const [palette, card] of [[GRADE_COLORS, LIGHT_CARD], [GRADE_COLORS_DARK, DARK_CARD]] as const) {
+      const bands = bandOn(card);
+      for (const c of steps(palette)) {
+        const gap = Math.min(...bands.map((b) => Math.abs(lstar(c) - lstar(b))));
+        expect(gap, `${c} on ${card}`).toBeGreaterThanOrEqual(6);
+        const deutan = Math.min(...bands.map((b) => Math.abs(simulatedLstar(c, DEUTAN) - simulatedLstar(b, DEUTAN))));
+        expect(deutan, `${c} on ${card}, deuteranopia`).toBeGreaterThanOrEqual(6);
+      }
+      // Protanopia darkens reds: every step but the dark theme's wall keeps
+      // 6 L*; the wall's side edge thins to ≈1.7 L* against the 500–1000 m
+      // tint — the accepted residue, pinned so it cannot get worse.
+      const protan = steps(palette).map((c) =>
+        Math.min(...bands.map((b) => Math.abs(simulatedLstar(c, PROTAN) - simulatedLstar(b, PROTAN)))),
+      );
+      for (const gap of protan.slice(0, 4)) expect(gap).toBeGreaterThanOrEqual(6);
+      expect(protan[4]).toBeGreaterThanOrEqual(card === DARK_CARD ? 1.5 : 6);
+    }
+  });
+
+  it("App.css sets the same ladders the chart helpers fall back to", () => {
+    const css = readFileSync(join(__dirname, "../../App.css"), "utf8");
+    const ladderOf = (block: string) => {
+      const start = css.indexOf(block);
+      expect(start, block).toBeGreaterThanOrEqual(0);
+      const body = css.slice(start, css.indexOf("}", start));
+      return [1, 2, 3, 4, 5].map((i) => body.match(new RegExp(`--grade-${i}:\\s*(#[0-9a-f]{6})`))?.[1]);
+    };
+    expect(ladderOf(":root {")).toEqual(steps(GRADE_COLORS));
+    expect(ladderOf(".dark {")).toEqual(steps(GRADE_COLORS_DARK));
+  });
+
+  it("keeps ≥ 6 L* between neighbors under simulated protanopia and deuteranopia", () => {
+    for (const palette of [GRADE_COLORS, GRADE_COLORS_DARK]) {
+      for (const m of [PROTAN, DEUTAN]) {
+        const ls = steps(palette).map((c) => simulatedLstar(c, m));
+        for (let i = 1; i < ls.length; i++) expect(ls[i - 1] - ls[i], palette[i + 1]).toBeGreaterThanOrEqual(6);
+      }
+    }
+  });
+
+  it("documents what the old ladder failed: gold on white and wall on dark under 2:1", () => {
+    expect(contrast("#e5b83f", LIGHT_CARD)).toBeLessThan(2);
+    expect(contrast("#8e1a0e", DARK_CARD)).toBeLessThan(2);
   });
 });
 
@@ -624,14 +729,14 @@ describe("gradeSeries cap and gradeCategories", () => {
 
 describe("gradeFillStops", () => {
   const xPosOf = (x: number) => x;
-  const climb = (pct: number) => gradeFillColor(pct);
+  const climb = (pct: number) => gradeFillColor(pct, GRADE_COLORS);
 
   it("paints nothing below the threshold, on descents and on unknown grades", () => {
-    expect(gradeFillColor(0)).toBe(GRADE_FILL_NONE);
-    expect(gradeFillColor(GRADE_FILL_MIN_PCT - 0.1)).toBe(GRADE_FILL_NONE);
-    expect(gradeFillColor(-12)).toBe(GRADE_FILL_NONE);
-    expect(gradeFillColor(null)).toBe(GRADE_FILL_NONE);
-    expect(gradeFillColor(NaN)).toBe(GRADE_FILL_NONE);
+    expect(climb(0)).toBe(GRADE_FILL_NONE);
+    expect(climb(GRADE_FILL_MIN_PCT - 0.1)).toBe(GRADE_FILL_NONE);
+    expect(climb(-12)).toBe(GRADE_FILL_NONE);
+    expect(gradeFillColor(null, GRADE_COLORS)).toBe(GRADE_FILL_NONE);
+    expect(climb(NaN)).toBe(GRADE_FILL_NONE);
     const stops = gradeFillStops([0, 50, 100], [1, 1.2, -5].map(gradeCategory), xPosOf, 0, 100);
     expect(stops).toEqual([
       { offset: 0, color: GRADE_FILL_NONE },
