@@ -1051,6 +1051,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::models::raw_file::RawFile;
+    use crate::test_support::ScratchDir;
     use std::sync::{Arc, Mutex};
 
     fn test_state(vault: &Path) -> AppState {
@@ -1061,7 +1062,7 @@ mod tests {
     /// there (device unplugged) or holds nothing, without a failure.
     #[test]
     fn scan_targets_lists_files_and_skips_absent_and_empty_folders() {
-        let root = std::env::temp_dir().join(format!("syzify-scan-{}", uuid::Uuid::new_v4()));
+        let root = ScratchDir::new("scan");
         fs::create_dir_all(root.join("garmin/Activity")).unwrap();
         fs::write(root.join("garmin/Activity/1.fit"), b"x").unwrap();
         fs::write(root.join("garmin/Activity/readme.txt"), b"x").unwrap();
@@ -1074,7 +1075,6 @@ mod tests {
         let (files, failed) = scan_targets(&folders);
         assert_eq!(files, vec![root.join("garmin/Activity/1.fit").to_str().unwrap().to_string()]);
         assert!(failed.is_empty());
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// A folder the app cannot read is a named failure of the scan, so the
@@ -1083,8 +1083,7 @@ mod tests {
     #[test]
     fn scan_targets_names_an_unreadable_folder() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("syzify-scan-locked-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
+        let root = ScratchDir::new("scan-locked");
         fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
         let lock_holds = fs::read_dir(&root).is_err();
         let (files, failed) = scan_targets(&[root.to_str().unwrap().to_string()]);
@@ -1095,7 +1094,6 @@ mod tests {
             assert_eq!(failed[0].path, root.to_str().unwrap());
             assert!(failed[0].reason.starts_with("Failed to read folder"), "{}", failed[0].reason);
         }
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The two watch-folder commands end to end on a mock app: a scan of
@@ -1103,7 +1101,7 @@ mod tests {
     /// does not hold as new; a scan reports a file it cannot parse.
     #[test]
     fn watch_folder_commands_scan_and_preview_on_a_mock_app() {
-        let vault = std::env::temp_dir().join(format!("syzify-watch-cmds-{}", uuid::Uuid::new_v4()));
+        let vault = ScratchDir::new("watch-cmds");
         let watched = vault.join("watched");
         fs::create_dir_all(&watched).unwrap();
         let state = test_state(&vault);
@@ -1133,14 +1131,13 @@ mod tests {
         assert_eq!(result.imported, 0);
         assert_eq!(result.failed.len(), 1);
         assert!(result.failed[0].path.ends_with("ride.fit"), "{}", result.failed[0].path);
-        fs::remove_dir_all(&vault).unwrap();
     }
 
     /// A preview hashes what it can read and leaves the unreadable marked
     /// as "no hash" (new), per folder, absent folders skipped.
     #[test]
     fn preview_files_hashes_per_folder() {
-        let root = std::env::temp_dir().join(format!("syzify-preview-{}", uuid::Uuid::new_v4()));
+        let root = ScratchDir::new("preview");
         fs::create_dir_all(root.join("w")).unwrap();
         fs::write(root.join("w/ride.fit"), b"hello").unwrap();
         let folders = vec![root.join("w").to_str().unwrap().to_string(), root.join("gone").to_str().unwrap().to_string()];
@@ -1165,7 +1162,6 @@ mod tests {
                 assert!(unreadable.2.is_none());
             }
         }
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The allowlist is the only path from a UI string to the filesystem —
@@ -1229,8 +1225,7 @@ mod tests {
     /// is a no-op (idempotent).
     #[test]
     fn resume_encrypts_leftover_plaintext_and_is_idempotent() {
-        let vault = std::env::temp_dir().join("syz_resume_test");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("resume_test");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
 
@@ -1271,8 +1266,6 @@ mod tests {
         // Second run: nothing new to encrypt.
         resume_file_encryption(&state, &key, &lock_with(true, false)).unwrap();
         assert!(vault.join("raw/a.fit.enc").exists());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The disable sweep decrypts ALL ciphertext regardless of what the lock's
@@ -1281,8 +1274,7 @@ mod tests {
     /// discarded forever.
     #[test]
     fn decrypt_all_vault_files_ignores_lock_scopes() {
-        let vault = std::env::temp_dir().join("syz_disable_sweep_test");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("disable_sweep_test");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::create_dir_all(vault.join("photos/act-1")).unwrap();
 
@@ -1326,7 +1318,6 @@ mod tests {
         assert_eq!(stored, "raw/a.fit");
 
         drop(conn);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     fn test_plugin(id: &str) -> crate::models::plugin::Plugin {
@@ -1349,8 +1340,7 @@ mod tests {
     /// removed: the vault stays enabled, a retry is possible, nothing lost.
     #[test]
     fn disable_keeps_the_lock_when_a_secret_does_not_open() {
-        let vault = std::env::temp_dir().join("syz_disable_secret_stuck");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("disable_secret_stuck");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
@@ -1375,14 +1365,12 @@ mod tests {
         }
         disable_encryption_core("pw", &state).unwrap();
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// With no file scopes enabled, resume touches nothing.
     #[test]
     fn resume_noop_when_no_file_scopes() {
-        let vault = std::env::temp_dir().join("syz_resume_noop_test");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("resume_noop_test");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/b.fit"), b"data").unwrap();
 
@@ -1393,8 +1381,6 @@ mod tests {
         // Untouched — database-only scope leaves raw files alone.
         assert!(vault.join("raw/b.fit").exists());
         assert!(!vault.join("raw/b.fit.enc").exists());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Full enable → disable orchestration against a real on-disk vault with
@@ -1402,8 +1388,7 @@ mod tests {
     /// the live connection, key storage, and the guard clauses around them.
     #[test]
     fn enable_disable_orchestration_roundtrip_all_scopes() {
-        let vault = std::env::temp_dir().join("syz_orch_roundtrip");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("orch_roundtrip");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::create_dir_all(vault.join("photos/act-1")).unwrap();
         std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
@@ -1500,8 +1485,6 @@ mod tests {
         assert!(plaintext_db_opens(&vault));
         assert!(db_usable(&state));
         assert!(state.encryption_key.lock().unwrap().is_none());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// enable/disable rename every raw/photo file and rewrite vault.db — they
@@ -1509,8 +1492,7 @@ mod tests {
     /// side-effect-free while it's held, and proceed once it frees.
     #[test]
     fn encryption_toggles_are_refused_while_another_vault_operation_runs() {
-        let vault = std::env::temp_dir().join("syz_toggle_flight");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("toggle_flight");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
         let conn = crate::init_vault(&vault).unwrap();
@@ -1540,8 +1522,6 @@ mod tests {
         disable_encryption_core("pw", &state).unwrap();
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
         assert!(vault.join("raw/a.fit").exists());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A pre-restore-* quarantine is a complete copy of a replaced vault that
@@ -1550,8 +1530,7 @@ mod tests {
     /// and proceed normally once the user has dealt with it.
     #[test]
     fn enable_refuses_while_a_pre_restore_dir_exists() {
-        let vault = std::env::temp_dir().join("syz_enable_prerestore");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("enable_prerestore");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
@@ -1574,8 +1553,6 @@ mod tests {
         std::fs::remove_dir_all(&quarantine).unwrap();
         enable_encryption_core("pw", scopes, &state).unwrap();
         assert!(crypto::read_vault_lock(&vault).unwrap().is_some());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The crash window enable defends against: the DB got encrypted but the
@@ -1584,8 +1561,7 @@ mod tests {
     /// flag, finish leftover file encryption, and be idempotent.
     #[test]
     fn unlock_heals_crashed_enable_and_resumes_files() {
-        let vault = std::env::temp_dir().join("syz_orch_unlock_heal");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("orch_unlock_heal");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
 
@@ -1625,22 +1601,16 @@ mod tests {
         // A second unlock is a no-op, not a re-encryption or an error.
         unlock_vault_core("pw", &state).unwrap();
         assert!(db_usable(&state));
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Unlock on a vault that was never encrypted fails cleanly.
     #[test]
     fn unlock_requires_vault_lock() {
-        let vault = std::env::temp_dir().join("syz_orch_unlock_nolock");
-        let _ = std::fs::remove_dir_all(&vault);
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = ScratchDir::new("orch_unlock_nolock");
 
         let state = test_state(&vault);
         let err = unlock_vault_core("pw", &state).unwrap_err();
         assert!(err.contains("encryption is not enabled"), "{}", err);
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Enable makes the key available through encryption_key_for the moment the
@@ -1648,8 +1618,7 @@ mod tests {
     /// writer treat the vault as plaintext and leak an unencrypted file.
     #[test]
     fn enable_exposes_key_for_writers_under_its_scope() {
-        let vault = std::env::temp_dir().join("syz_enable_keyfor");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("enable_keyfor");
         std::fs::create_dir_all(vault.join("photos")).unwrap();
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
@@ -1671,7 +1640,6 @@ mod tests {
         assert!(state.encryption_key_for(|s| s.photos).unwrap().is_none());
         assert!(state.encryption_key.lock().unwrap().is_none());
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// If the database step fails, enable rolls back to a clean disabled state:
@@ -1679,8 +1647,7 @@ mod tests {
     /// the status reads disabled and the user can retry.
     #[test]
     fn enable_rolls_back_when_the_database_step_fails() {
-        let vault = std::env::temp_dir().join("syz_enable_rollback");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("enable_rollback");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
         let conn = crate::init_vault(&vault).unwrap();
@@ -1725,8 +1692,6 @@ mod tests {
         assert!(vault.join("raw/a.fit").exists());
         assert!(!vault.join("raw/a.fit.enc").exists());
         assert!(crate::plaintext_db_readable(&vault), "vault.db stays plaintext");
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A DB-encrypt failure that leaves vault.db PLAINTEXT must undo to a
@@ -1736,9 +1701,7 @@ mod tests {
     /// reopen happens to succeed.
     #[test]
     fn enable_db_fail_over_plaintext_never_locks_out() {
-        let vault = std::env::temp_dir().join("syz_enable_plaintext_nolock");
-        let _ = std::fs::remove_dir_all(&vault);
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = ScratchDir::new("enable_plaintext_nolock");
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
 
@@ -1758,8 +1721,6 @@ mod tests {
         assert!(state.encryption_key.lock().unwrap().is_none());
         assert!(crate::plaintext_db_readable(&vault));
         assert!(db_usable(&state), "live connection still serves the plaintext DB");
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// disable whose database decrypt fails must settle to the LOCKED terminal
@@ -1767,9 +1728,7 @@ mod tests {
     /// a half-disabled vault with a plaintext-claiming lock over an encrypted DB.
     #[test]
     fn disable_settles_locked_when_the_db_decrypt_fails() {
-        let vault = std::env::temp_dir().join("syz_disable_settle");
-        let _ = std::fs::remove_dir_all(&vault);
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = ScratchDir::new("disable_settle");
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
 
@@ -1817,8 +1776,6 @@ mod tests {
         assert!(*state.db_locked.lock().unwrap());
         assert!(state.encryption_key.lock().unwrap().is_none());
         assert!(!crate::plaintext_db_readable(&vault), "DB stays encrypted");
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The critical data-loss guard: if the DB was encrypted but the reopen
@@ -1828,9 +1785,7 @@ mod tests {
     /// vault is left locked for a restart+unlock to heal.
     #[test]
     fn enable_keeps_the_lock_when_the_db_is_encrypted_but_unreadable() {
-        let vault = std::env::temp_dir().join("syz_enable_keeplock");
-        let _ = std::fs::remove_dir_all(&vault);
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = ScratchDir::new("enable_keeplock");
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
 
@@ -1855,8 +1810,6 @@ mod tests {
         // The in-memory key is cleared so status reports locked=true (UnlockModal
         // appears) rather than unlocked-over-a-dead-placeholder.
         assert!(state.encryption_key.lock().unwrap().is_none());
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A file-scope encryption failure must NOT roll back / delete the lock:
@@ -1866,8 +1819,7 @@ mod tests {
     #[test]
     fn enable_file_failure_keeps_the_vault_enabled() {
         use std::os::unix::fs::PermissionsExt;
-        let vault = std::env::temp_dir().join("syz_enable_file_besteffort");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("enable_file_besteffort");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::write(vault.join("raw/ok.fit"), b"a").unwrap();
         // An unreadable raw file the bulk pass will choke on.
@@ -1891,7 +1843,6 @@ mod tests {
         assert!(state.encryption_key.lock().unwrap().is_some());
 
         let _ = std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o644));
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A single unreadable file must not turn every unlock into a lockout: the
@@ -1901,8 +1852,7 @@ mod tests {
     #[test]
     fn unlock_is_best_effort_when_a_file_cant_be_read() {
         use std::os::unix::fs::PermissionsExt;
-        let vault = std::env::temp_dir().join("syz_unlock_besteffort");
-        let _ = std::fs::remove_dir_all(&vault);
+        let vault = ScratchDir::new("unlock_besteffort");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let conn = crate::init_vault(&vault).unwrap();
         let state = test_state_with(&vault, conn);
@@ -1926,12 +1876,10 @@ mod tests {
         assert!(state.encryption_key.lock().unwrap().is_some());
 
         let _ = std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o644));
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
-    fn switch_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let tmp = std::env::temp_dir().join(format!("syz_switch_{}", name));
-        let _ = std::fs::remove_dir_all(&tmp);
+    fn switch_fixture(name: &str) -> (ScratchDir, PathBuf, PathBuf) {
+        let tmp = ScratchDir::new(&format!("switch_{name}"));
         let current = tmp.join("current");
         let other = tmp.join("other");
         for v in [&current, &other] {
@@ -1957,7 +1905,6 @@ mod tests {
         // Both vaults untouched.
         assert!(current.join("vault.db").exists());
         assert!(other.join("vault.db").exists());
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Every refusal is side-effect-free: no marker, slot released.
@@ -2002,7 +1949,6 @@ mod tests {
 
         assert_eq!(vault::read_location(&cfg), None);
         assert!(state.vault_flight.try_begin().is_some(), "slot must be free");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// The parent of a vault (the usual one-level-up miss) opens the vault in
@@ -2024,6 +1970,5 @@ mod tests {
         let root = switch_vault_core(&fresh, false, &cfg, &state).unwrap();
         assert_eq!(root, std::fs::canonicalize(&tmp).unwrap().join("fresh"));
         assert_eq!(vault::read_location(&cfg), Some(root));
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

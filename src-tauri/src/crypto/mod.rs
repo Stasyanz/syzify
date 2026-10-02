@@ -415,6 +415,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::test_support::ScratchDir;
     use std::fs;
 
     #[test]
@@ -462,9 +463,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_file_roundtrip() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_roundtrip");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_roundtrip");
 
         let original = b"Hello, this is a test GPX file content!";
         let file_path = tmp.join("test.gpx");
@@ -489,15 +488,11 @@ mod tests {
 
         let restored = fs::read(&dec_path).unwrap();
         assert_eq!(restored, original);
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn decrypt_file_to_memory_works() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_memory");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_memory");
 
         let original = b"GPX file data for memory test";
         let file_path = tmp.join("mem_test.gpx");
@@ -511,14 +506,11 @@ mod tests {
 
         // File still exists (not removed)
         assert!(enc_path.exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn encrypt_all_skips_already_encrypted() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_bulk");
-        let _ = fs::remove_dir_all(&tmp);
+        let tmp = ScratchDir::new("crypto_bulk");
         let raw_dir = tmp.join("raw");
         fs::create_dir_all(&raw_dir).unwrap();
 
@@ -547,17 +539,13 @@ mod tests {
         assert!(raw_dir.join("file2.fit.enc").exists());
         assert!(!raw_dir.join("file1.gpx").exists());
         assert!(!raw_dir.join("file2.fit").exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// GCM is authenticated encryption: flipping any ciphertext byte must fail
     /// decryption outright, never yield garbage plaintext.
     #[test]
     fn tampered_ciphertext_fails() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_tamper");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_tamper");
 
         let file_path = tmp.join("t.gpx");
         fs::write(&file_path, b"top secret track").unwrap();
@@ -575,15 +563,11 @@ mod tests {
         // Failure must be non-destructive: .enc stays, no plaintext appears.
         assert!(enc_path.exists());
         assert!(!file_path.exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn tampered_nonce_fails() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_tamper_nonce");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_tamper_nonce");
 
         let file_path = tmp.join("t.gpx");
         fs::write(&file_path, b"top secret track").unwrap();
@@ -596,15 +580,11 @@ mod tests {
 
         assert!(decrypt_file(&key, &enc_path).is_err());
         assert!(decrypt_file_to_memory(&key, &enc_path).is_err());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn wrong_key_fails() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_wrong_key");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_wrong_key");
 
         let file_path = tmp.join("t.gpx");
         fs::write(&file_path, b"secret").unwrap();
@@ -618,15 +598,11 @@ mod tests {
         assert!(!file_path.exists());
         // The right key still works after the failed attempts.
         assert_eq!(decrypt_file_to_memory(&key_a, &enc_path).unwrap(), b"secret");
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn truncated_file_fails() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_truncated");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_truncated");
 
         let enc_path = tmp.join("short.gpx.enc");
         fs::write(&enc_path, b"12345").unwrap(); // shorter than a nonce
@@ -636,17 +612,13 @@ mod tests {
         assert!(decrypt_file_to_memory(&key, &enc_path)
             .unwrap_err()
             .contains("too short"));
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A vault.lock written before scopes existed (no `scopes` field) must
     /// still load, defaulting to activities-only — no silent data exposure.
     #[test]
     fn vault_lock_without_scopes_defaults_to_activities() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_legacy_lock");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_legacy_lock");
 
         let legacy = r#"{"salt":"aa","verifier":"bb","nonce":"cc","created_at":"2025-01-01T00:00:00Z"}"#;
         fs::write(tmp.join("vault.lock"), legacy).unwrap();
@@ -656,8 +628,6 @@ mod tests {
         assert!(loaded.scopes.activities);
         assert!(!loaded.scopes.database);
         assert!(!loaded.scopes.photos);
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Mid-run failure during bulk encryption: files processed before the
@@ -667,8 +637,7 @@ mod tests {
     fn bulk_encrypt_partial_failure_is_consistent() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = std::env::temp_dir().join("tv_crypto_test_partial_enc");
-        let _ = fs::remove_dir_all(&tmp);
+        let tmp = ScratchDir::new("crypto_partial_enc");
         let raw_dir = tmp.join("raw");
         fs::create_dir_all(&raw_dir).unwrap();
 
@@ -702,16 +671,13 @@ mod tests {
         .unwrap();
         assert_eq!(count, 1);
         assert_eq!(changes, vec![("raw/b.gpx".into(), "raw/b.gpx.enc".into())]);
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Mid-run failure during bulk decryption (one corrupted .enc): the valid
     /// file before it is decrypted + reported, the corrupt one is left as-is.
     #[test]
     fn bulk_decrypt_partial_failure_is_consistent() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_partial_dec");
-        let _ = fs::remove_dir_all(&tmp);
+        let tmp = ScratchDir::new("crypto_partial_dec");
         let raw_dir = tmp.join("raw");
         fs::create_dir_all(&raw_dir).unwrap();
 
@@ -730,16 +696,13 @@ mod tests {
         assert_eq!(changes, vec![("raw/a.gpx.enc".into(), "raw/a.gpx".into())]);
         assert_eq!(fs::read(raw_dir.join("a.gpx")).unwrap(), b"first");
         assert!(raw_dir.join("b.gpx.enc").exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Crash-drift repair: DB paths pointing at the "other" extension of a
     /// file that exists on disk get a fix; healthy and missing rows don't.
     #[test]
     fn reconcile_paths_fixes_extension_drift() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_reconcile");
-        let _ = fs::remove_dir_all(&tmp);
+        let tmp = ScratchDir::new("crypto_reconcile");
         let raw_dir = tmp.join("raw");
         fs::create_dir_all(&raw_dir).unwrap();
 
@@ -762,15 +725,11 @@ mod tests {
                 ("raw/restored.gpx.enc".to_string(), "raw/restored.gpx".to_string()),
             ]
         );
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn vault_lock_roundtrip() {
-        let tmp = std::env::temp_dir().join("tv_crypto_test_lock");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = ScratchDir::new("crypto_lock");
 
         let lock = VaultLock {
             salt: "aabbccdd".to_string(),
@@ -788,7 +747,5 @@ mod tests {
 
         remove_vault_lock(&tmp).unwrap();
         assert!(read_vault_lock(&tmp).unwrap().is_none());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

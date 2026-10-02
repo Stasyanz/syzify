@@ -86,6 +86,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ScratchDir;
     use std::path::Path;
 
     fn state_with(vault: &Path, key: Option<[u8; 32]>) -> AppState {
@@ -112,12 +113,6 @@ mod tests {
         }
     }
 
-    fn unique_dir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("syz_state_{}_{}", tag, uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
     /// The key gate: writers get the in-memory key only when their scope is
     /// enabled in vault.lock. Encrypting outside the scope would strand
     /// ciphertext — disable discards the key without decrypting such files.
@@ -126,19 +121,19 @@ mod tests {
         let key = [6u8; 32];
 
         // No vault.lock at all: no encryption, even with a key in memory.
-        let vault = unique_dir("nolock");
+        let vault = ScratchDir::new("state_nolock");
         let state = state_with(&vault, Some(key));
         assert_eq!(state.encryption_key_for(|s| s.photos).unwrap(), None);
         assert_eq!(state.encryption_key_for(|s| s.activities).unwrap(), None);
 
         // Lock present: each scope gates its own writers independently.
-        let vault = unique_dir("photos_only");
+        let vault = ScratchDir::new("state_photos_only");
         crate::crypto::write_vault_lock(&vault, &lock_with(false, true)).unwrap();
         let state = state_with(&vault, Some(key));
         assert_eq!(state.encryption_key_for(|s| s.photos).unwrap(), Some(key));
         assert_eq!(state.encryption_key_for(|s| s.activities).unwrap(), None);
 
-        let vault = unique_dir("activities_only");
+        let vault = ScratchDir::new("state_activities_only");
         crate::crypto::write_vault_lock(&vault, &lock_with(true, false)).unwrap();
         let state = state_with(&vault, Some(key));
         assert_eq!(state.encryption_key_for(|s| s.activities).unwrap(), Some(key));

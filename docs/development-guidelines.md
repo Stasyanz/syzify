@@ -178,6 +178,13 @@ never persisted. Test against the loopback `test_server` in `net.rs` (set
 - New code without coverage → add tests. If a command is too `State`-bound to test,
   push its real logic into a tested pure helper.
 - `#[cfg(test)] mod tests { … }` goes at the **bottom** of the file.
+- **Files on disk in a Rust test:** take a `crate::test_support::ScratchDir`
+  (`ScratchDir::new("tag")`), never a fixed name under `temp_dir()`. It is a
+  fresh UUID-named directory removed when the guard drops, panic included,
+  and it derefs to `Path`. A fixed name plus a silently ignored
+  `remove_dir_all` was #132: a stale `.enc` from an interrupted run broke the
+  next run's disable sweep. A temporary guard (`ScratchDir::new("x").join(..)`)
+  is removed at the end of the statement — bind it to a name first.
 
 ---
 

@@ -658,6 +658,7 @@ pub fn search_activities(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ScratchDir;
     use crate::models::raw_file::RawFile;
     use std::sync::{Arc, Mutex};
 
@@ -675,9 +676,8 @@ mod tests {
         }
     }
 
-    fn state_with_activity() -> AppState {
-        let vault = std::env::temp_dir().join(format!("syz_locsearch_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+    fn state_with_activity() -> (ScratchDir, AppState) {
+        let vault = ScratchDir::new("locsearch");
         let state = test_state(&vault);
         {
             let conn = state.db.lock().unwrap();
@@ -687,7 +687,7 @@ mod tests {
             )
             .unwrap();
         }
-        state
+        (vault, state)
     }
 
     fn hit(name: &str) -> LocationHit {
@@ -705,7 +705,7 @@ mod tests {
     /// nothing filled in afterwards.
     #[test]
     fn get_activities_core_lists_the_stored_summaries() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         let rows = get_activities_core(&state, &ActivityFilters::default()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "act-1");
@@ -722,7 +722,7 @@ mod tests {
     /// trimmed query goes out and the hits come back as they are.
     #[test]
     fn search_locations_core_gates_on_length_and_the_toggle() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         let calls = std::cell::RefCell::new(Vec::<String>::new());
         let fetch = |q: &str| {
             calls.borrow_mut().push(q.to_string());
@@ -753,7 +753,7 @@ mod tests {
     /// with its coordinates — not the raw text, not the match's own name.
     #[test]
     fn update_activity_location_core_files_free_text_under_the_resolved_locality() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         {
             let conn = state.db.lock().unwrap();
             crate::db::settings::set_setting(&conn, crate::import::geocoding::GEOCODING_SETTING, "true").unwrap();
@@ -794,7 +794,7 @@ mod tests {
     /// heart-rate zones the device wrote stay.
     #[test]
     fn set_activity_ftp_core_recomputes_if_tss_and_power_zones() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         {
             let conn = state.db.lock().unwrap();
             conn.execute(
@@ -873,7 +873,7 @@ mod tests {
     /// over stale zones or an activity with no power zones at all.
     #[test]
     fn set_activity_ftp_core_rolls_everything_back_when_the_zone_rebuild_fails() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         {
             let conn = state.db.lock().unwrap();
             conn.execute(
@@ -923,7 +923,7 @@ mod tests {
     /// the coordinates the search returned — no network, no toggle needed.
     #[test]
     fn set_activity_location_named_core_writes_the_triple_without_geocoding() {
-        let state = state_with_activity();
+        let (_vault, state) = state_with_activity();
         let result = set_activity_location_named_core(&state, "act-1", "  Mahmutlar ", 36.49, 32.09).unwrap();
         assert!(result.geocoded);
         assert_eq!(result.location_name, "Mahmutlar");
@@ -955,7 +955,7 @@ mod tests {
     /// track outlived the deletion on disk.
     #[test]
     fn delete_activity_frees_the_raw_hash_and_removes_the_files() {
-        let vault = std::env::temp_dir().join(format!("syz_del_{}", uuid::Uuid::new_v4()));
+        let vault = ScratchDir::new("del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
 
@@ -999,8 +999,6 @@ mod tests {
             !vault.join("raw/rf-1.gpx.enc").exists(),
             "drift sibling must be removed"
         );
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Manual location entry must respect the geocoding opt-in exactly like
@@ -1009,8 +1007,7 @@ mod tests {
     /// this test runs without network and must stay deterministic.
     #[test]
     fn manual_location_respects_the_geocoding_opt_in() {
-        let vault = std::env::temp_dir().join(format!("syz_loc_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = ScratchDir::new("loc");
         let state = test_state(&vault);
         {
             let conn = state.db.lock().unwrap();
@@ -1037,8 +1034,6 @@ mod tests {
             .unwrap();
         assert_eq!(name, "Berlin");
         assert!(lat.is_none(), "no coordinates without geocoding");
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Deletion is scoped to the one activity: another activity's raw file,
@@ -1046,7 +1041,7 @@ mod tests {
     /// photo files (with thumbnails) leave the vault with it.
     #[test]
     fn delete_activity_is_scoped_and_takes_photos_along() {
-        let vault = std::env::temp_dir().join(format!("syz_del_{}", uuid::Uuid::new_v4()));
+        let vault = ScratchDir::new("del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         std::fs::create_dir_all(vault.join("photos/thumbs")).unwrap();
         let state = test_state(&vault);
@@ -1117,8 +1112,6 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0))
             .unwrap();
         assert_eq!(survivors, 1);
-
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// "Set as destination point" with geocoding off must not touch the
@@ -1127,7 +1120,8 @@ mod tests {
     /// up again (its location_name is no longer NULL).
     #[test]
     fn destination_point_offline_saves_coords_and_stays_geocode_free() {
-        let state = test_state(&std::env::temp_dir());
+        let vault = ScratchDir::new("act");
+        let state = test_state(&vault);
         {
             let conn = state.db.lock().unwrap();
             conn.execute(
@@ -1159,7 +1153,8 @@ mod tests {
 
     #[test]
     fn destination_point_rejects_invalid_coordinates() {
-        let state = test_state(&std::env::temp_dir());
+        let vault = ScratchDir::new("act");
+        let state = test_state(&vault);
         assert!(set_activity_location_point_core(&state, "x", 90.5, 0.0).is_err());
         assert!(set_activity_location_point_core(&state, "x", 0.0, -180.5).is_err());
         assert!(set_activity_location_point_core(&state, "x", f64::NAN, 0.0).is_err());

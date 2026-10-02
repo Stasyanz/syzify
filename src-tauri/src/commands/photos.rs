@@ -523,16 +523,10 @@ pub fn resolve_photo_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ScratchDir;
     use crate::db;
     use crate::models::activity::Activity;
-    use std::path::PathBuf;
     use std::io::Cursor;
-
-    fn unique_dir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("tv_photos_{}_{}", tag, Uuid::new_v4()));
-        fs::create_dir_all(&p).unwrap();
-        p
-    }
 
     fn make_activity(conn: &rusqlite::Connection, id: &str) {
         let a = Activity {
@@ -621,10 +615,11 @@ mod tests {
     fn attach_one_applies_exif_orientation() {
         let conn = db::test_db();
         make_activity(&conn, "act-o");
-        let vault = unique_dir("orient");
+        let vault = ScratchDir::new("photos_orient");
         fs::create_dir_all(vault.join("photos").join("act-o")).unwrap();
 
-        let src = unique_dir("src").join("rotated.jpg");
+        let src_dir = ScratchDir::new("photos_src");
+        let src = src_dir.join("rotated.jpg");
         fs::write(&src, jpeg_bytes_with_orientation(40, 30, 6)).unwrap();
 
         let photo = attach_one(&conn, &vault, "act-o", src.to_str().unwrap(), None)
@@ -635,8 +630,6 @@ mod tests {
         assert_eq!(photo.height, Some(40), "height must be post-rotation");
         let thumb = fs::read(vault.join(photo.thumbnail_path.unwrap())).unwrap();
         assert_eq!(decoded_dims(&thumb), (384, 512), "thumbnail must be rotated");
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// The startup backfill rotates thumbnails/dims of photos attached before
@@ -645,7 +638,7 @@ mod tests {
     fn orient_existing_photos_fixes_old_thumbnails() {
         let conn = db::test_db();
         make_activity(&conn, "act-b");
-        let vault = unique_dir("backfill");
+        let vault = ScratchDir::new("photos_backfill");
         let dir = vault.join("photos").join("act-b");
         fs::create_dir_all(&dir).unwrap();
 
@@ -714,8 +707,6 @@ mod tests {
             plain_thumb_before,
             "tag-free photo must not be rewritten"
         );
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// Encrypted vault: the backfill decrypts the original, re-encrypts the
@@ -724,7 +715,7 @@ mod tests {
     fn orient_existing_photos_handles_encrypted_and_locked() {
         let conn = db::test_db();
         make_activity(&conn, "act-e2");
-        let vault = unique_dir("backfill_enc");
+        let vault = ScratchDir::new("photos_backfill_enc");
         let dir = vault.join("photos").join("act-e2");
         fs::create_dir_all(&dir).unwrap();
         let key = [7u8; 32];
@@ -765,8 +756,6 @@ mod tests {
             crate::crypto::decrypt_file_to_memory(&key, &dir.join("p.thumb.jpg.enc")).unwrap();
         assert_eq!(decoded_dims(&thumb), (384, 512));
         assert!(!dir.join("p.thumb.jpg").exists(), "no plaintext thumbnail left");
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// HEIC attach (macOS only — uses the system sips both to build the
@@ -777,11 +766,11 @@ mod tests {
     fn attach_one_converts_heic_to_jpeg() {
         let conn = db::test_db();
         make_activity(&conn, "act-h");
-        let vault = unique_dir("heic");
+        let vault = ScratchDir::new("photos_heic");
         fs::create_dir_all(vault.join("photos").join("act-h")).unwrap();
 
         // Build a real HEIC fixture from a JPEG via sips.
-        let dir = unique_dir("src");
+        let dir = ScratchDir::new("photos_src");
         let jpg = dir.join("src.jpg");
         fs::write(&jpg, jpeg_bytes(40, 30)).unwrap();
         let heic = dir.join("photo.heic");
@@ -808,8 +797,6 @@ mod tests {
         // Re-attaching the same heic dedups via the original-bytes hash.
         let dup = attach_one(&conn, &vault, "act-h", heic.to_str().unwrap(), None).unwrap();
         assert!(dup.is_none(), "identical heic must be deduplicated");
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// Off-macOS there is no HEVC decoder — the per-file error must say so
@@ -819,15 +806,14 @@ mod tests {
     fn attach_one_rejects_heic_off_macos() {
         let conn = db::test_db();
         make_activity(&conn, "act-h");
-        let vault = unique_dir("heic_reject");
+        let vault = ScratchDir::new("photos_heic_reject");
         fs::create_dir_all(vault.join("photos").join("act-h")).unwrap();
-        let src = unique_dir("src").join("photo.heic");
+        let src_dir = ScratchDir::new("photos_src");
+        let src = src_dir.join("photo.heic");
         fs::write(&src, b"heic bytes irrelevant, rejected before decode").unwrap();
 
         let err = attach_one(&conn, &vault, "act-h", src.to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("macOS"), "got: {}", err);
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -863,10 +849,11 @@ mod tests {
     fn attach_one_stores_thumbnail_and_dedups() {
         let conn = db::test_db();
         make_activity(&conn, "act-1");
-        let vault = unique_dir("attach");
+        let vault = ScratchDir::new("photos_attach");
         fs::create_dir_all(vault.join("photos").join("act-1")).unwrap();
 
-        let src = unique_dir("src").join("pic.jpg");
+        let src_dir = ScratchDir::new("photos_src");
+        let src = src_dir.join("pic.jpg");
         fs::write(&src, jpeg_bytes(40, 30)).unwrap();
 
         let photo = attach_one(&conn, &vault, "act-1", src.to_str().unwrap(), None)
@@ -883,8 +870,6 @@ mod tests {
         let dup = attach_one(&conn, &vault, "act-1", src.to_str().unwrap(), None).unwrap();
         assert!(dup.is_none(), "identical photo must be deduplicated");
         assert_eq!(db::photos::get_photos_for_activity(&conn, "act-1").unwrap().len(), 1);
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -893,12 +878,14 @@ mod tests {
         let b64 = general_purpose::STANDARD.encode(b"\x89PNG fake");
 
         // Non-PNG destinations are rejected before any write.
-        let evil = unique_dir("share").join("passwd");
+        let evil_dir = ScratchDir::new("photos_share");
+        let evil = evil_dir.join("passwd");
         assert!(save_share_image(evil.to_str().unwrap().into(), b64.clone()).is_err());
         assert!(!evil.exists());
 
         // A .png destination is accepted.
-        let ok = unique_dir("share").join("out.png");
+        let ok_dir = ScratchDir::new("photos_share");
+        let ok = ok_dir.join("out.png");
         save_share_image(ok.to_str().unwrap().into(), b64).unwrap();
         assert!(ok.exists());
     }
@@ -906,8 +893,9 @@ mod tests {
     #[test]
     fn attach_one_rejects_unsupported_format() {
         let conn = db::test_db();
-        let vault = unique_dir("reject");
-        let src = unique_dir("src").join("note.txt");
+        let vault = ScratchDir::new("photos_reject");
+        let src_dir = ScratchDir::new("photos_src");
+        let src = src_dir.join("note.txt");
         fs::write(&src, b"not an image").unwrap();
 
         let err = attach_one(&conn, &vault, "act-x", src.to_str().unwrap(), None).unwrap_err();
@@ -918,7 +906,7 @@ mod tests {
     fn resolve_photo_request_full_thumb_and_bad_uri() {
         let conn = db::test_db();
         make_activity(&conn, "act-r");
-        let vault = unique_dir("resolve");
+        let vault = ScratchDir::new("photos_resolve");
         fs::create_dir_all(vault.join("photos").join("act-r")).unwrap();
         fs::write(vault.join("photos/act-r/full.jpg"), b"FULLDATA").unwrap();
         fs::write(vault.join("photos/act-r/thumb.jpg"), b"THUMBDATA").unwrap();
@@ -952,15 +940,13 @@ mod tests {
 
         assert!(resolve_photo_request(&vault, &conn, None, "https://evil/etc/passwd").is_err());
         assert!(resolve_photo_request(&vault, &conn, None, "photo://localhost/missing").is_err());
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// Encrypted photos: the protocol decrypts .enc files with the key and
     /// fails cleanly when the vault is locked (no key).
     #[test]
     fn resolve_photo_request_decrypts_encrypted_photo() {
-        let vault = unique_dir("enc");
+        let vault = ScratchDir::new("photos_enc");
         let conn = db::test_db();
         make_activity(&conn, "act-e");
         fs::create_dir_all(vault.join("photos/act-e")).unwrap();
@@ -989,8 +975,6 @@ mod tests {
 
         // Locked (no key): fails rather than serving ciphertext.
         assert!(resolve_photo_request(&vault, &conn, None, "photo://localhost/ph-e").is_err());
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// The shared read helper (used by both the protocol and get_photo_data_url)
@@ -998,7 +982,7 @@ mod tests {
     /// serve ciphertext when locked.
     #[test]
     fn read_photo_file_handles_plain_encrypted_and_locked() {
-        let vault = unique_dir("readhelper");
+        let vault = ScratchDir::new("photos_readhelper");
         fs::create_dir_all(vault.join("photos/act")).unwrap();
         let key = crate::crypto::derive_key("pw", &[2u8; 32]);
 
@@ -1017,8 +1001,6 @@ mod tests {
             b"SECRETPIXELS"
         );
         assert!(read_photo_file(&vault, None, "photos/act/enc.jpg.enc").is_err());
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
     /// Photos scope active: attach_one encrypts the stored copy and thumbnail
@@ -1028,11 +1010,12 @@ mod tests {
     fn attach_one_encrypts_copy_and_thumbnail_when_key_present() {
         let conn = db::test_db();
         make_activity(&conn, "act-k");
-        let vault = unique_dir("attach_enc");
+        let vault = ScratchDir::new("photos_attach_enc");
         fs::create_dir_all(vault.join("photos").join("act-k")).unwrap();
         let key = [5u8; 32];
 
-        let src = unique_dir("src").join("pic.jpg");
+        let src_dir = ScratchDir::new("photos_src");
+        let src = src_dir.join("pic.jpg");
         let original = jpeg_bytes(64, 48);
         fs::write(&src, &original).unwrap();
 
@@ -1060,8 +1043,6 @@ mod tests {
         // Dedup still recognizes the same source (hash is of the plaintext).
         let dup = attach_one(&conn, &vault, "act-k", src.to_str().unwrap(), Some(&key)).unwrap();
         assert!(dup.is_none(), "identical photo must be deduplicated");
-
-        let _ = fs::remove_dir_all(&vault);
     }
 
 }
