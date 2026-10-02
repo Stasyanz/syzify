@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
 ### Added
 - Settings gets a Garage tab, right after Vault (#164): the bikes, shoes
   and other gear your activities are done on, each with the mileage its
@@ -58,7 +60,7 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   warning, not a service log: retire the item or raise its limit to
   clear it.
 - Plugins reach the Garage (#169): `host_query {"kind":"gear"}` returns
-  every item with its totals, default sports and rules under
+  every item with its totals, odometer and default sports under
   `read:activities`, and a new `gear:write` permission lets
   `host_set_activity_gear` put an activity on an item or take it off,
   with the app's own checks — a sync plugin can carry the gear a service
