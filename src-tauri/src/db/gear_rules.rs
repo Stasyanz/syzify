@@ -28,7 +28,7 @@ fn kind_takes_sport(sport_expr: &str) -> String {
     format!(
         "(g.kind = 'other' \
           OR (g.kind = 'bike' AND {sport_expr} IN ('ride', 'mountain_bike', 'indoor_ride', 'virtual_ride')) \
-          OR (g.kind = 'shoes' AND {sport_expr} IN ('run', 'trail_run', 'treadmill', 'walk', 'hike', 'mountaineering')))"
+          OR (g.kind = 'shoes' AND {sport_expr} IN ('run', 'trail_run', 'treadmill', 'virtual_run', 'walk', 'hike', 'mountaineering')))"
     )
 }
 
@@ -307,6 +307,9 @@ mod tests {
         assert_eq!(gear_for(&conn, None, &hrm, "swim", "2026-01-01").unwrap(), None);
         assert_eq!(gear_for(&conn, Some("Run"), &[], "run", "2026-01-01").unwrap().as_deref(), Some(shoes.id.as_str()));
         assert_eq!(gear_for(&conn, Some("Run"), &[], "ride", "2026-01-01").unwrap(), None, "shoes take no ride");
+        // A run on a simulator is still run in the shoes (#192), never on the bike.
+        assert_eq!(gear_for(&conn, Some("Run"), &[], "virtual_run", "2026-01-01").unwrap().as_deref(), Some(shoes.id.as_str()));
+        assert_eq!(gear_for(&conn, None, &hrm, "virtual_run", "2026-01-01").unwrap(), None, "a virtual run is no ride");
         // "Other" takes anything.
         let other = vec!["999".to_string()];
         assert_eq!(gear_for(&conn, None, &other, "swim", "2026-01-01").unwrap().as_deref(), Some(strap.id.as_str()));

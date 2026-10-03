@@ -16,6 +16,11 @@ export const SPORT_COLORS: Record<string, string> = {
   run: "#c2410c",
   trail_run: "#92400e",
   treadmill: "#ea580c",
+  // the run on a simulator (#192): the family's darkest, a chestnut below
+  // trail_run. The only red-orange left ≥ 7.8 OKLab from every neighbour
+  // for normal vision, deuteranopia and protanopia alike; its contrast on
+  // the dark card (1.5) matches yoga's, the palette's floor
+  virtual_run: "#682b03",
   // cycling — green family
   ride: "#35894f",
   mountain_bike: "#166534",

@@ -9,7 +9,7 @@ export function kindSports(kind: GearKind): SportType[] {
     case "bike":
       return ["ride", "mountain_bike", "indoor_ride", "virtual_ride"];
     case "shoes":
-      return ["run", "trail_run", "treadmill", "walk", "hike", "mountaineering"];
+      return ["run", "trail_run", "treadmill", "virtual_run", "walk", "hike", "mountaineering"];
     default:
       return SPORT_TYPES;
   }

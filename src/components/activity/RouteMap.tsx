@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, Popup
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, Maximize, Minimize, MapPin } from "lucide-react";
-import { hasSimulatedCourse, type TrackPointColumns } from "../../lib/types";
+import { hasSimulatedCourse, SPORT_LABELS, type SportType, type TrackPointColumns } from "../../lib/types";
 import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
@@ -406,6 +406,12 @@ function useRoutePositions(trackpoints: TrackPointColumns) {
   }, [trackpoints]);
 }
 
+/** "Virtual Run" → "Virtual run": the sport's label at the head of a sentence. */
+function sentenceLabel(sport: string): string {
+  const label = SPORT_LABELS[sport as SportType] ?? "Activity";
+  return label.charAt(0) + label.slice(1).toLowerCase();
+}
+
 /** The notice or the map. The decision is a separate component on purpose:
  * the map's hooks live in RouteMapCanvas, so a sport edited on the page
  * (ride → virtual ride and back, no remount) swaps components instead of
@@ -420,7 +426,7 @@ export function RouteMap(props: Props) {
     // notice is enough.
     return (
       <div className="bg-card-2 rounded-card flex items-center justify-center h-16 text-sm text-faint">
-        {hasSimulatedCourse(props.sport) ? "Virtual ride — the course is simulated, no map" : "Indoor activity — no route data"}
+        {hasSimulatedCourse(props.sport) ? `${sentenceLabel(props.sport)} — the course is simulated, no map` : "Indoor activity — no route data"}
       </div>
     );
   }

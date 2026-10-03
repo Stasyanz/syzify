@@ -111,6 +111,20 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to mark simulated-course scrub done: {}", e))?;
     }
 
+    // Runs done on a simulator sat under `run` before virtual_run existed
+    // (#192): file them, and take their simulated course's traces off.
+    const VIRTUAL_RUNS_FLAG: &str = "virtual_runs_refiled_v1";
+    if db::settings::get_setting(conn, VIRTUAL_RUNS_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        let geocoder_on = import::geocoding::geocoding_enabled(conn);
+        db::activities::refile_virtual_runs(conn, geocoder_on)
+            .map_err(|e| format!("Failed to refile virtual runs: {}", e))?;
+        db::settings::set_setting(conn, VIRTUAL_RUNS_FLAG, "1")
+            .map_err(|e| format!("Failed to mark virtual-run backfill done: {}", e))?;
+    }
+
     // Efforts for segments saved before the matching engine existed. New
     // segments backfill on save and new imports match on arrival, so this
     // only needs to run once.
@@ -809,6 +823,27 @@ mod tile_tests {
 #[cfg(test)]
 mod startup_backfill_tests {
     use super::*;
+
+    /// The virtual-run backfill (#192) runs once at startup and marks
+    /// itself done.
+    #[test]
+    fn startup_files_virtual_runs_once() {
+        let conn = db::test_db();
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, sub_sport) VALUES ('zr', '2026-01-01T10:00:00+00:00', 'run', 'virtual_activity')",
+            [],
+        )
+        .unwrap();
+        run_startup_backfills(&conn).unwrap();
+        let sport: String = conn
+            .query_row("SELECT sport_type FROM activity WHERE id = 'zr'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(sport, "virtual_run");
+        assert_eq!(
+            db::settings::get_setting(&conn, "virtual_runs_refiled_v1").unwrap().as_deref(),
+            Some("1")
+        );
+    }
 
     /// The simulated-course scrub at startup (#190) follows the geocoder
     /// switch: with it off, a virtual ride's name is the user's and stays,

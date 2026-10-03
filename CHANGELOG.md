@@ -28,6 +28,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   off once at the next start and whenever the badge turns a ride into a
   virtual ride, and so is the place name — only while location lookup is
   on, since with it off every name is one you typed.
+- A run on a simulator is a sport of its own, Virtual Run (#192): Garmin
+  "Virtual Run", Strava VirtualRun, with its own icon and color. It
+  counts as running for pace, best efforts, shoes, the power curve and
+  dedup, keeps records of its own apart from the road, and is no leg of
+  a triathlon. Like a virtual ride its course is simulated, so it draws
+  no map, names no place and matches no segment. Runs already imported
+  from a FIT file that names the simulator move over once at the next
+  start, with the shoes that are the default for Run; the segment
+  efforts they earned as a Run go, and so does the place name while
+  location lookup is on.
 
 ### Fixed
 - A failure raised inside the app itself, not by the backend — a file

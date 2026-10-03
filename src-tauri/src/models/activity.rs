@@ -10,6 +10,7 @@ pub enum SportType {
     Run,
     TrailRun,
     Treadmill,
+    VirtualRun,
     Ride,
     MountainBike,
     IndoorRide,
@@ -42,11 +43,16 @@ impl SportType {
             // ── Running ──
             "run" | "running" | "track_running" | "track running" | "track"
             | "indoor_running" | "indoor running" | "street_running"
-            | "road_running" | "road running" | "virtual_run" | "virtual run" => SportType::Run,
+            | "road_running" | "road running" => SportType::Run,
 
             "trail_running" | "trail running" | "trail_run" | "trail" => SportType::TrailRun,
 
             "treadmill_running" | "treadmill running" | "treadmill" => SportType::Treadmill,
+
+            // A run on a simulator (Garmin sport running + sub_sport
+            // virtual_activity, Strava VirtualRun): a treadmill with the
+            // coordinates of a virtual world (#192).
+            "virtual_run" | "virtual run" | "virtualrun" | "virtual_running" => SportType::VirtualRun,
 
             // ── Cycling ──
             "ride" | "cycling" | "biking" | "bicycle" | "bike"
@@ -137,11 +143,15 @@ impl SportType {
                 return st;
             }
             // Garmin's `virtual_activity` (sub_sport 58) is shared by every
-            // sport done on a simulator — a Virtual Run carries it too — so
-            // on its own it names nothing; under a ride it names the smart
-            // trainer (#189).
-            if is_virtual_activity(sub) && broad == SportType::Ride {
-                return SportType::VirtualRide;
+            // sport done on a simulator, so on its own it names nothing;
+            // under a ride it names the smart trainer (#189), under a run
+            // the treadmill on a simulator (#192).
+            if is_virtual_activity(sub) {
+                match broad {
+                    SportType::Ride => return SportType::VirtualRide,
+                    SportType::Run => return SportType::VirtualRun,
+                    _ => {}
+                }
             }
         }
         broad
@@ -157,7 +167,9 @@ impl SportType {
             "ride" | "mountain_bike" | "indoor_ride" | "virtual_ride" => {
                 &["ride", "mountain_bike", "indoor_ride", "virtual_ride"]
             }
-            "run" | "trail_run" | "treadmill" => &["run", "trail_run", "treadmill"],
+            "run" | "trail_run" | "treadmill" | "virtual_run" => {
+                &["run", "trail_run", "treadmill", "virtual_run"]
+            }
             _ => &[],
         }
     }
@@ -167,6 +179,7 @@ impl SportType {
             SportType::Run => "run",
             SportType::TrailRun => "trail_run",
             SportType::Treadmill => "treadmill",
+            SportType::VirtualRun => "virtual_run",
             SportType::Ride => "ride",
             SportType::MountainBike => "mountain_bike",
             SportType::IndoorRide => "indoor_ride",
@@ -200,6 +213,7 @@ impl SportType {
             SportType::Run => "Run",
             SportType::TrailRun => "Trail Run",
             SportType::Treadmill => "Treadmill",
+            SportType::VirtualRun => "Virtual Run",
             SportType::Ride => "Ride",
             SportType::MountainBike => "Mountain Bike",
             SportType::IndoorRide => "Indoor Ride",
@@ -228,10 +242,11 @@ impl SportType {
     }
 }
 
-/// A sport whose coordinates come from a simulator, not the ground (#190):
-/// a virtual ride carries the lat/lon of its virtual world (Watopia sits
-/// in the Solomon Islands). Such points draw no map, name no place and
-/// match no segment. Mirrors `hasSimulatedCourse` in src/lib/types.ts.
+/// A sport whose coordinates come from a simulator, not the ground (#190,
+/// #192): a virtual ride or run carries the lat/lon of its virtual world
+/// (Watopia sits in the Solomon Islands). Such points draw no map, name no
+/// place and match no segment. Mirrors `hasSimulatedCourse` in
+/// src/lib/types.ts.
 pub fn has_simulated_course(sport: &str) -> bool {
     SIMULATED_COURSE_SPORTS.contains(&sport)
 }
@@ -239,7 +254,7 @@ pub fn has_simulated_course(sport: &str) -> bool {
 /// The sports behind [`has_simulated_course`], for SQL filters that take
 /// them as parameters — one list, so a kind added here reaches every
 /// query at once.
-pub const SIMULATED_COURSE_SPORTS: &[&str] = &["virtual_ride"];
+pub const SIMULATED_COURSE_SPORTS: &[&str] = &["virtual_ride", "virtual_run"];
 
 fn is_virtual_activity(sub_sport: &str) -> bool {
     matches!(sub_sport.to_lowercase().as_str(), "virtual_activity" | "virtual activity")
@@ -462,18 +477,18 @@ mod tests {
         assert_eq!(SportType::VirtualRide.label(), "Virtual Ride");
     }
 
-    /// Garmin's `virtual_activity` is one sub_sport for every simulator: a
-    /// Virtual Run (sport running) must stay a run — its records, its
-    /// shoes, its pace — and only a ride turns into a virtual ride.
+    /// Garmin's `virtual_activity` is one sub_sport for every simulator: it
+    /// names a kind only under a ride (#189) or a run (#192); any other
+    /// parent sport stays as it is.
     #[test]
-    fn virtual_activity_names_a_ride_only_under_a_cycling_sport() {
+    fn virtual_activity_names_a_kind_only_under_a_ride_or_a_run() {
         assert_eq!(SportType::from_str("virtual_activity"), SportType::Other);
         assert_eq!(SportType::resolve(None, Some("virtual_activity")), SportType::Other);
         for (sport, expected) in [
             ("cycling", SportType::VirtualRide),
             ("road_cycling", SportType::VirtualRide),
             ("e_bike_ride", SportType::VirtualRide),
-            ("running", SportType::Run),
+            ("running", SportType::VirtualRun),
             ("trail_running", SportType::TrailRun),
             ("rowing", SportType::Paddle),
             ("walking", SportType::Walk),
@@ -487,11 +502,27 @@ mod tests {
         // The explicit names need no parent sport.
         assert_eq!(SportType::resolve(Some("running"), Some("virtual_ride")), SportType::VirtualRide);
         assert_eq!(SportType::resolve(Some("running"), Some("indoor_cycling")), SportType::IndoorRide);
+        assert_eq!(SportType::resolve(Some("cycling"), Some("virtual_run")), SportType::VirtualRun);
+    }
+
+    /// A run on a simulator is a sport of its own (#192): Garmin's
+    /// sub_sport under running, Strava's VirtualRun type.
+    #[test]
+    fn a_virtual_run_is_a_sport_of_its_own() {
+        assert_eq!(SportType::from_str("VirtualRun"), SportType::VirtualRun);
+        assert_eq!(SportType::from_str("Virtual Run"), SportType::VirtualRun);
+        assert_eq!(SportType::from_str("virtual_run"), SportType::VirtualRun);
+        assert_eq!(SportType::resolve(Some("running"), Some("generic")), SportType::Run);
+        assert_eq!(SportType::resolve(Some("running"), Some("treadmill")), SportType::Treadmill);
+        assert_eq!(SportType::VirtualRun.label(), "Virtual Run");
+        assert_eq!(SportType::family("virtual_run"), SportType::family("run"));
+        assert!(has_simulated_course("virtual_run"));
     }
 
     #[test]
-    fn only_a_virtual_ride_has_a_simulated_course() {
+    fn only_the_virtual_sports_have_a_simulated_course() {
         assert!(has_simulated_course("virtual_ride"));
+        assert!(has_simulated_course("virtual_run"));
         for sport in ["ride", "indoor_ride", "treadmill", "run", "other", ""] {
             assert!(!has_simulated_course(sport), "{sport}");
         }
@@ -505,7 +536,7 @@ mod tests {
     fn sport_family_groups_wheels_and_feet() {
         assert_eq!(SportType::family("virtual_ride"), &["ride", "mountain_bike", "indoor_ride", "virtual_ride"]);
         assert_eq!(SportType::family("ride"), SportType::family("indoor_ride"));
-        assert_eq!(SportType::family("treadmill"), &["run", "trail_run", "treadmill"]);
+        assert_eq!(SportType::family("treadmill"), &["run", "trail_run", "treadmill", "virtual_run"]);
         assert!(SportType::family("swim").is_empty());
         assert!(SportType::family("").is_empty());
     }
@@ -538,7 +569,7 @@ mod tests {
     #[test]
     fn sport_type_roundtrip() {
         for st in [
-            SportType::Run, SportType::TrailRun, SportType::Treadmill, SportType::Ride,
+            SportType::Run, SportType::TrailRun, SportType::Treadmill, SportType::VirtualRun, SportType::Ride,
             SportType::MountainBike, SportType::IndoorRide, SportType::VirtualRide, SportType::Walk, SportType::Hike, SportType::Mountaineering,
             SportType::Swim, SportType::OpenWater, SportType::Sailing, SportType::Paddle,
             SportType::Fishing, SportType::Triathlon, SportType::Strength, SportType::Cardio, SportType::Yoga,

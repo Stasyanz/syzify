@@ -415,7 +415,10 @@ pub(crate) fn set_activity_location_point_core(
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "activity not found".to_string())?;
         if crate::models::activity::has_simulated_course(&sport) {
-            return Err("A virtual ride's course is simulated — its points name no place".to_string());
+            return Err(format!(
+                "A {}'s course is simulated — its points name no place",
+                crate::models::activity::SportType::from_str(&sport).label().to_lowercase()
+            ));
         }
     }
 
@@ -1225,8 +1228,21 @@ mod tests {
             Ok(_) => panic!("a virtual ride took a destination point"),
             Err(e) => e,
         };
-        assert!(err.contains("simulated"), "{err}");
+        assert_eq!(err, "A virtual ride's course is simulated — its points name no place");
         assert!(set_activity_location_point_core(&state, "missing", 1.0, 1.0).is_err());
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES ('zr', '2026-01-01T10:00:00+00:00', 'virtual_run')",
+                [],
+            )
+            .unwrap();
+        }
+        let err = match set_activity_location_point_core(&state, "zr", -11.64, 166.95) {
+            Ok(_) => panic!("a virtual run took a destination point"),
+            Err(e) => e,
+        };
+        assert_eq!(err, "A virtual run's course is simulated — its points name no place");
         let conn = state.db.lock().unwrap();
         let (name, lat): (Option<String>, Option<f64>) = conn
             .query_row("SELECT location_name, start_lat FROM activity WHERE id = 'zw'", [], |r| Ok((r.get(0)?, r.get(1)?)))

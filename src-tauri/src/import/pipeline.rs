@@ -984,7 +984,7 @@ pub(crate) fn analyze_stored_track(
     sport: &str,
     recorded_distance: Option<f64>,
 ) {
-    let wants_best_efforts = matches!(sport, "run" | "trail_run" | "treadmill");
+    let wants_best_efforts = crate::db::best_efforts::RUNNING_SPORTS.contains(&sport);
     // Cheap stored-side probe before the full columnar load (which computes
     // haversine distances) — most imports are neither runs nor powered.
     let has_power: bool = conn

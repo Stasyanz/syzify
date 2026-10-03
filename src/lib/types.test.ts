@@ -5,7 +5,7 @@ describe("isPaceSport", () => {
   it("covers every running form, matching the backend RUNNING_SPORTS", () => {
     // Regression: a run|walk|hike-only check showed trail_run/treadmill as
     // speed while their record card (backend pace PBs) showed pace.
-    for (const s of ["run", "trail_run", "treadmill", "walk", "hike", "mountaineering"]) {
+    for (const s of ["run", "trail_run", "treadmill", "virtual_run", "walk", "hike", "mountaineering"]) {
       expect(isPaceSport(s), `${s} should be pace`).toBe(true);
     }
   });
@@ -39,10 +39,25 @@ describe("isTrainerRide", () => {
 });
 
 describe("hasSimulatedCourse", () => {
-  it("is the virtual ride alone (#190)", () => {
+  it("is the virtual ride and the virtual run (#190, #192)", () => {
     expect(hasSimulatedCourse("virtual_ride")).toBe(true);
+    expect(hasSimulatedCourse("virtual_run")).toBe(true);
+    expect(hasSimulatedCourse("treadmill")).toBe(false);
+    expect(hasSimulatedCourse("run")).toBe(false);
     expect(hasSimulatedCourse("indoor_ride")).toBe(false);
     expect(hasSimulatedCourse("ride")).toBe(false);
+  });
+});
+
+describe("virtual run (#192)", () => {
+  it("is a running sport of its own: pace, shoes' side of the list, no leg of an event", () => {
+    expect(SPORT_TYPES).toContain("virtual_run");
+    expect(isPaceSport("virtual_run")).toBe(true);
+    expect(isTrainerRide("virtual_run")).toBe(false);
+    expect(triathlonDiscipline("treadmill")).toBe("run");
+    expect(triathlonDiscipline("virtual_run")).toBeNull();
+    // A simulated climb is the course's, as on a virtual ride.
+    expect(elevationIsNoise("virtual_run")).toBe(false);
   });
 });
 

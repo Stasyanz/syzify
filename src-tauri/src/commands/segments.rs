@@ -19,7 +19,10 @@ fn segment_source(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "activity not found".to_string())?;
     if crate::models::activity::has_simulated_course(&sport) {
-        return Err("A virtual ride's course is simulated — no segment to save from it".to_string());
+        return Err(format!(
+            "A {}'s course is simulated — no segment to save from it",
+            crate::models::activity::SportType::from_str(&sport).label().to_lowercase()
+        ));
     }
     let geo = db::trackpoints::get_track_geometry(conn, activity_id).map_err(|e| e.to_string())?;
     Ok((sport, geo))
@@ -34,7 +37,7 @@ mod tests {
     #[test]
     fn segment_source_refuses_a_simulated_course() {
         let conn = db::test_db();
-        for (id, sport) in [("zw", "virtual_ride"), ("road", "ride")] {
+        for (id, sport) in [("zw", "virtual_ride"), ("zr", "virtual_run"), ("road", "ride")] {
             conn.execute(
                 "INSERT INTO activity (id, start_time, sport_type) VALUES (?1, '2026-01-01T10:00:00+00:00', ?2)",
                 rusqlite::params![id, sport],
@@ -42,7 +45,10 @@ mod tests {
             .unwrap();
         }
         let err = segment_source(&conn, "zw").unwrap_err();
-        assert!(err.contains("simulated"), "{err}");
+        assert_eq!(err, "A virtual ride's course is simulated — no segment to save from it");
+        // The message names the sport it refuses (#192).
+        let err = segment_source(&conn, "zr").unwrap_err();
+        assert_eq!(err, "A virtual run's course is simulated — no segment to save from it");
         assert_eq!(segment_source(&conn, "road").unwrap().0, "ride");
         assert_eq!(segment_source(&conn, "none").unwrap_err(), "activity not found");
     }

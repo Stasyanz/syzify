@@ -27,6 +27,7 @@ describe("gear kinds and sports", () => {
     expect(kindSports("other").length).toBeGreaterThan(10);
     expect(kindsForSport("ride")).toEqual(["other", "bike"]);
     expect(kindsForSport("trail_run")).toEqual(["other", "shoes"]);
+    expect(kindsForSport("virtual_run")).toEqual(["other", "shoes"]);
     expect(kindsForSport("swim")).toEqual(["other"]);
     expect(kindsForSport("made_up")).toEqual(["other"]);
   });

@@ -785,6 +785,59 @@ pub fn refile_rides_by_sub_sport(conn: &Connection) -> Result<usize> {
     Ok(changed)
 }
 
+/// File the runs done on a simulator (#192): a `run` whose sub_sport is
+/// Garmin's `virtual_activity` becomes a `virtual_run`, and the traces its
+/// simulated course left while it was a run go at once — its segment
+/// efforts, and with `clear_names` the place name the geocoder gave it
+/// (the same rule as a sport change in the edit modal). A leg of a merged
+/// event stays a run, as a trainer ride stays a ride. Shoes that are the
+/// default for `run` become the default for `virtual_run` where none is
+/// set. One transaction: a refiled run is never left with its old traces.
+/// Returns the number of activities moved.
+///
+/// Reach: only a FIT run names its simulator in the sub_sport. A GPX/TCX
+/// whose type read "Virtual Run" was filed as a plain `run` with no
+/// sub_sport before #192 and stays so — the sport badge moves it. On a
+/// vault so old that `sport_types_backfilled_v1` runs first, that pass
+/// files these runs (legs included) itself; the startup scrub of #190,
+/// whose flag such a vault lacks too, then takes their traces off.
+pub fn refile_virtual_runs(conn: &Connection, clear_names: bool) -> Result<usize> {
+    use crate::models::activity::SportType;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT OR IGNORE INTO gear_default (sport_type, gear_id)
+         SELECT 'virtual_run', gear_id FROM gear_default WHERE sport_type = 'run'",
+        [],
+    )?;
+    let rows: Vec<(String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, sub_sport FROM activity
+             WHERE sport_type = 'run' AND sub_sport IS NOT NULL AND parent_id IS NULL",
+        )?;
+        let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let mut v = Vec::new();
+        for r in mapped {
+            v.push(r?);
+        }
+        v
+    };
+    let mut changed = 0usize;
+    for (id, sub_sport) in rows {
+        // As an import would: the sub_sport under a run.
+        if SportType::resolve(Some("run"), Some(&sub_sport)) != SportType::VirtualRun {
+            continue;
+        }
+        tx.execute(
+            "UPDATE activity SET sport_type = 'virtual_run' WHERE id = ?1",
+            params![id],
+        )?;
+        scrub_simulated_course(&tx, Some(&id), clear_names)?;
+        changed += 1;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 /// Take a simulated course's traces of the real world off (#190): every
 /// segment effort it earned while it was a ride, and — with `clear_names`,
 /// i.e. only while the geocoder is switched on, since a name it could not
@@ -2209,6 +2262,112 @@ mod tests {
         assert_eq!(sport("already"), "indoor_ride");
         assert_eq!(sport("leg"), "ride", "a merged event's leg stays a ride");
         assert_eq!(refile_rides_by_sub_sport(&conn).unwrap(), 0, "idempotent");
+    }
+
+    /// The virtual-run backfill (#192) moves only a `run` whose sub_sport
+    /// is `virtual_activity`, takes the efforts and (geocoder on) the
+    /// geocoded name off just those runs, and copies the run shoes over.
+    #[test]
+    fn refile_virtual_runs_moves_and_scrubs_only_simulator_runs() {
+        use crate::models::gear::{GearInput, GearKind};
+        let conn = db::test_db();
+        let row = |id: &str, sport: &str, sub: Option<&str>, parent: Option<&str>, place: Option<&str>| {
+            let mut a = sample_activity(id);
+            a.sport_type = sport.to_string();
+            a.sub_sport = sub.map(str::to_string);
+            a.parent_id = parent.map(str::to_string);
+            a.location_name = place.map(str::to_string);
+            insert_activity(&conn, &a).unwrap();
+        };
+        row("zwift-run", "run", Some("virtual_activity"), None, Some("Honiara"));
+        row("street", "run", Some("generic"), None, Some("Alanya"));
+        row("plain", "run", None, None, None);
+        row("treadmill", "treadmill", Some("treadmill"), None, None);
+        row("zwift-ride", "virtual_ride", Some("virtual_activity"), None, Some("Typed by hand"));
+        row("tri", "triathlon", None, None, None);
+        row("leg", "run", Some("virtual_activity"), Some("tri"), None);
+        for (seg_activity, n) in [("zwift-run", 0), ("street", 1)] {
+            conn.execute(
+                "INSERT INTO segment (id, name, sport, source_activity_id, created_at, distance_m, start_lat, start_lon, end_lat, end_lon, min_lat, max_lat, min_lon, max_lon) VALUES (?1, 'S', 'run', ?2, '', 100, 0, 0, 0, 0, 0, 0, 0, 0)",
+                params![format!("s{n}"), seg_activity],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx, elapsed_s, distance_m) VALUES (?1, ?2, 0, 1, 10, 100)",
+                params![format!("s{n}"), seg_activity],
+            )
+            .unwrap();
+        }
+        let shoes = crate::db::gear::insert(
+            &conn,
+            &GearInput {
+                kind: GearKind::Shoes,
+                name: "Daily".into(),
+                brand: None,
+                model: None,
+                purchased_at: None,
+                initial_distance_m: 0.0,
+                distance_limit_m: None,
+                notes: None,
+                default_for: vec!["run".into()],
+                rules: vec![],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(refile_virtual_runs(&conn, true).unwrap(), 1);
+
+        let sport = |id: &str| -> String {
+            conn.query_row("SELECT sport_type FROM activity WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+        };
+        let place = |id: &str| -> Option<String> {
+            conn.query_row("SELECT location_name FROM activity WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+        };
+        let efforts = |id: &str| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM segment_effort WHERE activity_id = ?1", params![id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(sport("zwift-run"), "virtual_run");
+        assert_eq!(place("zwift-run"), None, "the geocoder's name for Watopia goes");
+        assert_eq!(efforts("zwift-run"), 0);
+        assert_eq!(sport("street"), "run");
+        assert_eq!(place("street").as_deref(), Some("Alanya"));
+        assert_eq!(efforts("street"), 1, "a real run keeps its efforts");
+        assert_eq!(sport("plain"), "run");
+        assert_eq!(sport("treadmill"), "treadmill");
+        assert_eq!(sport("leg"), "run", "a merged event's leg stays a run");
+        assert_eq!(
+            place("zwift-ride").as_deref(),
+            Some("Typed by hand"),
+            "a virtual ride scrubbed before is not looked at again"
+        );
+        let default_of = |sport: &str| -> Option<String> {
+            conn.query_row("SELECT gear_id FROM gear_default WHERE sport_type = ?1", params![sport], |r| r.get(0))
+                .optional()
+                .unwrap()
+        };
+        assert_eq!(default_of("virtual_run").as_deref(), Some(shoes.id.as_str()), "run's shoes follow");
+        assert_eq!(refile_virtual_runs(&conn, true).unwrap(), 0, "idempotent");
+    }
+
+    /// With the geocoder off the name on a refiled run is the user's: it
+    /// stays, while the efforts still go.
+    #[test]
+    fn refile_virtual_runs_keeps_the_name_while_the_geocoder_is_off() {
+        let conn = db::test_db();
+        let mut a = sample_activity("zr");
+        a.sport_type = "run".into();
+        a.sub_sport = Some("virtual_activity".into());
+        a.location_name = Some("Treadmill at home".into());
+        insert_activity(&conn, &a).unwrap();
+        assert_eq!(refile_virtual_runs(&conn, false).unwrap(), 1);
+        let (sport, place): (String, Option<String>) = conn
+            .query_row("SELECT sport_type, location_name FROM activity WHERE id = 'zr'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(sport, "virtual_run");
+        assert_eq!(place.as_deref(), Some("Treadmill at home"));
     }
 
     #[test]

@@ -340,6 +340,19 @@ describe("a simulated course (#190)", () => {
     expect(mapSpy.mock.calls.length).toBe(before);
   });
 
+  it("names the sport in the notice — a virtual run is no ride (#192)", () => {
+    const mapSpy = vi.spyOn(L, "map");
+    const before = mapSpy.mock.calls.length;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { getByText } = render(
+      <QueryClientProvider client={qc}>
+        <RouteMap trackpoints={track} sport="virtual_run" activityId="act-1" />
+      </QueryClientProvider>,
+    );
+    getByText("Virtual run — the course is simulated, no map");
+    expect(mapSpy.mock.calls.length).toBe(before);
+  });
+
   it("survives the sport changing under it — ride to virtual ride and back, no remount", () => {
     const mapSpy = vi.spyOn(L, "map");
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

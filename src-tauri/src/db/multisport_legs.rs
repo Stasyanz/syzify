@@ -602,6 +602,12 @@ mod tests {
         insert_source(&conn, "rn", "run", "2026-07-16T07:45:00+03:00", 5000.0, 1500.0);
         let err = merge_into_triathlon(&mut conn, "du", &["vr".into(), "rn".into()]);
         assert!(err.unwrap_err().to_string().contains("virtual_ride can't be a multisport leg"));
+
+        // Nor is one run on a simulator (#192).
+        insert_source(&conn, "vrun", "virtual_run", "2026-07-17T07:45:00+03:00", 5000.0, 1500.0);
+        insert_source(&conn, "rd", "ride", "2026-07-17T07:00:00+03:00", 20000.0, 2400.0);
+        let err = merge_into_triathlon(&mut conn, "du2", &["rd".into(), "vrun".into()]);
+        assert!(err.unwrap_err().to_string().contains("virtual_run can't be a multisport leg"));
     }
 
     /// Two same-discipline workouts are just two workouts, not an event;

@@ -40,6 +40,18 @@ describe("SportGlyph", () => {
     }
   });
 
+  it("draws the virtual run with a glyph of its own (#192)", () => {
+    const html = (sport: string) => render(<SportGlyph sport={sport} />).container.innerHTML;
+    const vrun = html("virtual_run");
+    for (const other of ["other", "run", "treadmill", "virtual_ride"]) {
+      expect(vrun, other).not.toBe(html(other));
+    }
+    const svg = render(<SportGlyph sport="virtual_run" />).container.querySelector("svg")!;
+    expect(svg.getAttribute("viewBox")).toBe("0 0 640 512");
+    const d = svg.querySelector("path")!.getAttribute("d")!;
+    expect(d.startsWith("M") && d.endsWith("z")).toBe(true);
+  });
+
   it("falls back to the neutral glyph for an unknown sport", () => {
     const unknown = render(<SportGlyph sport="quidditch" />).container.innerHTML;
     const other = render(<SportGlyph sport="other" />).container.innerHTML;

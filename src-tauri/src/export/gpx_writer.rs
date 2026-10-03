@@ -131,7 +131,7 @@ pub fn privacy_trim(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<TrackPoint
 fn gpx_type(sport: &str) -> &str {
     match sport {
         "ride" | "mountain_bike" | "indoor_ride" | "virtual_ride" => "cycling",
-        "run" | "trail_run" | "treadmill" => "running",
+        "run" | "trail_run" | "treadmill" | "virtual_run" => "running",
         "swim" | "open_water" => "swimming",
         "hike" | "mountaineering" => "hiking",
         "walk" => "walking",
@@ -369,6 +369,7 @@ mod tests {
             ("indoor_ride", "cycling"),
             ("virtual_ride", "cycling"),
             ("trail_run", "running"),
+            ("virtual_run", "running"),
             ("open_water", "swimming"),
             ("hike", "hiking"),
             ("walk", "walking"),

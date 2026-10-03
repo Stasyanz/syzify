@@ -38,8 +38,10 @@ pub fn fastest_for_distance(
     }
 }
 
-/// Sports that get running-style best-effort splits.
-pub const RUNNING_SPORTS: [&str; 3] = ["run", "trail_run", "treadmill"];
+/// Sports that get running-style best-effort splits. Their PBs stay per
+/// exact sport (`fastest_for_distance`), so a virtual run's never stands in for
+/// a road run's.
+pub const RUNNING_SPORTS: [&str; 4] = ["run", "trail_run", "treadmill", "virtual_run"];
 
 /// Recompute best-effort splits for every running activity from its stored
 /// trackpoints. Returns the number of activities that produced any efforts.
@@ -237,6 +239,31 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM best_effort WHERE activity_id='r1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(cnt, 0, "non-running activity keeps no best-effort rows");
+    }
+
+    /// A run on a simulator earns splits like any run (#192), and they are
+    /// its own: the road's 5 km PB never comes from a virtual run, nor
+    /// the other way round.
+    #[test]
+    fn a_virtual_run_earns_splits_of_its_own() {
+        let conn = db::test_db();
+        insert_run(&conn, "vr");
+        conn.execute("UPDATE activity SET sport_type = 'virtual_run' WHERE id = 'vr'", []).unwrap();
+        let tps: Vec<_> = (0..7)
+            .map(|k| tp("vr", &format!("2025-06-01T08:{:02}:00+00:00", k * 5), 55.0 + 0.009 * k as f64))
+            .collect();
+        db::trackpoints::insert_trackpoints(&conn, &tps).unwrap();
+
+        assert_eq!(recompute_running(&conn).unwrap(), 1, "the backfill takes a virtual run");
+        assert!(fastest_for_distance(&conn, "virtual_run", 5000.0).unwrap().is_some());
+        assert!(fastest_for_distance(&conn, "run", 5000.0).unwrap().is_none(), "no road PB from it");
+
+        conn.execute("DELETE FROM best_effort", []).unwrap();
+        recompute_for_activity(&conn, "vr").unwrap();
+        assert!(
+            fastest_for_distance(&conn, "virtual_run", 5000.0).unwrap().is_some(),
+            "a sport change in the editor recomputes it too"
+        );
     }
 
     #[test]

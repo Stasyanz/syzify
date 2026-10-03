@@ -500,6 +500,7 @@ export type SportType =
   | "run"
   | "trail_run"
   | "treadmill"
+  | "virtual_run"
   | "ride"
   | "mountain_bike"
   | "indoor_ride"
@@ -529,6 +530,7 @@ export const SPORT_LABELS: Record<SportType, string> = {
   run: "Run",
   trail_run: "Trail Run",
   treadmill: "Treadmill",
+  virtual_run: "Virtual Run",
   ride: "Ride",
   mountain_bike: "Mountain Bike",
   indoor_ride: "Indoor Ride",
@@ -566,12 +568,12 @@ export function isTrainerRide(sport: string): boolean {
   return sport === "indoor_ride" || sport === "virtual_ride";
 }
 
-/** A sport whose coordinates come from a simulator, not the ground (#190):
- * a virtual ride carries the lat/lon of its virtual world. No map, no
- * destination point, no segment from it. Mirrors `has_simulated_course`
- * in src-tauri/src/models/activity.rs. */
+/** A sport whose coordinates come from a simulator, not the ground (#190,
+ * #192): a virtual ride or run carries the lat/lon of its virtual world.
+ * No map, no destination point, no segment from it. Mirrors
+ * `has_simulated_course` in src-tauri/src/models/activity.rs. */
 export function hasSimulatedCourse(sport: string): boolean {
-  return sport === "virtual_ride";
+  return sport === "virtual_ride" || sport === "virtual_run";
 }
 
 /** Sports whose recorded "elevation gain" is instrument noise — the water
@@ -620,7 +622,7 @@ export function triathlonDiscipline(sport: string): "run" | "bike" | "swim" | "s
 
 /** Foot sports shown with PACE (min/km) instead of speed. Includes every
  * running form so it stays consistent with the backend's RUNNING_SPORTS
- * (run/trail_run/treadmill), which computes pace-based distance PBs — a
+ * (run/trail_run/treadmill/virtual_run), which computes pace-based distance PBs — a
  * `run|walk|hike`-only check made trail_run/treadmill show speed while their
  * record card showed pace. */
 export function isPaceSport(sport: string): boolean {
@@ -628,6 +630,7 @@ export function isPaceSport(sport: string): boolean {
     sport === "run" ||
     sport === "trail_run" ||
     sport === "treadmill" ||
+    sport === "virtual_run" ||
     sport === "walk" ||
     sport === "hike" ||
     sport === "mountaineering"
