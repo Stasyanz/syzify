@@ -653,7 +653,20 @@ pub fn delete_activity(conn: &Connection, id: &str) -> Result<()> {
             Some("activity is part of a multisport — unmerge it first".into()),
         ));
     }
-    conn.execute("DELETE FROM activity WHERE id = ?1", params![id])?;
+    // A segment drawn on a simulated course (#198) is kept off every list
+    // while its source lives; with the source gone it would come back as
+    // an orphan, so it goes along. A real activity's segments stay (the
+    // source link turns NULL).
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        &format!(
+            "DELETE FROM segment WHERE source_activity_id = ?1 AND NOT {}",
+            crate::db::segments::on_real_ground("segment")
+        ),
+        params![id],
+    )?;
+    tx.execute("DELETE FROM activity WHERE id = ?1", params![id])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1091,12 +1104,26 @@ pub fn get_activity_start_locations(
     Ok(locations)
 }
 
-pub fn set_location_name(conn: &Connection, id: &str, name: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE activity SET location_name = ?1 WHERE id = ?2",
-        params![name, id],
+/// Write the background geocoder's answer — only if the activity still
+/// waits for one (#198). The geocoder reads its list, lets the lock go and
+/// asks the network; meanwhile the user may have typed a name, picked a
+/// point, or turned the activity into a sport whose course is simulated
+/// (the edit modal, the startup refile). Any of those wins over the late
+/// answer. Returns whether the row took it.
+pub fn set_geocoded_name(conn: &Connection, id: &str, name: &str) -> Result<bool> {
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+        vec![Box::new(name.to_string()), Box::new(id.to_string())];
+    let mut idx = 3;
+    let not_simulated = not_simulated_clause("", &mut params, &mut idx);
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let changed = conn.execute(
+        &format!(
+            "UPDATE activity SET location_name = ?1
+             WHERE id = ?2 AND location_name IS NULL AND {not_simulated}"
+        ),
+        params_refs.as_slice(),
     )?;
-    Ok(())
+    Ok(changed > 0)
 }
 
 /// Clear an activity's location name and manual start coordinates.
@@ -2368,6 +2395,41 @@ mod tests {
             .unwrap();
         assert_eq!(sport, "virtual_run");
         assert_eq!(place.as_deref(), Some("Treadmill at home"));
+    }
+
+    /// The geocoder's late answer lands only on a row that still waits for
+    /// it (#198): not over a name typed meanwhile, not over the cleared
+    /// marker, and never on a sport whose course is simulated.
+    #[test]
+    fn a_geocoded_name_lands_only_where_one_is_still_wanted() {
+        let conn = db::test_db();
+        let row = |id: &str, sport: &str, place: Option<&str>| {
+            let mut a = sample_activity(id);
+            a.sport_type = sport.to_string();
+            a.location_name = place.map(str::to_string);
+            insert_activity(&conn, &a).unwrap();
+        };
+        row("waiting", "run", None);
+        row("typed", "run", Some("Home loop"));
+        row("cleared", "run", Some(""));
+        row("zwift", "virtual_ride", None);
+        row("zrun", "virtual_run", None);
+
+        assert!(set_geocoded_name(&conn, "waiting", "Alanya").unwrap());
+        assert!(!set_geocoded_name(&conn, "typed", "Alanya").unwrap());
+        assert!(!set_geocoded_name(&conn, "cleared", "Alanya").unwrap());
+        assert!(!set_geocoded_name(&conn, "zwift", "Honiara").unwrap());
+        assert!(!set_geocoded_name(&conn, "zrun", "Honiara").unwrap());
+        assert!(!set_geocoded_name(&conn, "missing", "Alanya").unwrap());
+
+        let place = |id: &str| -> Option<String> {
+            conn.query_row("SELECT location_name FROM activity WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(place("waiting").as_deref(), Some("Alanya"));
+        assert_eq!(place("typed").as_deref(), Some("Home loop"));
+        assert_eq!(place("cleared").as_deref(), Some(""));
+        assert_eq!(place("zwift"), None);
+        assert_eq!(place("zrun"), None);
     }
 
     #[test]

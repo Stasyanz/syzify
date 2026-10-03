@@ -40,6 +40,17 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   location lookup is on.
 
 ### Fixed
+- A virtual ride or run could still pick up a place name: a location
+  lookup already on its way when the sport changed wrote the answer
+  anyway — and could overwrite a name typed meanwhile; so could picking
+  a destination point. The answer now lands only on an activity still
+  waiting for one. A segment saved from a virtual ride before such rides
+  had a sport of their own sat on the Segments page drawn on the
+  simulator's world — and where that world sits on real ground (Zwift's
+  London or Richmond) it could even catch a real ride. While its source
+  is virtual it is now left off every list, matched against nothing and
+  shown on no activity page; it comes back if the sport is changed back,
+  and goes with the virtual activity when that is deleted (#198).
 - A failure raised inside the app itself, not by the backend — a file
   dialog that would not open, a JS-side error — read as "Error: …" in
   the remaining messages that formatted it themselves (#182): switching

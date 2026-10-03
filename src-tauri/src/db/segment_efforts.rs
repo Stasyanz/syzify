@@ -173,9 +173,10 @@ pub fn match_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
         return Ok(0); // no GPS at all
     };
 
-    let mut stmt = conn.prepare(
-        "SELECT id, min_lat, max_lat, min_lon, max_lon FROM segment WHERE sport = ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, min_lat, max_lat, min_lon, max_lon FROM segment s WHERE sport = ?1 AND {}",
+        crate::db::segments::on_real_ground("s")
+    ))?;
     let segs: Vec<(String, f64, f64, f64, f64)> = stmt
         .query_map(params![sport], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
@@ -267,9 +268,12 @@ pub fn backfill_segment(conn: &Connection, segment_id: &str) -> Result<usize> {
 /// O(segments × activities) geometry loads. Broken activities are logged and
 /// skipped. Idempotent; used by the one-time startup backfill.
 pub fn backfill_all_segments(conn: &Connection) -> Result<usize> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT a.id FROM activity a JOIN segment s ON s.sport = a.sport_type",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        // The filter only spares a pass over activities whose sport has
+        // nothing but hidden segments; match_activity applies it as well.
+        "SELECT DISTINCT a.id FROM activity a JOIN segment s ON s.sport = a.sport_type WHERE {}",
+        crate::db::segments::on_real_ground("s")
+    ))?;
     let act_ids: Vec<String> = stmt
         .query_map([], |r| r.get(0))?
         .collect::<Result<_>>()?;
@@ -333,7 +337,7 @@ pub fn efforts_for_segment(
 /// the segment's TIMED efforts (rank/count NULL-safe: timeless efforts get
 /// no rank and don't dilute the count).
 pub fn efforts_for_activity(conn: &Connection, activity_id: &str) -> Result<Vec<SegmentEffortRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT se.id, se.segment_id, s.name, se.start_idx, se.end_idx,
                 se.distance_m, se.elapsed_s, se.avg_power_w, s.avg_grade_pct,
                 CASE WHEN se.elapsed_s IS NULL THEN NULL ELSE
@@ -345,9 +349,10 @@ pub fn efforts_for_activity(conn: &Connection, activity_id: &str) -> Result<Vec<
                  WHERE b.segment_id = se.segment_id AND b.elapsed_s IS NOT NULL)
          FROM segment_effort se
          JOIN segment s ON s.id = se.segment_id
-         WHERE se.activity_id = ?1
+         WHERE se.activity_id = ?1 AND {}
          ORDER BY se.start_idx ASC",
-    )?;
+        crate::db::segments::on_real_ground("s")
+    ))?;
     let rows = stmt.query_map(params![activity_id], |r| {
         Ok(SegmentEffortRow {
             id: r.get(0)?,
@@ -690,6 +695,62 @@ mod tests {
         assert_eq!(backfill_segment(&conn, "vseg").unwrap(), 0);
         assert_eq!(backfill_all_segments(&conn).unwrap(), 1, "only the road ride's pass");
         assert!(efforts_for_activity(&conn, "zw").unwrap().is_empty());
+    }
+
+    /// A segment saved from a virtual ride before #190 lies on the
+    /// simulator's coordinates — and Zwift's Richmond or Rouvy's routes sit
+    /// on real ground (#198). Such a segment matches no real ride, shows on
+    /// no activity page, offers itself as no duplicate and is not listed;
+    /// deleting its source takes it along, while a real source's segment
+    /// outlives its activity as before.
+    #[test]
+    fn a_segment_drawn_on_a_simulated_course_is_inert() {
+        let mut conn = db::test_db();
+        setup(&mut conn); // a1 (ride) + seg1 cut from it
+        insert_activity(&conn, "zw", "ride");
+        insert_track(&conn, "zw", 100, 10);
+        insert_line_segment(&mut conn, "zseg", "zw", 20, 50); // saved while it was a ride
+        conn.execute("UPDATE activity SET sport_type = 'virtual_ride' WHERE id = 'zw'", []).unwrap();
+        insert_activity(&conn, "road", "ride");
+        insert_track(&conn, "road", 100, 10);
+
+        assert_eq!(match_activity(&conn, "road").unwrap(), 1, "seg1 only");
+        // An effort left from before, on the hidden segment, shows nowhere.
+        conn.execute(
+            "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx, elapsed_s, distance_m) VALUES ('zseg', 'road', 20, 50, 300, 333)",
+            [],
+        )
+        .unwrap();
+        let shown: Vec<String> = efforts_for_activity(&conn, "road").unwrap().into_iter().map(|e| e.segment_id).collect();
+        assert_eq!(shown, vec!["seg1"]);
+        assert_eq!(backfill_all_segments(&conn).unwrap(), 2, "a1 and road on seg1, nothing on zseg");
+        let listed: Vec<String> = db::segments::list_segments(&conn).unwrap().into_iter().map(|s| s.id).collect();
+        assert_eq!(listed, vec!["seg1"]);
+        let (s, _) = db::segments::build_segment(
+            NewSegmentMeta { name: "Again", sport: "ride", activity_id: "road", id: "x", created_at: "t" },
+            20,
+            50,
+            &db::trackpoints::get_track_geometry(&conn, "road").unwrap(),
+        )
+        .unwrap();
+        let similar: Vec<String> = db::segments::find_similar(&conn, "ride", s.start_lat, s.start_lon, s.end_lat, s.end_lon, s.distance_m)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(similar, vec!["seg1"]);
+
+        // Deleting the virtual source takes its segment along; deleting a
+        // real source leaves the segment, listed, as before.
+        db::activities::delete_activity(&conn, "zw").unwrap();
+        db::activities::delete_activity(&conn, "a1").unwrap();
+        let left: Vec<String> = {
+            let mut st = conn.prepare("SELECT id FROM segment ORDER BY id").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(left, vec!["seg1"]);
+        let listed: Vec<String> = db::segments::list_segments(&conn).unwrap().into_iter().map(|s| s.id).collect();
+        assert_eq!(listed, vec!["seg1"], "an orphan of a real ride stays listed");
     }
 
     #[test]

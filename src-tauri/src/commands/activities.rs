@@ -392,6 +392,21 @@ pub async fn set_activity_location_point(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Refuse a place for an activity whose course is simulated (#190): a point
+/// of a virtual world names no place.
+fn refuse_simulated_course(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    let sport = db::segments::activity_sport(conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "activity not found".to_string())?;
+    if crate::models::activity::has_simulated_course(&sport) {
+        return Err(format!(
+            "A {}'s course is simulated — its points name no place",
+            crate::models::activity::SportType::from_str(&sport).label().to_lowercase()
+        ));
+    }
+    Ok(())
+}
+
 /// "Set as destination point" on the route map: a picked trackpoint becomes
 /// the activity's location — the same (location_name, start_lat, start_lon)
 /// triple that manual text entry writes, so the library map and search pick
@@ -411,15 +426,7 @@ pub(crate) fn set_activity_location_point_core(
     // is reachable on its own: a point of a virtual world names no place.
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        let sport = db::segments::activity_sport(&conn, id)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "activity not found".to_string())?;
-        if crate::models::activity::has_simulated_course(&sport) {
-            return Err(format!(
-                "A {}'s course is simulated — its points name no place",
-                crate::models::activity::SportType::from_str(&sport).label().to_lowercase()
-            ));
-        }
+        refuse_simulated_course(&conn, id)?;
     }
 
     // Reverse geocoding sends the picked point to nominatim.openstreetmap.org —
@@ -444,6 +451,10 @@ pub(crate) fn set_activity_location_point_core(
     };
 
     let conn = state.db.lock().map_err(|e| e.to_string())?;
+    // Asked again under the lock that writes: the sport may have turned
+    // virtual during the lookup (#198), and the scrub would not take a
+    // name that comes with coordinates off.
+    refuse_simulated_course(&conn, id)?;
     let updates = ActivityUpdate {
         title: None,
         notes: None,

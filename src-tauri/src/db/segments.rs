@@ -218,13 +218,15 @@ pub fn find_similar(
     let (lon_lo, lon_hi) = (start_lon - dlon, start_lon + dlon);
     let skip_lon = coslat <= 0.01 || lon_lo < -180.0 || lon_hi > 180.0;
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, name, distance_m, start_lat, start_lon, end_lat, end_lon
-         FROM segment
+         FROM segment s
          WHERE sport = ?1
            AND start_lat BETWEEN ?2 AND ?3
-           AND (?6 = 1 OR start_lon BETWEEN ?4 AND ?5)",
-    )?;
+           AND (?6 = 1 OR start_lon BETWEEN ?4 AND ?5)
+           AND {}",
+        on_real_ground("s")
+    ))?;
     let rows = stmt.query_map(
         params![
             sport,
@@ -269,9 +271,36 @@ pub fn find_similar(
     Ok(hits)
 }
 
-/// Every saved segment with its effort aggregates, newest first.
+/// `NOT EXISTS …`: the segment `alias` was not drawn on a simulated course
+/// (#198) — its source activity, if it still has one, is no virtual ride
+/// or run. A segment saved from one before #190/#192 lies on the
+/// simulator's coordinates; some virtual worlds (Zwift's London or
+/// Richmond, Rouvy's real routes) sit on real ground, so such a segment
+/// could even catch a real ride. Every read that lists, matches or shows
+/// segments takes this one predicate. The slugs are compile-time
+/// constants, so they go into the SQL as literals.
+pub(crate) fn on_real_ground(alias: &str) -> String {
+    let sports = crate::models::activity::SIMULATED_COURSE_SPORTS
+        .iter()
+        .map(|s| {
+            debug_assert!(s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'));
+            format!("'{s}'")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "NOT EXISTS (SELECT 1 FROM activity src WHERE src.id = {alias}.source_activity_id \
+         AND src.sport_type IN ({sports}))"
+    )
+}
+
+/// Every saved segment with its effort aggregates, newest first — except
+/// one drawn on a simulated course ([`on_real_ground`]). It is left out,
+/// not deleted: a sport changed back on its source brings it back, and
+/// deleting the source takes it along (`delete_activity`).
 pub fn list_segments(conn: &Connection) -> Result<Vec<crate::models::segment::SegmentSummaryRow>> {
-    let mut stmt = conn.prepare(
+    let real = on_real_ground("s");
+    let mut stmt = conn.prepare(&format!(
         "SELECT s.id, s.name, s.sport, s.distance_m, s.avg_grade_pct, s.elev_delta_m,
                 s.created_at,
                 (SELECT COUNT(*) FROM segment_effort e
@@ -281,8 +310,9 @@ pub fn list_segments(conn: &Connection) -> Result<Vec<crate::models::segment::Se
                  WHERE e.segment_id = s.id AND e.elapsed_s IS NOT NULL
                  ORDER BY e.elapsed_s ASC, e.avg_power_w DESC LIMIT 1)
          FROM segment s
-         ORDER BY s.created_at DESC",
-    )?;
+         WHERE {real}
+         ORDER BY s.created_at DESC"
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(crate::models::segment::SegmentSummaryRow {
             id: r.get(0)?,
@@ -509,6 +539,44 @@ mod tests {
             .unwrap();
         assert_eq!(n, 1);
         assert_eq!(src, None);
+    }
+
+    /// A segment saved from a virtual ride or run lies on its simulator's
+    /// world (#198): the list leaves it out while its source has a
+    /// simulated course, and brings it back when the sport goes back — it
+    /// is never deleted. A segment whose source is gone stays listed.
+    #[test]
+    fn the_list_leaves_out_a_segment_drawn_on_a_simulated_course() {
+        let mut conn = db::test_db();
+        for (id, sport) in [("road", "ride"), ("zwift", "virtual_ride"), ("zrun", "virtual_run"), ("gone", "ride")] {
+            insert_test_activity(&conn, id);
+            conn.execute("UPDATE activity SET sport_type = ?2 WHERE id = ?1", params![id, sport]).unwrap();
+        }
+        for (seg_id, source) in [("s-road", "road"), ("s-zwift", "zwift"), ("s-zrun", "zrun"), ("s-orphan", "gone")] {
+            let mut seg = stored(seg_id, seg_id, "ride", 55.753, 334.0);
+            seg.source_activity_id = Some(source.into());
+            insert_segment(&mut conn, &seg, &two_points()).unwrap();
+        }
+        conn.execute("DELETE FROM activity WHERE id = 'gone'", []).unwrap();
+
+        let ids = |conn: &Connection| -> Vec<String> {
+            let mut v: Vec<String> = list_segments(conn).unwrap().into_iter().map(|s| s.id).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(&conn), vec!["s-orphan", "s-road"]);
+
+        conn.execute("UPDATE activity SET sport_type = 'ride' WHERE id = 'zwift'", []).unwrap();
+        assert_eq!(ids(&conn), vec!["s-orphan", "s-road", "s-zwift"], "a sport set back brings it back");
+        let kept: i64 = conn.query_row("SELECT COUNT(*) FROM segment", [], |r| r.get(0)).unwrap();
+        assert_eq!(kept, 4, "hiding deletes nothing");
+
+        // Deleting a virtual source takes its segment along — it must not
+        // come back as an orphan.
+        db::activities::delete_activity(&conn, "zrun").unwrap();
+        assert_eq!(ids(&conn), vec!["s-orphan", "s-road", "s-zwift"]);
+        let kept: i64 = conn.query_row("SELECT COUNT(*) FROM segment", [], |r| r.get(0)).unwrap();
+        assert_eq!(kept, 3);
     }
 
     fn insert_test_activity(conn: &Connection, id: &str) {

@@ -76,13 +76,15 @@ pub fn run_background_geocoding<R: tauri::Runtime>(app: &AppHandle<R>) {
                     continue;
                 }
             };
-            // Progress is a row that actually changed: a write that keeps
-            // failing (a busy or swapped DB) would otherwise hand the next
-            // snapshot the same list forever.
+            // Progress is a write that went through: one that keeps failing
+            // (a busy or swapped DB) would otherwise hand the next snapshot
+            // the same list forever. A row that changed under the call (a
+            // typed name, a virtual sport — #198) refuses the answer, and
+            // drops out of the next snapshot all the same.
             if let Ok(conn) = state.db.lock() {
-                if db::activities::set_location_name(&conn, id, &name).is_ok() {
+                if let Ok(took) = db::activities::set_geocoded_name(&conn, id, &name) {
                     progressed = true;
-                    named_any = named_any || !name.is_empty();
+                    named_any = named_any || (took && !name.is_empty());
                 }
             }
             thread::sleep(NOMINATIM_INTERVAL);
