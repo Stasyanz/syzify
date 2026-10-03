@@ -595,6 +595,13 @@ mod tests {
         insert_source(&conn, "pd", "paddle", "2026-07-15T19:57:00+03:00", 1060.0, 868.0);
         let err = merge_into_triathlon(&mut conn, "tri", &["st".into(), "pd".into()]);
         assert!(err.unwrap_err().to_string().contains("can't be a multisport leg"));
+
+        // A trainer ride is cycling, but no event is ridden on a trainer
+        // (#189): it does not combine with a run into a duathlon.
+        insert_source(&conn, "vr", "virtual_ride", "2026-07-16T07:00:00+03:00", 20000.0, 2400.0);
+        insert_source(&conn, "rn", "run", "2026-07-16T07:45:00+03:00", 5000.0, 1500.0);
+        let err = merge_into_triathlon(&mut conn, "du", &["vr".into(), "rn".into()]);
+        assert!(err.unwrap_err().to_string().contains("virtual_ride can't be a multisport leg"));
     }
 
     /// Two same-discipline workouts are just two workouts, not an event;

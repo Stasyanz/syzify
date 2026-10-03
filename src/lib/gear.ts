@@ -7,7 +7,7 @@ import { formatDistance } from "./format";
 export function kindSports(kind: GearKind): SportType[] {
   switch (kind) {
     case "bike":
-      return ["ride", "mountain_bike"];
+      return ["ride", "mountain_bike", "indoor_ride", "virtual_ride"];
     case "shoes":
       return ["run", "trail_run", "treadmill", "walk", "hike", "mountaineering"];
     default:

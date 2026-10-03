@@ -308,6 +308,9 @@ describe("cadenceZoneRanges", () => {
     // A two-bucket device (one boundary) yields to the same fixed bands.
     expect(cadenceZoneRanges([zone(0, 70, "cadence"), zone(1, 85, "cadence")], "ride", runValues(85))).toEqual(ranges);
     expect(ranges!.map((r) => r.to)).toEqual([60, 75, 90, 105, Infinity]);
+    // A trainer ride pedals the same crank (#189).
+    expect(cadenceZoneRanges([], "indoor_ride", runValues(85))).toEqual(ranges);
+    expect(cadenceZoneRanges([], "virtual_ride", runValues(85))).toEqual(ranges);
     // 85 rpm sits in the optimal green band; 110+ is the brown top.
     expect(zoneColorFor(85, ranges!)).toBe(CADENCE_ZONE_COLORS[2]);
     expect(zoneColorFor(110, ranges!)).toBe(CADENCE_ZONE_COLORS[4]);

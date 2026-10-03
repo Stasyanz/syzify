@@ -84,6 +84,19 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to mark sport backfill done: {}", e))?;
     }
 
+    // Rides imported before indoor_ride / virtual_ride existed (#189) sit
+    // under `ride` with the trainer kind in their sub_sport: file them.
+    const TRAINER_RIDES_FLAG: &str = "trainer_rides_refiled_v1";
+    if db::settings::get_setting(conn, TRAINER_RIDES_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        db::activities::refile_rides_by_sub_sport(conn)
+            .map_err(|e| format!("Failed to refile trainer rides: {}", e))?;
+        db::settings::set_setting(conn, TRAINER_RIDES_FLAG, "1")
+            .map_err(|e| format!("Failed to mark trainer-ride backfill done: {}", e))?;
+    }
+
     // Efforts for segments saved before the matching engine existed. New
     // segments backfill on save and new imports match on arrival, so this
     // only needs to run once.

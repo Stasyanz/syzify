@@ -27,7 +27,7 @@ pub fn rules_of(conn: &Connection, gear_id: &str) -> Result<Vec<GearRule>> {
 fn kind_takes_sport(sport_expr: &str) -> String {
     format!(
         "(g.kind = 'other' \
-          OR (g.kind = 'bike' AND {sport_expr} IN ('ride', 'mountain_bike')) \
+          OR (g.kind = 'bike' AND {sport_expr} IN ('ride', 'mountain_bike', 'indoor_ride', 'virtual_ride')) \
           OR (g.kind = 'shoes' AND {sport_expr} IN ('run', 'trail_run', 'treadmill', 'walk', 'hike', 'mountaineering')))"
     )
 }
@@ -300,6 +300,9 @@ mod tests {
         let hrm = vec!["3945193103".to_string()];
         assert_eq!(gear_for(&conn, None, &hrm, "ride", "2026-01-01").unwrap().as_deref(), Some(road.id.as_str()));
         assert_eq!(gear_for(&conn, None, &hrm, "mountain_bike", "2026-01-01").unwrap().as_deref(), Some(road.id.as_str()));
+        // The bike on the trainer is still the bike (#189).
+        assert_eq!(gear_for(&conn, None, &hrm, "indoor_ride", "2026-01-01").unwrap().as_deref(), Some(road.id.as_str()));
+        assert_eq!(gear_for(&conn, None, &hrm, "virtual_ride", "2026-01-01").unwrap().as_deref(), Some(road.id.as_str()));
         assert_eq!(gear_for(&conn, None, &hrm, "run", "2026-01-01").unwrap(), None, "a run is no ride");
         assert_eq!(gear_for(&conn, None, &hrm, "swim", "2026-01-01").unwrap(), None);
         assert_eq!(gear_for(&conn, Some("Run"), &[], "run", "2026-01-01").unwrap().as_deref(), Some(shoes.id.as_str()));

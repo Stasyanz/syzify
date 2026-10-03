@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension, Result};
+use rusqlite::{Connection, OptionalExtension, Result};
 
 /// Check if an activity with similar start_time and metrics already exists.
 ///
@@ -8,6 +8,10 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 ///    distance/time and must not be collapsed; the GPX pipeline passes false so
 ///    a GPX+CSV pair of the same activity can still dedup across sport labels).
 /// 2. Without distance (indoor/strength): start_time ±5min AND sport_type match AND duration ±10%
+///
+/// A sport_type match is a match within the sport's family (`SportType::family`):
+/// a ride that came in as plain `ride` from a TCX and again as `indoor_ride`
+/// from the FIT that names the trainer is one workout (#189).
 pub fn is_content_duplicate(
     conn: &Connection,
     start_time: &str,
@@ -33,34 +37,43 @@ pub fn find_content_duplicate(
 ) -> Result<Option<String>> {
     const TIME_TOLERANCE_S: i64 = 300; // 5 minutes
 
+    // The sport's family, or the sport alone, as `sport_type IN (?N, …)`
+    // starting at placeholder `first` — the params follow the fixed ones.
+    let family = crate::models::activity::SportType::family(sport_type);
+    let sports: Vec<&str> = if family.is_empty() { vec![sport_type] } else { family.to_vec() };
+    let sport_in = |first: usize| -> String {
+        let marks: Vec<String> = (0..sports.len()).map(|i| format!("?{}", first + i)).collect();
+        format!("sport_type IN ({})", marks.join(", "))
+    };
+    let with_sports = |fixed: Vec<Box<dyn rusqlite::ToSql>>| -> Vec<Box<dyn rusqlite::ToSql>> {
+        let mut all = fixed;
+        all.extend(sports.iter().map(|s| Box::new(s.to_string()) as Box<dyn rusqlite::ToSql>));
+        all
+    };
+
     // Strategy 1: dedup by distance (outdoor activities)
     if let Some(d) = distance_m {
         if d > 0.0 {
             let dist_min = d * 0.95;
             let dist_max = d * 1.05;
 
-            let sport_clause = if require_sport { "AND sport_type = ?5" } else { "" };
+            let sport_clause = if require_sport { format!("AND {}", sport_in(5)) } else { String::new() };
             let sql = format!(
                 "SELECT id FROM activity
                  WHERE distance_m BETWEEN ?1 AND ?2
                  AND abs(julianday(start_time) - julianday(?3)) * 86400 < ?4 {sport_clause}
                  LIMIT 1"
             );
-            let id: Option<String> = if require_sport {
-                conn.query_row(
-                    &sql,
-                    params![dist_min, dist_max, start_time, TIME_TOLERANCE_S, sport_type],
-                    |row| row.get(0),
-                )
-                .optional()?
-            } else {
-                conn.query_row(
-                    &sql,
-                    params![dist_min, dist_max, start_time, TIME_TOLERANCE_S],
-                    |row| row.get(0),
-                )
-                .optional()?
-            };
+            let fixed: Vec<Box<dyn rusqlite::ToSql>> = vec![
+                Box::new(dist_min),
+                Box::new(dist_max),
+                Box::new(start_time.to_string()),
+                Box::new(TIME_TOLERANCE_S),
+            ];
+            let params = if require_sport { with_sports(fixed) } else { fixed };
+            let id: Option<String> = conn
+                .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
+                .optional()?;
 
             return Ok(id);
         }
@@ -72,16 +85,22 @@ pub fn find_content_duplicate(
             let dur_min = dur * 0.90;
             let dur_max = dur * 1.10;
 
+            let sql = format!(
+                "SELECT id FROM activity
+                 WHERE duration_s BETWEEN ?1 AND ?2
+                 AND abs(julianday(start_time) - julianday(?3)) * 86400 < ?4
+                 AND {}
+                 LIMIT 1",
+                sport_in(5)
+            );
+            let params = with_sports(vec![
+                Box::new(dur_min),
+                Box::new(dur_max),
+                Box::new(start_time.to_string()),
+                Box::new(TIME_TOLERANCE_S),
+            ]);
             let id: Option<String> = conn
-                .query_row(
-                    "SELECT id FROM activity
-                     WHERE sport_type = ?1
-                     AND duration_s BETWEEN ?2 AND ?3
-                     AND abs(julianday(start_time) - julianday(?4)) * 86400 < ?5
-                     LIMIT 1",
-                    params![sport_type, dur_min, dur_max, start_time, TIME_TOLERANCE_S],
-                    |row| row.get(0),
-                )
+                .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
                 .optional()?;
 
             return Ok(id);
@@ -89,17 +108,18 @@ pub fn find_content_duplicate(
     }
 
     // Strategy 3: no distance AND no duration — match by sport_type + time only
+    let sql = format!(
+        "SELECT id FROM activity
+         WHERE COALESCE(distance_m, 0) = 0
+         AND COALESCE(duration_s, 0) = 0
+         AND abs(julianday(start_time) - julianday(?1)) * 86400 < ?2
+         AND {}
+         LIMIT 1",
+        sport_in(3)
+    );
+    let params = with_sports(vec![Box::new(start_time.to_string()), Box::new(TIME_TOLERANCE_S)]);
     let id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM activity
-             WHERE sport_type = ?1
-             AND COALESCE(distance_m, 0) = 0
-             AND COALESCE(duration_s, 0) = 0
-             AND abs(julianday(start_time) - julianday(?2)) * 86400 < ?3
-             LIMIT 1",
-            params![sport_type, start_time, TIME_TOLERANCE_S],
-            |row| row.get(0),
-        )
+        .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
         .optional()?;
 
     Ok(id)
@@ -228,6 +248,42 @@ mod tests {
 
         // Duration too different
         assert!(!is_content_duplicate(&conn, "2025-06-01T08:00:00", "strength", None, Some(7200.0), false).unwrap());
+    }
+
+    /// A ride that came in as plain `ride` (a TCX, a CSV row) and again from
+    /// the FIT that names the trainer is one workout (#189): the family
+    /// matches, on every strategy.
+    #[test]
+    fn dedup_matches_a_trainer_ride_with_its_plain_ride_copy() {
+        let conn = db::test_db();
+        insert_activity(&conn, "no-sensor", "2025-06-01T08:00:00", "ride", None, Some(3600.0));
+        insert_activity(&conn, "zwift", "2025-06-02T08:00:00", "virtual_ride", Some(20000.0), Some(2400.0));
+        insert_activity(&conn, "bare", "2025-06-03T08:00:00", "ride", None, None);
+
+        // Strategy 2: duration only.
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-01T08:01:00", "indoor_ride", None, Some(3500.0), false).unwrap().as_deref(),
+            Some("no-sensor")
+        );
+        assert!(!is_content_duplicate(&conn, "2025-06-01T08:01:00", "treadmill", None, Some(3600.0), false).unwrap());
+        // Strategy 1 with the sport required (the CSV path).
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-02T08:02:00", "ride", Some(20100.0), Some(2400.0), true).unwrap().as_deref(),
+            Some("zwift")
+        );
+        assert!(!is_content_duplicate(&conn, "2025-06-02T08:02:00", "run", Some(20100.0), Some(2400.0), true).unwrap());
+        // Strategy 3: nothing but the time.
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-03T08:03:00", "virtual_ride", None, None, false).unwrap().as_deref(),
+            Some("bare")
+        );
+        // The running family is one family too: a treadmill session that a
+        // CSV row filed as a run.
+        insert_activity(&conn, "belt", "2025-06-04T07:00:00", "run", None, Some(1800.0));
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-04T07:01:00", "treadmill", None, Some(1800.0), false).unwrap().as_deref(),
+            Some("belt")
+        );
     }
 
     #[test]

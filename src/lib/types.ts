@@ -502,6 +502,8 @@ export type SportType =
   | "treadmill"
   | "ride"
   | "mountain_bike"
+  | "indoor_ride"
+  | "virtual_ride"
   | "walk"
   | "hike"
   | "mountaineering"
@@ -529,6 +531,8 @@ export const SPORT_LABELS: Record<SportType, string> = {
   treadmill: "Treadmill",
   ride: "Ride",
   mountain_bike: "Mountain Bike",
+  indoor_ride: "Indoor Ride",
+  virtual_ride: "Virtual Ride",
   walk: "Walk",
   hike: "Hike",
   mountaineering: "Mountaineering",
@@ -553,6 +557,22 @@ export const SPORT_LABELS: Record<SportType, string> = {
 
 /** All sport types in display order (for filters, pickers). */
 export const SPORT_TYPES: SportType[] = Object.keys(SPORT_LABELS) as SportType[];
+
+/** A ride that never left the room (#189): a trainer with no course, or a
+ * smart trainer on a simulator. Cycling for power, gear and zones; not a
+ * leg of any event. A virtual ride still carries the simulator's
+ * coordinates and climbs (#190), an indoor ride carries neither. */
+export function isTrainerRide(sport: string): boolean {
+  return sport === "indoor_ride" || sport === "virtual_ride";
+}
+
+/** Sports whose recorded "elevation gain" is instrument noise — the water
+ * sports, and a trainer with no course, where a watch's barometer drifts
+ * in a room all the same (#189). Mirrors `elevation_is_noise` in
+ * src-tauri/src/db/dashboard.rs. */
+export function elevationIsNoise(sport: string): boolean {
+  return isWaterSport(sport) || sport === "indoor_ride";
+}
 
 /** Water sports: recorded "elevation gain" is GPS/pressure noise from the
  * watch losing fix in the water — hidden from summaries and records

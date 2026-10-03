@@ -21,7 +21,8 @@ const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => 
 
 describe("gear kinds and sports", () => {
   it("offers bikes to rides, shoes to feet and anything else to every sport, both ways round", () => {
-    expect(kindSports("bike")).toEqual(["ride", "mountain_bike"]);
+    expect(kindSports("bike")).toEqual(["ride", "mountain_bike", "indoor_ride", "virtual_ride"]);
+    expect(kindsForSport("virtual_ride")).toEqual(["other", "bike"]);
     expect(kindSports("shoes")).toContain("hike");
     expect(kindSports("other").length).toBeGreaterThan(10);
     expect(kindsForSport("ride")).toEqual(["other", "bike"]);

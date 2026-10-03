@@ -95,7 +95,7 @@ describe("Garage helpers", () => {
   afterEach(() => useUnitsStore.setState({ mode: "metric" }));
 
   it("offers bikes to rides, shoes to feet and anything else to every sport", () => {
-    expect(kindSports("bike")).toEqual(["ride", "mountain_bike"]);
+    expect(kindSports("bike")).toEqual(["ride", "mountain_bike", "indoor_ride", "virtual_ride"]);
     expect(kindSports("shoes")).toContain("hike");
     expect(kindSports("shoes")).not.toContain("ride");
     expect(kindSports("other").length).toBeGreaterThan(10);

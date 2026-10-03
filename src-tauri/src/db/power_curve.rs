@@ -6,11 +6,9 @@ use crate::models::power_curve::{PowerCurveData, PowerCurveEnvelopePoint, PowerC
 /// running power (Stryd & friends) into a ride's chart — a 900 W running
 /// 5-second peak would sit on top of every cycling curve forever.
 fn power_sport_group(sport: &str) -> &'static [&'static str] {
-    match sport {
-        "ride" | "mountain_bike" => &["ride", "mountain_bike"],
-        "run" | "trail_run" | "treadmill" => &["run", "trail_run", "treadmill"],
-        _ => &[], // caller falls back to the exact sport
-    }
+    // Empty for a sport outside both families: the caller falls back to
+    // the exact sport.
+    crate::models::activity::SportType::family(sport)
 }
 
 /// Replace an activity's stored mean-max curve (idempotent for re-imports
@@ -249,6 +247,15 @@ mod tests {
         assert_eq!(env.len(), 1);
         assert_eq!(env[0].activity_id, "m1");
         assert_eq!(env[0].watts, 660.0);
+
+        // A trainer ride is the same legs (#189): its peak joins the
+        // cycling envelope, and it sees the road rides in its own chart.
+        insert_sport_activity(&conn, "v1", "Zwift", "2026-08-31T08:00:00+03:00", "virtual_ride");
+        set_power_curve(&conn, "v1", &[point(5, 700.0)]).unwrap();
+        let env = get_envelope_for_sport(&conn, "ride").unwrap();
+        assert_eq!((env[0].activity_id.as_str(), env[0].watts), ("v1", 700.0));
+        let env = get_envelope_for_sport(&conn, "indoor_ride").unwrap();
+        assert_eq!((env[0].activity_id.as_str(), env[0].watts), ("v1", 700.0));
 
         // Running sees only itself.
         let env = get_envelope_for_sport(&conn, "run").unwrap();

@@ -29,6 +29,11 @@ describe("autoLaps", () => {
     expect(laps[0].speed!).toBeCloseTo(1000 / 300, 5);
   });
 
+  it("uses 5 km laps for a trainer ride too (#189)", () => {
+    const laps = autoLaps(track([0, 5000, 10000], [0, 600, 1200]), "virtual_ride");
+    expect(laps[0].distance).toBeCloseTo(5000, 5);
+  });
+
   it("uses 5 km laps for rides", () => {
     const dist = [0, 5000, 10000];
     const t = [0, 600, 1200];

@@ -739,6 +739,52 @@ pub fn get_calendar_data(
     Ok(days)
 }
 
+/// File the rides already imported as plain `ride` under the trainer kinds
+/// their stored `sub_sport` names (#189: `indoor_ride`, `virtual_ride`).
+/// Narrower than [`recompute_sport_types`] on purpose: only a `ride` moves,
+/// and only to one of the two new kinds, so a sport the user corrected by
+/// hand stays as set. A leg of a merged event stays too — the event was
+/// built on it being a ride, and a trainer ride is no leg. The bike that is
+/// the default for `ride` becomes the default for both new kinds as well,
+/// where none is set: the rides that move used to get it, and so should
+/// the ones still to come. Returns the number of activities changed.
+pub fn refile_rides_by_sub_sport(conn: &Connection) -> Result<usize> {
+    use crate::models::activity::SportType;
+    for kind in ["indoor_ride", "virtual_ride"] {
+        conn.execute(
+            "INSERT OR IGNORE INTO gear_default (sport_type, gear_id)
+             SELECT ?1, gear_id FROM gear_default WHERE sport_type = 'ride'",
+            params![kind],
+        )?;
+    }
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, sub_sport FROM activity
+             WHERE sport_type = 'ride' AND sub_sport IS NOT NULL AND parent_id IS NULL",
+        )?;
+        let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let mut v = Vec::new();
+        for r in mapped {
+            v.push(r?);
+        }
+        v
+    };
+    let mut changed = 0usize;
+    for (id, sub_sport) in rows {
+        // As an import would: the sub_sport under a ride (Garmin's shared
+        // `virtual_activity` names a kind only there).
+        let kind = SportType::resolve(Some("ride"), Some(&sub_sport));
+        if matches!(kind, SportType::IndoorRide | SportType::VirtualRide) {
+            conn.execute(
+                "UPDATE activity SET sport_type = ?1 WHERE id = ?2",
+                params![kind.as_str(), id],
+            )?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
 /// Re-normalize `sport_type` for already-imported activities using the current
 /// mapping. The original raw sport string isn't stored, so we feed the existing
 /// `sport_type` plus the stored `sub_sport` through `SportType::resolve` — this
@@ -1934,6 +1980,70 @@ mod tests {
 
         // Idempotent: a second pass changes nothing.
         assert_eq!(recompute_sport_types(&conn).unwrap(), 0);
+    }
+
+    /// The trainer backfill (#189) moves only a `ride` whose sub_sport
+    /// names a trainer, and leaves every other row — a road ride, a ride
+    /// the user re-filed by hand, a non-ride with a cycling sub_sport —
+    /// exactly as it is.
+    #[test]
+    fn refile_rides_by_sub_sport_moves_only_trainer_rides() {
+        use crate::models::gear::{GearInput, GearKind};
+        let conn = db::test_db();
+        let row = |id: &str, sport: &str, sub: Option<&str>, parent: Option<&str>| {
+            let mut a = sample_activity(id);
+            a.sport_type = sport.to_string();
+            a.sub_sport = sub.map(str::to_string);
+            a.parent_id = parent.map(str::to_string);
+            insert_activity(&conn, &a).unwrap();
+        };
+        row("trainer", "ride", Some("indoor_cycling"), None);
+        row("zwift", "ride", Some("virtual_activity"), None);
+        row("road", "ride", Some("road"), None);
+        row("plain", "ride", None, None);
+        row("by-hand", "walk", Some("indoor_cycling"), None);
+        row("already", "indoor_ride", Some("indoor_cycling"), None);
+        row("tri", "triathlon", None, None);
+        row("leg", "ride", Some("indoor_cycling"), Some("tri"));
+
+        // The road bike is the default for ride; a spin bike already claims
+        // indoor_ride and must keep it.
+        let gear = |name: &str, default_for: &[&str]| GearInput {
+            kind: GearKind::Bike,
+            name: name.into(),
+            brand: None,
+            model: None,
+            purchased_at: None,
+            initial_distance_m: 0.0,
+            distance_limit_m: None,
+            notes: None,
+            default_for: default_for.iter().map(|s| s.to_string()).collect(),
+            rules: vec![],
+        };
+        let road = crate::db::gear::insert(&conn, &gear("Road", &["ride"])).unwrap();
+        let spin = crate::db::gear::insert(&conn, &gear("Spin", &["indoor_ride"])).unwrap();
+
+        assert_eq!(refile_rides_by_sub_sport(&conn).unwrap(), 2);
+        let default_of = |sport: &str| -> Option<String> {
+            conn.query_row("SELECT gear_id FROM gear_default WHERE sport_type = ?1", params![sport], |r| r.get(0))
+                .optional()
+                .unwrap()
+        };
+        assert_eq!(default_of("virtual_ride").as_deref(), Some(road.id.as_str()), "ride's bike follows");
+        assert_eq!(default_of("indoor_ride").as_deref(), Some(spin.id.as_str()), "a set default stays");
+        assert_eq!(default_of("ride").as_deref(), Some(road.id.as_str()));
+        let sport = |id: &str| -> String {
+            conn.query_row("SELECT sport_type FROM activity WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(sport("trainer"), "indoor_ride");
+        assert_eq!(sport("zwift"), "virtual_ride");
+        assert_eq!(sport("road"), "ride");
+        assert_eq!(sport("plain"), "ride");
+        assert_eq!(sport("by-hand"), "walk");
+        assert_eq!(sport("already"), "indoor_ride");
+        assert_eq!(sport("leg"), "ride", "a merged event's leg stays a ride");
+        assert_eq!(refile_rides_by_sub_sport(&conn).unwrap(), 0, "idempotent");
     }
 
     #[test]

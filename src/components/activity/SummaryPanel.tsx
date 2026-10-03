@@ -1,4 +1,4 @@
-import { isWaterSport, type Activity } from "../../lib/types";
+import { elevationIsNoise, type Activity } from "../../lib/types";
 import {
   formatDistance,
   formatDuration,
@@ -34,8 +34,9 @@ export function SummaryPanel({ activity }: Props) {
       value: formatPaceOrSpeed(activity.sport_type, activity.avg_speed_mps),
     },
   ];
-  // Swim "elevation gain" is GPS/pressure noise — no tile for water sports.
-  if (!isWaterSport(activity.sport_type)) {
+  // Swim "elevation gain" is GPS/pressure noise, a trainer's is barometer
+  // drift — no tile for either.
+  if (!elevationIsNoise(activity.sport_type)) {
     metrics.push({ label: "Elev Gain", value: formatElevation(activity.elev_gain_m) });
   }
   if (activity.avg_hr != null) {

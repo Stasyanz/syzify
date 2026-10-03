@@ -6,6 +6,23 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Indoor and virtual rides are sports of their own (#189). A trainer
+  with no course (Garmin "Indoor Cycling", a spin class) files as Indoor
+  Ride, a smart trainer on a simulator (Garmin "Virtual Ride", Strava
+  VirtualRide) as Virtual Ride, each with its own icon and color. They
+  stay cycling for the power curve, bike gear and cadence zones, keep
+  records of their own apart from the road, and do not combine into a
+  triathlon. Rides already imported from a FIT file that names the
+  trainer move over once at the next start, and the bike that is the
+  default for Ride becomes the default for both; a ride from a TCX or
+  GPX file carries no trainer kind and stays a Ride — the sport badge
+  changes it. An indoor ride shows no elevation gain (a barometer drifts
+  in a room), a virtual ride keeps its simulated climb. Import dedup now
+  matches within a sport's family — a ride against its trainer kinds and
+  mountain bike, a run against treadmill and trail run — so the same
+  workout filed under two kinds by two files lands once.
+
 ### Fixed
 - A refused action said "undefined" instead of why (#174): changing the
   sport from the badge, editing or deleting an activity, deleting,

@@ -19,6 +19,14 @@ export const SPORT_COLORS: Record<string, string> = {
   // cycling — green family
   ride: "#35894f",
   mountain_bike: "#166534",
+  // the trainer rides (#189): a sage and a deep teal — the only two greens
+  // left that stay ≥ 5.8 OKLab from every neighbour for normal vision and
+  // deuteranopia (the run↔hike compromise level); the family is full.
+  // Accepted: both are the palette's palest hues after gray (chroma about
+  // half of ride's), and under protanopia indoor_ride sits 4.2 from paddle
+  // and 4.8 from ride
+  indoor_ride: "#72906c",
+  virtual_ride: "#005a5a",
   // on foot — amber / burnt orange
   walk: "#ca8a04",
   hike: "#d8521d",

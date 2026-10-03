@@ -1,5 +1,5 @@
 import { chartGradeSteps, GRADE_STEPS_DARK, GRADE_STEPS_LIGHT } from "../../lib/chartTheme";
-import type { TimeInZone } from "../../lib/types";
+import { isTrainerRide, type TimeInZone } from "../../lib/types";
 
 /** A bpm range and the color HR bars falling into it are painted with. */
 export interface ZoneRange {
@@ -215,7 +215,7 @@ export function cadenceZoneRanges(
   const device = deviceZoneRanges(zones, "cadence", CADENCE_ZONE_COLORS);
   if (device) return device;
 
-  if (sport === "ride") {
+  if (sport === "ride" || isTrainerRide(sport)) {
     return rangesFromBoundaries(RIDE_CADENCE_RPM_BOUNDS, CADENCE_ZONE_COLORS);
   }
   if (sport !== "run") return null;
@@ -274,7 +274,7 @@ export function speedZoneRanges(
 ): ZoneRange[] | null {
   const device = deviceZoneRanges(zones, "speed", SPEED_ZONE_COLORS, mpsToUnit);
   if (device) return device;
-  if (sport !== "ride") return null;
+  if (sport !== "ride" && !isTrainerRide(sport)) return null;
   return rangesFromBoundaries(
     RIDE_SPEED_BOUNDS_KMH.map((kmh) => (kmh / 3.6) * mpsToUnit),
     SPEED_ZONE_COLORS,

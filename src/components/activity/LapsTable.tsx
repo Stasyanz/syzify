@@ -1,4 +1,4 @@
-import type { Lap, TrackPointColumns } from "../../lib/types";
+import { isTrainerRide, type Lap, type TrackPointColumns } from "../../lib/types";
 import {
   formatDistance,
   formatDuration,
@@ -30,7 +30,7 @@ interface Row {
 
 function lapDistanceFor(sport: string): number {
   const imperial = isImperial();
-  if (sport === "ride" || sport === "mountain_bike") return imperial ? 5 * M_PER_MILE : 5000;
+  if (sport === "ride" || sport === "mountain_bike" || isTrainerRide(sport)) return imperial ? 5 * M_PER_MILE : 5000;
   // Pool lengths stay metric even for imperial users.
   if (sport === "swim" || sport === "open_water") return 100;
   return imperial ? M_PER_MILE : 1000;

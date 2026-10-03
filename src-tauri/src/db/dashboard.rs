@@ -92,6 +92,14 @@ fn is_water(sport: &str) -> bool {
     matches!(sport, "swim" | "open_water")
 }
 
+/// Sports whose recorded "elevation gain" is instrument noise: the water
+/// sports, and a trainer with no course — a watch's barometer drifts in a
+/// room all the same (#189). A virtual ride climbs its simulated course,
+/// so its gain stands. Mirrors `elevationIsNoise` in src/lib/types.ts.
+fn elevation_is_noise(sport: &str) -> bool {
+    is_water(sport) || sport == "indoor_ride"
+}
+
 /// Running records, longest first: an "Ultra" row for the longest run beyond a
 /// marathon (full distance + time), then best-effort splits for marathon /
 /// half / 10 km / 5 km (fastest time to cover that distance within any run).
@@ -494,7 +502,7 @@ pub fn get_dashboard_data(conn: &Connection, period: &str, sport_type: Option<&s
         let records = Records {
             longest_distance: get_record(conn, &sport, "distance_m")?,
             longest_duration: get_record(conn, &sport, "duration_s")?,
-            highest_elevation: if is_water(&sport) {
+            highest_elevation: if elevation_is_noise(&sport) {
                 None
             } else {
                 get_record(conn, &sport, "elev_gain_m")?
@@ -761,11 +769,19 @@ mod tests {
         // 15 m of "gain" recorded by a confused watch during a swim.
         let swim = sample_activity("sw", "swim", 4000.0, 4440.0, 15.0);
         let open = sample_activity("ow", "open_water", 2000.0, 2400.0, 8.0);
+        // 22 m of barometer drift on a trainer in a room (#189); a virtual
+        // ride's climb is its simulated course and stays a record.
+        let spin = sample_activity("sp", "indoor_ride", 0.0, 3600.0, 22.0);
+        let zwift = sample_activity("zw", "virtual_ride", 30000.0, 3600.0, 400.0);
         db::activities::insert_activity(&conn, &swim).unwrap();
         db::activities::insert_activity(&conn, &open).unwrap();
+        db::activities::insert_activity(&conn, &spin).unwrap();
+        db::activities::insert_activity(&conn, &zwift).unwrap();
 
         let data = get_dashboard_data(&conn, "all", None).unwrap();
-        for sport in ["swim", "open_water"] {
+        let zw = data.records_by_sport.iter().find(|s| s.sport_type == "virtual_ride").unwrap();
+        assert!(zw.records.highest_elevation.is_some(), "a virtual climb is a record");
+        for sport in ["swim", "open_water", "indoor_ride"] {
             let rec = data
                 .records_by_sport
                 .iter()

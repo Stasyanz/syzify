@@ -130,7 +130,7 @@ pub fn privacy_trim(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<TrackPoint
 /// "running"); sports with no Garmin equivalent keep our slug.
 fn gpx_type(sport: &str) -> &str {
     match sport {
-        "ride" | "mountain_bike" => "cycling",
+        "ride" | "mountain_bike" | "indoor_ride" | "virtual_ride" => "cycling",
         "run" | "trail_run" | "treadmill" => "running",
         "swim" | "open_water" => "swimming",
         "hike" | "mountaineering" => "hiking",
@@ -366,6 +366,8 @@ mod tests {
         let cases = [
             ("ride", "cycling"),
             ("mountain_bike", "cycling"),
+            ("indoor_ride", "cycling"),
+            ("virtual_ride", "cycling"),
             ("trail_run", "running"),
             ("open_water", "swimming"),
             ("hike", "hiking"),
