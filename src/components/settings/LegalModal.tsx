@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { X, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { errorText } from "../../lib/errors";
 
 export type LegalDoc = "license" | "exception" | "notices";
 
@@ -37,7 +38,7 @@ export function LegalModal({ doc, onClose }: { doc: LegalDoc; onClose: () => voi
             <Loader2 size={18} className="animate-spin" />
           </div>
         ) : error ? (
-          <p className="text-sm text-red-500">{String(error)}</p>
+          <p className="text-sm text-red-500">{errorText(error)}</p>
         ) : (
           <pre className="text-xs font-mono whitespace-pre-wrap overflow-y-auto scroll-themed flex-1 text-muted">
             {data}

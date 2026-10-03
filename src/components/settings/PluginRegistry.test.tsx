@@ -4,6 +4,9 @@ import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../../lib/tauri";
+import { open } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../stores/confirmStore";
+import { useToastStore } from "../../stores/toastStore";
 import type { PluginInfo } from "../../lib/types";
 import { PluginRegistry, secretsDisclosure, secretsSealed } from "./PluginRegistry";
 
@@ -11,9 +14,14 @@ vi.mock("../../lib/tauri", () => ({
   api: {
     getPlugins: vi.fn(),
     getEncryptionStatus: vi.fn(),
+    setPluginEnabled: vi.fn(),
+    uninstallPlugin: vi.fn(),
+    installPluginFromFile: vi.fn(),
+    installPluginFromPackage: vi.fn(),
   },
 }));
 vi.mock("../../stores/confirmStore", () => ({ confirmDialog: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 const mocked = vi.mocked(api);
 
@@ -124,4 +132,50 @@ describe("PluginRegistry", () => {
     await waitFor(() => expect(screen.getByText("Stores secrets (tokens)")).toBeTruthy());
     expect(screen.queryByText(/stored unencrypted/)).toBeNull();
   });
+});
+
+describe("PluginRegistry refusals (#182)", () => {
+  const lastToast = () => useToastStore.getState().toasts.slice(-1)[0];
+
+  /** The backend refuses with a bare string; a dialog or JS failure is an
+   * Error. Every toast carries the words alone. */
+  for (const [kind, make] of [
+    ["a string", (m: string) => m],
+    ["an Error", (m: string) => new Error(m)],
+  ] as const) {
+    it(`names the reason when a toggle, an uninstall or an install fails with ${kind}`, async () => {
+      useToastStore.setState({ toasts: [] });
+      mocked.getPlugins.mockResolvedValue([plugin()]);
+      mocked.getEncryptionStatus.mockResolvedValue({
+        enabled: false,
+        locked: false,
+        scopes: { activities: false, database: false, photos: false },
+      });
+      mocked.setPluginEnabled.mockRejectedValue(make("plugin is mid-sync"));
+      mocked.uninstallPlugin.mockRejectedValue(make("vault locked"));
+      mocked.installPluginFromFile.mockRejectedValue(make("manifest is not JSON"));
+      vi.mocked(confirmDialog).mockResolvedValue(true);
+      vi.mocked(open).mockResolvedValue("/tmp/plugin.json");
+      renderPage();
+      await waitFor(() => expect(screen.getByText("Sync")).toBeTruthy());
+
+      fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+      await waitFor(() => expect(lastToast()?.message).toBe("Could not disable: plugin is mid-sync"));
+      fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+      await waitFor(() => expect(lastToast()?.message).toBe("Uninstall failed: vault locked"));
+      fireEvent.click(screen.getByRole("button", { name: /Install plugin/ }));
+      await waitFor(() => expect(lastToast()?.message).toBe("Install failed: manifest is not JSON"));
+      // A signed package goes through the other install call.
+      vi.mocked(open).mockResolvedValue("/tmp/sync.syzify-ext");
+      mocked.installPluginFromPackage.mockRejectedValue(make("signature does not verify"));
+      fireEvent.click(screen.getByRole("button", { name: /Install plugin/ }));
+      await waitFor(() => expect(lastToast()?.message).toBe("Install failed: signature does not verify"));
+      // The file dialog itself failing is an install failure too, not an
+      // unhandled rejection.
+      vi.mocked(open).mockRejectedValue(make("dialog unavailable"));
+      fireEvent.click(screen.getByRole("button", { name: /Install plugin/ }));
+      await waitFor(() => expect(lastToast()?.message).toBe("Install failed: dialog unavailable"));
+      expect(useToastStore.getState().toasts.every((t) => t.type === "error" && !t.message.includes("Error:"))).toBe(true);
+    });
+  }
 });

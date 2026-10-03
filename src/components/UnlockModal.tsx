@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Lock, Loader2 } from "lucide-react";
 import { api } from "../lib/tauri";
 import { Logo } from "./brand/Logo";
+import { errorText } from "../lib/errors";
 
 interface Props {
   onUnlocked: () => void;
@@ -20,7 +21,7 @@ export function UnlockModal({ onUnlocked }: Props) {
       await api.unlockVault(password);
       onUnlocked();
     } catch (e) {
-      setError(`${e}`);
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }

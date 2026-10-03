@@ -32,4 +32,29 @@ describe("error handlers (#174)", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  /** `${e}` and `String(e)` say "Error: …" for a thrown Error; errorText
+   * says the message alone for both shapes (#182). The names come from
+   * the file's own handlers — `catch (x)`, `.catch((x)`, `onError: (x`
+   * — plus a query result's `error`, so a handler named `reason` is
+   * scanned as well as one named `e`. */
+  it("format a caught value through errorText, never `${x}` or String(x)", () => {
+    const offenders: string[] = [];
+    for (const file of sources(join(__dirname, ".."))) {
+      if (file.endsWith("/lib/errors.ts")) continue;
+      const text = readFileSync(file, "utf8");
+      const names = new Set(["error"]);
+      for (const re of [/catch\s*\(\s*(\w+)/g, /\.catch\(\s*(?:async\s*)?\(?\s*(\w+)/g, /onError:\s*(?:async\s*)?\(\s*(\w+)/g]) {
+        for (const m of text.matchAll(re)) names.add(m[1]);
+      }
+      const alt = [...names].join("|");
+      for (const re of [new RegExp(`\\$\\{(?:${alt})\\}`, "g"), new RegExp(`\\bString\\((?:${alt})\\)`, "g")]) {
+        for (const m of text.matchAll(re)) {
+          const line = text.slice(0, m.index).split("\n").length;
+          offenders.push(`${file}:${line}: ${m[0]}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });

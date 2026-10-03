@@ -6,6 +6,7 @@ import { Puzzle, Plus, Trash2, Globe, ShieldCheck, Fingerprint } from "lucide-re
 import type { EncryptionStatus, PluginInfo } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
+import { errorText } from "../../lib/errors";
 
 // Human-readable label for a raw permission string.
 function permissionLabel(perm: string): string {
@@ -70,6 +71,16 @@ export function PluginRegistry() {
   };
 
   async function handleInstall() {
+    // The dialog's own failure (a plugin error, an Error on the JS side)
+    // is reported like a refused install, not left as an unhandled rejection.
+    try {
+      await installFromDialog();
+    } catch (e) {
+      addToast("error", `Install failed: ${errorText(e)}`);
+    }
+  }
+
+  async function installFromDialog() {
     const path = await open({
       multiple: false,
       filters: [
@@ -79,16 +90,12 @@ export function PluginRegistry() {
       ],
     });
     if (!path || typeof path !== "string") return;
-    try {
-      // A signed package is verified; a bare manifest is an unsigned dev sideload.
-      const info = path.endsWith(".syzify-ext")
-        ? await api.installPluginFromPackage(path)
-        : await api.installPluginFromFile(path);
-      await refresh();
-      addToast("success", `Installed “${info.name}”. Review its access, then enable it.`);
-    } catch (e) {
-      addToast("error", `Install failed: ${String(e)}`);
-    }
+    // A signed package is verified; a bare manifest is an unsigned dev sideload.
+    const info = path.endsWith(".syzify-ext")
+      ? await api.installPluginFromPackage(path)
+      : await api.installPluginFromFile(path);
+    await refresh();
+    addToast("success", `Installed “${info.name}”. Review its access, then enable it.`);
   }
 
   async function handleToggle(plugin: PluginInfo) {
@@ -96,7 +103,7 @@ export function PluginRegistry() {
       await api.setPluginEnabled(plugin.id, !plugin.enabled);
       await refresh();
     } catch (e) {
-      addToast("error", `Could not ${plugin.enabled ? "disable" : "enable"}: ${String(e)}`);
+      addToast("error", `Could not ${plugin.enabled ? "disable" : "enable"}: ${errorText(e)}`);
     }
   }
 
@@ -113,7 +120,7 @@ export function PluginRegistry() {
       await refresh();
       addToast("success", `Uninstalled “${plugin.name}”.`);
     } catch (e) {
-      addToast("error", `Uninstall failed: ${String(e)}`);
+      addToast("error", `Uninstall failed: ${errorText(e)}`);
     }
   }
 
@@ -212,7 +219,8 @@ export function PluginRegistry() {
                     </button>
                     <button
                       onClick={() => handleUninstall(p)}
-                      title="Uninstall"
+                      aria-label="Uninstall"
+                      data-tip="Uninstall"
                       className="p-1.5 rounded text-faint hover:text-red-600 hover:bg-red-50"
                     >
                       <Trash2 size={15} />

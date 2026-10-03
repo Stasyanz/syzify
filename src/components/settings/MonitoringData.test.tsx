@@ -147,7 +147,11 @@ describe("MonitoringData", () => {
     await waitFor(() =>
       expect(useToastStore.getState().toasts.map((t) => t.type)).toEqual(["info", "error"]),
     );
-    expect(useToastStore.getState().toasts[1].message).toContain("locked");
+    expect(useToastStore.getState().toasts[1].message).toBe("Delete failed: locked");
+    // The backend's own refusal is a bare string: the same words (#182).
+    mocked.deleteMonitoringRange.mockRejectedValueOnce("vault busy");
+    fireEvent.click(screen.getByText("Delete…"));
+    await waitFor(() => expect(useToastStore.getState().toasts.slice(-1)[0]?.message).toBe("Delete failed: vault busy"));
   });
 
   it("re-seeds the range only when the stored span itself changes", async () => {

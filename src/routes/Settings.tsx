@@ -38,6 +38,7 @@ import {
   type SettingsTab,
 } from "../lib/settingsTabs";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
+import { errorText } from "../lib/errors";
 
 /** What each encryption scope covers. Raw files include Garmin monitoring
  * (night heart rate, stress, SpO2) — the same `raw/` machinery, so the
@@ -217,7 +218,7 @@ export function SettingsPage() {
       addToast("success", "Vault backup created");
     } catch (e) {
       removeToast(toastId);
-      addToast("error", `Backup failed: ${e}`);
+      addToast("error", `Backup failed: ${errorText(e)}`);
     } finally {
       unlisten();
       setBackingUp(false);
@@ -244,15 +245,17 @@ export function SettingsPage() {
     if (!confirmed) return;
     setRestoring(true);
     try {
-      const { restored, error, preserved_at } = await api.restoreVault(selected as string);
+      // `error` here is the backend's own report of a partial extraction,
+      // a string by contract — not a caught value.
+      const { restored, error: partial, preserved_at } = await api.restoreVault(selected as string);
       // Once the vault was touched the live DB is a placeholder — restart even
       // if extraction failed partway (error set), so the app reopens from disk.
       if (restored) {
         const kept = preserved_at ? ` Previous vault kept in ${preserved_at}.` : "";
         addToast(
-          error ? "warning" : "success",
-          error
-            ? `Restore incomplete: ${error}.${kept} Restarting…`
+          partial ? "warning" : "success",
+          partial
+            ? `Restore incomplete: ${partial}.${kept} Restarting…`
             : `Vault restored.${kept} Restarting…`
         );
         // The backend set vault_error ("restart required") the moment the live
@@ -267,7 +270,7 @@ export function SettingsPage() {
       }
     } catch (e) {
       // Pre-flight rejection (bad/missing archive) — the live DB is untouched.
-      addToast("error", `Restore failed: ${e}`);
+      addToast("error", `Restore failed: ${errorText(e)}`);
       setRestoring(false);
     }
   }
@@ -288,7 +291,7 @@ export function SettingsPage() {
         }`
       );
     } catch (e) {
-      addToast("error", `${ds.name} import failed: ${e}`);
+      addToast("error", `${ds.name} import failed: ${errorText(e)}`);
     }
   }
 
@@ -313,8 +316,8 @@ export function SettingsPage() {
       setEncPassword("");
       setEncConfirm("");
     } catch (e) {
-      setEncError(`Failed: ${e}`);
-      if (encryptionDialogGone()) addToast("error", `Encryption failed: ${e}`);
+      setEncError(`Failed: ${errorText(e)}`);
+      if (encryptionDialogGone()) addToast("error", `Encryption failed: ${errorText(e)}`);
     } finally {
       setEncBusy(false);
       // Re-read status on EVERY outcome: a failed transition can settle the
@@ -333,8 +336,8 @@ export function SettingsPage() {
       setShowDecryptDialog(false);
       setDecPassword("");
     } catch (e) {
-      setDecError(`Wrong password or error: ${e}`);
-      if (encryptionDialogGone()) addToast("error", `Disabling encryption failed: ${e}`);
+      setDecError(`Wrong password or error: ${errorText(e)}`);
+      if (encryptionDialogGone()) addToast("error", `Disabling encryption failed: ${errorText(e)}`);
     } finally {
       setEncBusy(false);
       refreshAfterCryptoChange();
@@ -757,7 +760,7 @@ export function SettingsPage() {
                           // schemes, so route it through the opener plugin.
                           e.preventDefault();
                           openUrl(`mailto:${CONTACT_EMAIL}`).catch((err) => {
-                            addToast("error", `Failed to open email client: ${err}`);
+                            addToast("error", `Failed to open email client: ${errorText(err)}`);
                           });
                         }}
                       >

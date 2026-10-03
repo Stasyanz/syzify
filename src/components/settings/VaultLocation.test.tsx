@@ -135,6 +135,23 @@ describe("<VaultLocation>", () => {
     expect(mocked.restartApp).not.toHaveBeenCalled();
   });
 
+  it("surfaces a backend refusal as an error toast and re-enables the buttons — an Error carries its message only (#182)", async () => {
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    mocked.switchVault.mockRejectedValue(new Error("stale lock"));
+    renderLocation();
+    await screen.findByText(CURRENT);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open another…/ }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.map((t) => t.type)).toEqual(["error"])
+    );
+    expect(useToastStore.getState().toasts[0].message).toBe("Couldn't open vault: stale lock");
+    expect(
+      (screen.getByRole("button", { name: /Open another…/ }) as HTMLButtonElement).disabled
+    ).toBe(false);
+    expect(mocked.restartApp).not.toHaveBeenCalled();
+  });
+
   it("says so when the restart itself fails instead of hanging on 'restarting…'", async () => {
     vi.mocked(confirmDialog).mockResolvedValue(true);
     mocked.switchVault.mockResolvedValue(OTHER);

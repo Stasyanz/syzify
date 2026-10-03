@@ -19,6 +19,7 @@ import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
 import { UpdateCheck } from "./components/settings/UpdateCheck";
 import { settingsPath } from "./lib/settingsTabs";
+import { errorText } from "./lib/errors";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -66,7 +67,7 @@ export function VaultErrorScreen({ message }: { message: string }) {
       await api.switchVault(selected, expectExisting);
       await api.restartApp();
     } catch (e) {
-      setSwitchError(String(e));
+      setSwitchError(errorText(e));
     }
   };
 

@@ -129,6 +129,20 @@ describe("PluginWidget continue loop", () => {
     expect(mocked.renderPluginView).toHaveBeenCalledTimes(1);
   });
 
+  /** The first render failing — a string from the host, an Error from
+   * the IPC layer — reads as the words alone (#182). */
+  for (const [kind, rejection] of [
+    ["a string", "plugin is disabled"],
+    ["an Error", new Error("plugin is disabled")],
+  ] as const) {
+    it(`names the reason when the widget cannot render at all, with ${kind}`, async () => {
+      mocked.renderPluginView.mockRejectedValueOnce(rejection);
+      renderWidget(false);
+      await screen.findByText("Plugin error: plugin is disabled");
+      expect(screen.queryByText(/Error:/)).toBeNull();
+    });
+  }
+
   it("ends the loop on an error and shows it", async () => {
     mocked.renderPluginView
       .mockResolvedValueOnce(status)
@@ -137,6 +151,21 @@ describe("PluginWidget continue loop", () => {
     renderWidget(true);
     fireEvent.click(await screen.findByText("Sync now"));
     await waitFor(() => expect(screen.getByText(/vault busy/)).toBeTruthy());
+    expect(screen.queryByText(/Error: vault busy/)).toBeNull();
+    await tick();
+    expect(mocked.renderPluginView).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText("Stop")).toBeNull();
+  });
+
+  it("ends the loop on an error and shows it — a plain-string refusal reads the same (#182)", async () => {
+    mocked.renderPluginView
+      .mockResolvedValueOnce(status)
+      .mockResolvedValueOnce(round(1, true))
+      .mockRejectedValueOnce("vault busy: a backup is running");
+    renderWidget(true);
+    fireEvent.click(await screen.findByText("Sync now"));
+    await waitFor(() => expect(screen.getByText(/vault busy/)).toBeTruthy());
+    expect(screen.queryByText(/Error: vault busy/)).toBeNull();
     await tick();
     expect(mocked.renderPluginView).toHaveBeenCalledTimes(3);
     expect(screen.queryByText("Stop")).toBeNull();

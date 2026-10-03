@@ -5,12 +5,14 @@ import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ActivitySummary } from "../../lib/types";
 import { api } from "../../lib/tauri";
+import { useToastStore } from "../../stores/toastStore";
 import { ActivityList } from "./ActivityList";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
     getActivities: vi.fn(),
     getSetting: vi.fn().mockResolvedValue(null),
+    mergeIntoTriathlon: vi.fn(),
   },
   isTauri: () => false,
 }));
@@ -124,6 +126,39 @@ describe("ActivityList merge mode (Ctrl+M)", () => {
     fireEvent.keyDown(document.body, { key: "m", ctrlKey: true, metaKey: true });
     expect(screen.queryByText(/selected/)).toBeNull();
   });
+});
+
+describe("ActivityList merge refusal (#182)", () => {
+  for (const [kind, rejection] of [
+    ["a string", "run can't be a multisport leg"],
+    ["an Error", new Error("run can't be a multisport leg")],
+  ] as const) {
+    it(`toasts the backend's words when the merge is refused with ${kind}`, async () => {
+      useToastStore.setState({ toasts: [] });
+      // Two disciplines on one day: the client-side gate lets the merge
+      // through, and the backend's refusal is what reaches the toast.
+      vi.mocked(api.getActivities).mockResolvedValue([
+        { ...summary(0), sport_type: "swim" },
+        { ...summary(1), sport_type: "ride" },
+        summary(2),
+      ]);
+      vi.mocked(api.mergeIntoTriathlon).mockRejectedValue(rejection);
+      renderList();
+      await waitFor(() => expect(screen.getByText("Run #0")).toBeTruthy());
+      fireEvent.keyDown(document.body, { key: "m", ctrlKey: true });
+      fireEvent.click(screen.getByText("Run #0"));
+      fireEvent.click(screen.getByText("Run #1"));
+      fireEvent.click(screen.getByRole("button", { name: "Merge into triathlon" }));
+      await waitFor(() =>
+        expect(useToastStore.getState().toasts.slice(-1)[0]).toMatchObject({
+          type: "error",
+          message: "run can't be a multisport leg",
+        }),
+      );
+      // Still in merge mode with the selection kept: the user can fix it.
+      expect(screen.getByText("2 selected")).toBeTruthy();
+    });
+  }
 });
 
 describe("ActivityList device line setting", () => {

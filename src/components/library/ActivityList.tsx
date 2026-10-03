@@ -9,6 +9,7 @@ import { useToastStore } from "../../stores/toastStore";
 import { ActivityListItem, LIBRARY_SHOW_DEVICE_KEY, showDeviceFromSetting } from "./ActivityListItem";
 import { ImportDialog } from "../import/ImportDialog";
 import { SPORT_LABELS, triathlonDiscipline, type ActivitySummary, type SportType } from "../../lib/types";
+import { errorText } from "../../lib/errors";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -82,7 +83,7 @@ export function ActivityList() {
       exitSelect();
       navigate(`/activity/${id}`);
     } catch (e) {
-      addToast("error", String(e));
+      addToast("error", errorText(e));
     } finally {
       setMerging(false);
     }

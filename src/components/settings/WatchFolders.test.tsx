@@ -190,6 +190,11 @@ describe("WatchFolders", () => {
     fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Preview failed.*walk failed/)));
     fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Import failed.*vault locked/)));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Import failed: vault locked"));
+    // A bare-string refusal reads the same, and an Error never shows "Error:" (#182).
+    vi.mocked(api.scanWatchFolders).mockRejectedValue("vault locked by a backup");
+    fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Import failed: vault locked by a backup"));
+    expect(toast).not.toHaveBeenCalledWith("error", expect.stringMatching(/Error:/));
   });
 });

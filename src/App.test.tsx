@@ -162,4 +162,22 @@ describe("App boot", { timeout: 20_000 }, () => {
     await screen.findByText('No vault found in "/no/vault/here"');
     expect(api.restartApp).not.toHaveBeenCalled();
   });
+
+  it("shows the switch error and does not restart when switching fails — an Error reads the same, without an Error: prefix (#182)", async () => {
+    await bootApp(UNLOCKED, "boom");
+    await screen.findByText("Can't open your vault");
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { api } = await import("./lib/tauri");
+    // The api mock instances survive vi.resetModules — drop calls leaked
+    // from the earlier successful-switch tests.
+    vi.mocked(api.restartApp).mockClear();
+    vi.mocked(open).mockResolvedValue("/no/vault/here");
+    vi.mocked(api.switchVault).mockRejectedValue(new Error("the volume is not mounted"));
+
+    fireEvent.click(screen.getByText("Open another vault…"));
+
+    await screen.findByText("the volume is not mounted");
+    expect(screen.queryByText(/Error:/)).toBeNull();
+    expect(api.restartApp).not.toHaveBeenCalled();
+  });
 });

@@ -12,6 +12,13 @@ describe("errorText", () => {
     expect(errorText(new RangeError())).toBe("RangeError");
   });
 
+  it("reads the message off a structured rejection, and stringifies the rest", () => {
+    expect(errorText({ message: "quota exceeded" })).toBe("quota exceeded");
+    expect(errorText({ message: "" })).toBe("[object Object]");
+    expect(errorText({ code: 7 })).toBe("[object Object]");
+    expect(errorText(42)).toBe("42");
+  });
+
   it("never says undefined", () => {
     expect(errorText(undefined)).toBe("Unknown error");
     expect(errorText(null)).toBe("Unknown error");

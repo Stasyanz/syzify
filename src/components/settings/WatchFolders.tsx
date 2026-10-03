@@ -8,6 +8,7 @@ import { useToastStore } from "../../stores/toastStore";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatImportSummary } from "../../lib/importSummary";
 import { Toggle } from "../ui/Toggle";
+import { errorText } from "../../lib/errors";
 
 /**
  * Settings → Vault → Watch folders: the folders scanned for new workout and
@@ -41,7 +42,7 @@ export function WatchFolders() {
     try {
       await api.restartWatcher();
     } catch (e) {
-      addToast("warning", `Folder list saved, but watching could not restart: ${e}`);
+      addToast("warning", `Folder list saved, but watching could not restart: ${errorText(e)}`);
     }
   }
 
@@ -52,7 +53,7 @@ export function WatchFolders() {
       await api.addWatchFolder(selected);
       await foldersChanged();
     } catch (e) {
-      addToast("error", `Could not add folder: ${e}`);
+      addToast("error", `Could not add folder: ${errorText(e)}`);
     }
   }
 
@@ -61,7 +62,7 @@ export function WatchFolders() {
       await api.removeWatchFolder(id);
       await foldersChanged();
     } catch (e) {
-      addToast("error", `Could not remove folder: ${e}`);
+      addToast("error", `Could not remove folder: ${errorText(e)}`);
     }
   }
 
@@ -74,7 +75,7 @@ export function WatchFolders() {
       await api.setSetting("watch_auto_import", next);
       queryClient.invalidateQueries({ queryKey: ["setting", "watch_auto_import"] });
     } catch (e) {
-      addToast("error", `Could not change auto-import: ${e}`);
+      addToast("error", `Could not change auto-import: ${errorText(e)}`);
     }
   }
 
@@ -84,7 +85,7 @@ export function WatchFolders() {
     try {
       setPreview(await api.previewWatchFolders());
     } catch (e) {
-      addToast("error", `Preview failed: ${e}`);
+      addToast("error", `Preview failed: ${errorText(e)}`);
     } finally {
       setPreviewing(false);
     }
@@ -103,7 +104,7 @@ export function WatchFolders() {
         addToast("info", "No new files in the watch folders.");
       }
     } catch (e) {
-      addToast("error", `Import failed: ${e}`);
+      addToast("error", `Import failed: ${errorText(e)}`);
     } finally {
       setScanning(false);
     }

@@ -40,6 +40,13 @@ describe("LegalModal", () => {
     await waitFor(() => expect(screen.getByText("No such resource")).toBeTruthy());
   });
 
+  it("shows an Error's message alone, no \"Error:\" prefix (#182)", async () => {
+    vi.mocked(api.getLegalText).mockRejectedValue(new Error("No such resource"));
+    renderModal("notices");
+    await waitFor(() => expect(screen.getByText("No such resource")).toBeTruthy());
+    expect(screen.queryByText(/Error:/)).toBeNull();
+  });
+
   it("closes via the X button", async () => {
     vi.mocked(api.getLegalText).mockResolvedValue("text");
     const onClose = vi.fn();

@@ -6,6 +6,7 @@ import { FolderInput, FolderOpen } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
+import { errorText } from "../../lib/errors";
 
 /** macOS protects Documents/Desktop/Downloads (TCC): a vault there won't
  * open on the next launch until the app has Full Disk Access. Warn up front. */
@@ -59,7 +60,7 @@ export function VaultLocation() {
   function restartSoon() {
     setTimeout(() => {
       api.restartApp().catch((e) => {
-        addToast("error", `Restart failed: ${e}. Quit and reopen Syzify to finish.`);
+        addToast("error", `Restart failed: ${errorText(e)}. Quit and reopen Syzify to finish.`);
       });
     }, 1500);
   }
@@ -85,7 +86,7 @@ export function VaultLocation() {
       addToast("success", `Opening ${root} — restarting…`);
       restartSoon();
     } catch (e) {
-      addToast("error", `Couldn't open vault: ${e}`);
+      addToast("error", `Couldn't open vault: ${errorText(e)}`);
       setBusy(null);
     }
   }
@@ -122,7 +123,7 @@ export function VaultLocation() {
       restartSoon();
     } catch (e) {
       removeToast(toastId);
-      addToast("error", `Move failed: ${e}`);
+      addToast("error", `Move failed: ${errorText(e)}`);
       setBusy(null);
     } finally {
       unlisten();

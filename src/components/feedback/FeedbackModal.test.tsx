@@ -54,6 +54,30 @@ describe("FeedbackModal", () => {
     await waitFor(() => expect(screen.queryByText("Send Feedback")).toBeNull());
   });
 
+  /** The opener's refusal is a bare string from Tauri, or an Error from
+   * the plugin's JS side: the toast says the words alone (#182). */
+  for (const [kind, rejection] of [
+    ["a string", "no handler for mailto"],
+    ["an Error", new Error("no handler for mailto")],
+  ] as const) {
+    it(`says why the email client did not open with ${kind}`, async () => {
+      vi.mocked(openUrl).mockRejectedValueOnce(rejection);
+      openModal();
+      fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion..."), {
+        target: { value: "This is a long enough message" },
+      });
+      fireEvent.click(screen.getByText("Send"));
+      await waitFor(() =>
+        expect(useToastStore.getState().toasts.slice(-1)[0]).toMatchObject({
+          type: "error",
+          message: "Failed to open email client: no handler for mailto",
+        }),
+      );
+      // The modal stays open with the text, so the user can copy it.
+      expect(screen.getByText("Send Feedback")).toBeTruthy();
+    });
+  }
+
   it("rejects a message shorter than 10 characters and does not open mail client", async () => {
     openModal();
 

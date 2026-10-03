@@ -8,5 +8,8 @@ export function errorText(e: unknown): string {
   if (e instanceof Error) return e.message || e.name;
   if (typeof e === "string") return e;
   if (e == null) return "Unknown error";
+  // A structured rejection (none today: every command errs with a String)
+  // that carries a message says the message, not "[object Object]".
+  if (typeof e === "object" && "message" in e && typeof e.message === "string" && e.message) return e.message;
   return String(e);
 }

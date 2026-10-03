@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Copy } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { errorText } from "../../lib/errors";
 import { useFeedbackStore } from "../../stores/feedbackStore";
 import { useToastStore } from "../../stores/toastStore";
 import { Select } from "../ui/Select";
@@ -67,7 +68,7 @@ export function FeedbackModal() {
       setMessage("");
       setErrors({});
     } catch (err) {
-      addToast("error", `Failed to open email client: ${err}`);
+      addToast("error", `Failed to open email client: ${errorText(err)}`);
     }
   }
 

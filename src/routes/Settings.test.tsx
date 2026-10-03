@@ -243,7 +243,16 @@ describe("SettingsPage tabs", () => {
     // Under StrictMode: a mounted-flag that only its cleanup writes would
     // read "unmounted" for good after the dev double-mount.
     await startEnablingEncryption({ strict: true });
-    await waitFor(() => expect(screen.getByText("Failed: Error: disk full")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Failed: disk full")).toBeTruthy());
+    expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed encryption switch in the dialog while the Vault tab is open, without a toast — the same words when the backend refuses with a plain string (#182)", async () => {
+    vi.mocked(api.enableEncryption).mockRejectedValue("disk full");
+    // Under StrictMode: a mounted-flag that only its cleanup writes would
+    // read "unmounted" for good after the dev double-mount.
+    await startEnablingEncryption({ strict: true });
+    await waitFor(() => expect(screen.getByText("Failed: disk full")).toBeTruthy());
     expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
   });
 
@@ -361,4 +370,20 @@ describe("SettingsPage tabs", () => {
     fireEvent.click(screen.getByText("hi@example.com"));
     await waitFor(() => expect(openUrl).toHaveBeenCalledWith("mailto:hi@example.com"));
   });
+
+  /** The opener refuses with a string (Tauri) or an Error (its JS side):
+   * the toast says the words alone (#182). */
+  for (const [kind, rejection] of [
+    ["a string", "no mail client"],
+    ["an Error", new Error("no mail client")],
+  ] as const) {
+    it(`says why the About email link did not open with ${kind}`, async () => {
+      vi.mocked(openUrl).mockRejectedValueOnce(rejection);
+      renderAt("/settings?tab=about");
+      fireEvent.click(screen.getByText("hi@example.com"));
+      await waitFor(() =>
+        expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Failed to open email client: no mail client"),
+      );
+    });
+  }
 });

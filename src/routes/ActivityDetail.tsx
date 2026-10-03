@@ -42,6 +42,7 @@ import type { Photo } from "../lib/types";
 import { useActivityStore } from "../stores/activityStore";
 import { useToastStore } from "../stores/toastStore";
 import { SPORT_LABELS, type SportType } from "../lib/types";
+import { errorText } from "../lib/errors";
 
 /** Strava's smallest privacy-zone radius — hides this much track around the
  * start and finish in the privacy GPX export. */
@@ -242,7 +243,7 @@ export function ActivityDetailPage() {
       await invalidateActivityData(queryClient);
       navigate("/library");
     } catch (e) {
-      addToast("error", String(e));
+      addToast("error", errorText(e));
     }
   }
 
@@ -290,7 +291,7 @@ export function ActivityDetailPage() {
                   queryClient.invalidateQueries({ queryKey: ["activities"] });
                   queryClient.invalidateQueries({ queryKey: ["calendar"] });
                 } catch (e) {
-                  addToast("error", String(e));
+                  addToast("error", errorText(e));
                 }
               }}
             />

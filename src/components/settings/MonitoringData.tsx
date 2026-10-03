@@ -6,6 +6,7 @@ import type { MonitoringDeleted, MonitoringSummary } from "../../lib/types";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
 import { dateOfDayKey } from "../../lib/calendar";
+import { errorText } from "../../lib/errors";
 
 const INPUT =
   "text-sm bg-card border border-border-2 rounded-[9px] px-2.5 py-1.5 outline-none focus:border-accent";
@@ -120,7 +121,7 @@ export function MonitoringData() {
       queryClient.invalidateQueries({ queryKey: ["monitoring"] });
       queryClient.invalidateQueries({ queryKey: ["recovery"] });
     } catch (e) {
-      addToast("error", `Delete failed: ${e}`);
+      addToast("error", `Delete failed: ${errorText(e)}`);
     } finally {
       setBusy(false);
     }

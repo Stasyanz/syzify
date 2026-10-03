@@ -4,6 +4,7 @@ import { Puzzle } from "lucide-react";
 import type { ViewSpec } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { PluginViewRenderer } from "./PluginViewRenderer";
+import { errorText } from "../../lib/errors";
 
 // Renders one plugin's contribution at `point`, isolated: a plugin that errors
 // shows an inline error card and never takes down the surrounding page.
@@ -111,7 +112,7 @@ export function PluginWidget({
       }
     } catch (e) {
       if (!current()) return;
-      setActionError(String(e));
+      setActionError(errorText(e));
       setContinuing(false);
     } finally {
       if (current()) setBusy(false);
@@ -144,7 +145,7 @@ export function PluginWidget({
       {isLoading ? (
         <p className="text-xs text-faint">Loading…</p>
       ) : error ? (
-        <p className="text-xs text-red-600">Plugin error: {String(error)}</p>
+        <p className="text-xs text-red-600">Plugin error: {errorText(error)}</p>
       ) : spec ? (
         <>
           <PluginViewRenderer

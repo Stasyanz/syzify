@@ -30,6 +30,18 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   on, since with it off every name is one you typed.
 
 ### Fixed
+- A failure raised inside the app itself, not by the backend — a file
+  dialog that would not open, a JS-side error — read as "Error: …" in
+  the remaining messages that formatted it themselves (#182): switching
+  or moving the vault, unlocking it, backup, restore and the encryption
+  switches, a data-source import, watch folders and their auto-import,
+  plugin install, enable and uninstall, a plugin's action and a plugin
+  widget that cannot render, the legal text pane, opening the email
+  client for feedback, deleting monitoring data, merging a triathlon,
+  unmerging one and renaming an activity now all say the message alone,
+  whichever side raised it. The backend's own refusals always read
+  right; a failed file dialog on plugin install is now reported as a
+  failed install instead of being dropped.
 - A refused action said "undefined" instead of why (#174): changing the
   sport from the badge, editing or deleting an activity, deleting,
   captioning or reordering photos, saving or assigning gear, and a

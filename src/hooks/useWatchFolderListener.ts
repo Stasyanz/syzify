@@ -4,6 +4,7 @@ import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 import { formatImportSummary } from "../lib/importSummary";
+import { errorText } from "../lib/errors";
 
 export function useWatchFolderListener() {
   const [pendingFiles, setPendingFiles] = useState<string[]>([]);
@@ -49,7 +50,7 @@ export function useWatchFolderListener() {
               } catch (e) {
                 addToastRef.current(
                   "error",
-                  `Auto-import failed: ${e}`
+                  `Auto-import failed: ${errorText(e)}`
                 );
               }
             } else {
@@ -84,7 +85,7 @@ export function useWatchFolderListener() {
       addToast(summary.level, summary.text);
       setPendingFiles([]);
     } catch (e) {
-      addToast("error", `Import failed: ${e}`);
+      addToast("error", `Import failed: ${errorText(e)}`);
     } finally {
       setImporting(false);
     }
