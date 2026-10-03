@@ -55,10 +55,7 @@ pub fn import_zip(
         if !entry.is_file() {
             continue;
         }
-        // Flatten to the bare filename — neutralizes any path traversal in names
-        // (`../x`, `/abs/x`, UNC). See the traversal test below.
-        let Some(fname) = Path::new(entry.name()).file_name().map(|n| n.to_string_lossy().into_owned())
-        else {
+        let Some(fname) = bare_entry_name(entry.name()) else {
             continue;
         };
         let lower = fname.to_ascii_lowercase();
@@ -80,9 +77,7 @@ pub fn import_zip(
             return Err("export is too large (uncompressed) — refusing to import".to_string());
         }
 
-        // Prefix with the entry index so same-named entries in different folders
-        // don't overwrite each other.
-        let dest = tmp.join(format!("{i}_{fname}"));
+        let dest = tmp.join(extracted_name(i, &fname));
         fs::write(&dest, &bytes).map_err(|e| format!("Failed to extract {fname}: {e}"))?;
 
         if is_gpx {
@@ -121,6 +116,25 @@ pub fn import_zip(
         }
     }
     Ok(result)
+}
+
+/// The bare file name of a zip entry — everything after its last `/` or
+/// `\`, whichever the archive's author used — so no entry name can reach
+/// outside the extraction directory (`../x`, `/abs/x`, `C:\x`, a UNC
+/// path). `None` for a name with nothing left (a directory, `..`, `.`).
+fn bare_entry_name(name: &str) -> Option<String> {
+    let last = name.rsplit(['/', '\\']).next().unwrap_or("");
+    match last {
+        "" | "." | ".." => None,
+        s => Some(s.to_string()),
+    }
+}
+
+/// The name an entry is extracted under: its index first, so same-named
+/// entries from different folders don't overwrite each other — and no
+/// entry lands under a reserved DOS device name (`CON.gpx` → `3_CON.gpx`).
+fn extracted_name(index: usize, bare: &str) -> String {
+    format!("{index}_{bare}")
 }
 
 #[cfg(test)]
@@ -225,13 +239,53 @@ mod tests {
         let conn = db::test_db();
         let dir = crate::test_support::ScratchDir::new("slip");
         let zip_path = dir.join("export.zip");
-        // A malicious entry name; file_name() must flatten it to evil.gpx in temp.
-        write_zip(&zip_path, &[("../../../evil.gpx", gpx_at("2015-03-03", "55.40").as_bytes())]);
-
+        // A traversal name beside an ordinary one: both must be flattened
+        // to evil.gpx inside the extraction dir and imported. Asserted on
+        // the recorded names, not on the file system (#202): an unflattened
+        // name would fail here on a missing or unwritable directory only
+        // by luck of the machine's permissions.
+        write_zip(
+            &zip_path,
+            &[
+                ("a/evil.gpx", gpx_at("2015-03-03", "55.40").as_bytes()),
+                ("../evil.gpx", gpx_at("2015-04-04", "55.50").as_bytes()),
+            ],
+        );
         let r = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap();
-        assert_eq!(r.imported, 1, "imported as a normal flattened file");
-        // Nothing escaped to the parent of the temp dir.
-        assert!(!dir.parent().unwrap().join("evil.gpx").exists());
+        assert_eq!(r.imported, 2, "both imported as flattened files: {r:?}");
+        let names: Vec<String> = {
+            let mut st = conn.prepare("SELECT original_path FROM raw_file ORDER BY original_path").unwrap();
+            st.query_map([], |x| x.get(0)).unwrap().map(|x| x.unwrap()).collect()
+        };
+        assert_eq!(names, vec!["evil.gpx", "evil.gpx"]);
+    }
+
+    /// Every way an entry name can point outside — parent hops, an absolute
+    /// path, either slash, a drive letter, a UNC share — lands as a bare
+    /// name directly inside the extraction dir (#202). The end-to-end test
+    /// above checks the flattened names; it cannot see an escape on disk —
+    /// the extraction dir is the import's own and gone when it returns.
+    #[test]
+    fn every_entry_name_lands_inside_the_extraction_dir() {
+        let root = Path::new("/x/rk_import_1");
+        for name in [
+            "../../../evil.gpx",
+            "/abs/evil.gpx",
+            "a/b/evil.gpx",
+            "..\\..\\evil.gpx",
+            "C:\\evil.gpx",
+            "\\\\host\\share\\evil.gpx",
+            "evil.gpx",
+        ] {
+            let bare = bare_entry_name(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(bare, "evil.gpx", "{name}");
+            let dest = root.join(extracted_name(7, &bare));
+            assert_eq!(dest.parent(), Some(root), "{name} stays in the dir");
+            assert_eq!(dest.file_name().unwrap(), "7_evil.gpx");
+        }
+        for name in ["", "dir/", "..", ".", "a/..", "a\\."] {
+            assert_eq!(bare_entry_name(name), None, "{name:?} names no file");
+        }
     }
 
     /// With the (scope-gated) vault key, the GPX raw file lands in the vault
