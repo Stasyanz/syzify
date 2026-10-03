@@ -78,7 +78,7 @@ export function useDropImport() {
         // Whether the current drag carries anything this page accepts. Known
         // from the `enter` payload, which (unlike `over`) includes the paths.
         let relevant = false;
-        unlisten = await webview.onDragDropEvent((event) => {
+        const u = await webview.onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "enter") {
             relevant = refs.current.activityId
@@ -125,6 +125,14 @@ export function useDropImport() {
             setDragging(false);
           }
         });
+        // The cleanup may have run while the subscription was on its IPC
+        // round trip: a handler left behind would import every drop a
+        // second time after a remount, so let it go now (#194).
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
       } catch {
         // Not running inside Tauri
       }

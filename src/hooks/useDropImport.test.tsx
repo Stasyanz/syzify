@@ -120,6 +120,45 @@ describe("useDropImport outside an activity page", () => {
   });
 });
 
+describe("useDropImport subscription", () => {
+  /** The cleanup ran while `onDragDropEvent` was on its IPC round trip: the
+   * handler that lands afterwards would import every drop a second time
+   * after a remount, so it is let go at once (#194). */
+  it("drops a subscription that arrives after unmount", async () => {
+    const unlisten = vi.fn();
+    let resolveSub: ((u: () => void) => void) | undefined;
+    onDragDropEvent.mockImplementationOnce(
+      () => new Promise<() => void>((resolve) => { resolveSub = resolve; }),
+    );
+    const qc = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/"]}>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { unmount } = renderHook(() => useDropImport(), { wrapper });
+    await waitFor(() => expect(resolveSub).toBeDefined());
+    unmount();
+    expect(unlisten).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveSub!(unlisten);
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("unsubscribes on unmount", async () => {
+    const unlisten = vi.fn();
+    onDragDropEvent.mockImplementationOnce(async (cb: DragDropHandler) => {
+      captured.handler = cb;
+      return unlisten;
+    });
+    const { unmount } = await renderDropImport("/");
+    expect(unlisten).not.toHaveBeenCalled();
+    unmount();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("useDropImport on an activity page", () => {
   it("shows the photo overlay when the drag carries images", async () => {
     const { result, fire } = await renderDropImport("/activity/act-1");

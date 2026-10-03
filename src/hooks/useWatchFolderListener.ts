@@ -23,7 +23,7 @@ export function useWatchFolderListener() {
         const { listen } = await import("@tauri-apps/api/event");
         if (cancelled) return;
 
-        unlisten = await listen<{ files: string[] }>(
+        const u = await listen<{ files: string[] }>(
           "watch:files-detected",
           async (event) => {
             const files = event.payload.files;
@@ -62,6 +62,14 @@ export function useWatchFolderListener() {
             }
           }
         );
+        // The cleanup may have run while `listen` was still on its IPC
+        // round trip: nobody is left to call `unlisten`, so let the
+        // subscription go now instead of leaving it to fire forever.
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
       } catch {
         // Not running inside Tauri
       }

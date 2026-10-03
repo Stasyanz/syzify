@@ -37,6 +37,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   useToastStore.setState({ toasts: [] });
+  vi.mocked(listen).mockClear();
   vi.mocked(api.getSetting).mockReset();
   vi.mocked(api.importFiles).mockReset();
 });
@@ -67,4 +68,42 @@ describe("useWatchFolderListener", () => {
       expect(hook.result.current.importing).toBe(false);
     });
   }
+
+  it("unsubscribes on unmount", async () => {
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockResolvedValue(unlisten);
+    const qc = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const hook = renderHook(() => useWatchFolderListener(), { wrapper });
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(unlisten).not.toHaveBeenCalled();
+    hook.unmount();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  /** The cleanup ran while `listen` was still on its IPC round trip: the
+   * subscription that arrives afterwards belongs to a dead hook and must be
+   * dropped at once (#194). */
+  it("drops a subscription that arrives after unmount", async () => {
+    const unlisten = vi.fn();
+    let resolveListen: ((u: () => void) => void) | undefined;
+    vi.mocked(listen).mockImplementation(
+      () => new Promise<() => void>((resolve) => { resolveListen = resolve; }),
+    );
+    const qc = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const hook = renderHook(() => useWatchFolderListener(), { wrapper });
+    await waitFor(() => expect(resolveListen).toBeDefined());
+    hook.unmount();
+    expect(unlisten).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveListen!(unlisten);
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
 });

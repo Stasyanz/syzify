@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Library } from "./routes/Library";
@@ -14,6 +14,7 @@ import { ConfirmDialogHost } from "./components/ui/ConfirmDialog";
 import { useDropImport } from "./hooks/useDropImport";
 import { useWatchFolderListener } from "./hooks/useWatchFolderListener";
 import { usePluginImportRefresh } from "./hooks/usePluginImportRefresh";
+import { useActivitiesUpdatedRefresh } from "./hooks/useActivitiesUpdatedRefresh";
 import { ImportProgressOverlay } from "./components/import/ImportProgressOverlay";
 import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
@@ -151,19 +152,7 @@ function AppContent() {
     queryFn: () => api.getVaultError(),
   });
 
-  // Refresh activities when background geocoding completes
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen("activities:updated", () => {
-        qc.invalidateQueries({ queryKey: ["activities"] });
-        qc.invalidateQueries({ queryKey: ["activity"] });
-      }).then((fn) => {
-        unlisten = fn;
-      });
-    });
-    return () => unlisten?.();
-  }, [qc]);
+  useActivitiesUpdatedRefresh();
 
   if (isLoading) {
     // Same markup as the static boot splash in index.html (inline copy of
