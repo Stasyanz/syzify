@@ -317,7 +317,6 @@ pub(crate) fn restore_vault_core(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     fn test_state_with(vault: &Path, conn: rusqlite::Connection) -> AppState {
@@ -334,10 +333,8 @@ mod tests {
         }
     }
 
-    fn unique_dir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("syz_export_{}_{}", tag, uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    fn unique_dir(tag: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(&format!("export_{tag}"))
     }
 
     /// Concurrent backups share one .backup-snapshot dir — the second call
@@ -358,8 +355,6 @@ mod tests {
         // Slot freed — a new backup succeeds.
         backup_vault_core(&state, &tmp.join("b2.zip"), &|_, _| {}).unwrap();
         assert!(tmp.join("b2.zip").exists());
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Backup, restore and relocation share one vault-wide gate: a restore
@@ -394,8 +389,6 @@ mod tests {
         let outcome = restore_vault_core(&state, &backup).unwrap();
         assert!(outcome.restored);
         assert_eq!(fs::read(vault.join("vault.db")).unwrap(), b"backup db");
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A .backup-snapshot stranded by a crash mid-backup is a plaintext copy
@@ -411,8 +404,6 @@ mod tests {
         assert!(!vault.join(".backup-snapshot").exists());
         // Idempotent: nothing left to remove.
         assert!(!scrub_stale_backup_snapshot(&vault));
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A wrong-kind zip (here: a Runkeeper-style export) must be rejected at
@@ -457,8 +448,6 @@ mod tests {
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with("pre-restore")));
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Past the point of no return the session serves a dead placeholder with
@@ -486,8 +475,6 @@ mod tests {
         // Restart demanded, restored files in place.
         assert!(state.vault_error.lock().unwrap().is_some());
         assert_eq!(fs::read(vault.join("vault.db")).unwrap(), b"backup db");
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The privacy radius comes from the frontend — NaN/zero/negative and
@@ -550,8 +537,6 @@ mod tests {
         let check = rusqlite::Connection::open(restored.join("vault.db")).unwrap();
         let v: String = check.query_row("SELECT v FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(v, "fresh, only in the WAL");
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// LOCKED vault: the connection is an in-memory placeholder, so the
@@ -584,7 +569,5 @@ mod tests {
             fs::read(restored.join("vault.db-wal")).unwrap(),
             b"sqlcipher wal frames"
         );
-
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

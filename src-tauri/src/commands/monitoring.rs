@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn deleting_a_day_removes_its_file_row_and_hash_but_keeps_the_other_day() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         seed_file(&state, "rf-a", &one_day(MIDNIGHT), false);
@@ -213,14 +213,13 @@ mod tests {
         // Nothing left in the range: a no-op that still answers.
         let again = delete_monitoring_range_core(&state, "2026-09-05", "2026-09-05").unwrap();
         assert_eq!(again, MonitoringDeleted { days: 0, files: 0, failed: 0, error: None });
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
     fn a_file_stays_while_one_of_its_days_remains() {
         // One file spanning two days: deleting one day keeps the file (and
         // its hash) until the other day goes too.
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         let mut two = one_day(MIDNIGHT);
@@ -243,12 +242,11 @@ mod tests {
         assert_eq!(second, MonitoringDeleted { days: 1, files: 1, failed: 0, error: None });
         assert!(!vault.join("raw/rf-ab.fit").exists());
         assert_eq!(count(&state, "SELECT COUNT(*) FROM raw_file"), 0);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
     fn bad_ranges_are_refused_before_touching_anything() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         seed_file(&state, "rf-a", &one_day(MIDNIGHT), false);
@@ -257,14 +255,13 @@ mod tests {
         assert!(delete_monitoring_range_core(&state, "2026-09-06", "2026-09-05").is_err());
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day"), 1);
         assert!(vault.join("raw/rf-a.fit").exists());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A corrupt timestamp keeps `store` from writing the file's span, so
     /// delete_range can never name it — the orphan sweep must.
     #[test]
     fn a_file_without_a_span_row_goes_once_its_readings_are_gone() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         let mut bad = one_day(MIDNIGHT);
@@ -282,14 +279,13 @@ mod tests {
         assert_eq!(out, MonitoringDeleted { days: 1, files: 1, failed: 0, error: None });
         assert!(!vault.join("raw/rf-bad.fit").exists());
         assert_eq!(count(&state, "SELECT COUNT(*) FROM raw_file"), 0);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Rows committed, process gone before the files were removed: the
     /// next delete of ANY range finishes the job.
     #[test]
     fn an_interrupted_delete_is_finished_by_the_next_one() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         std::fs::write(vault.join("raw/rf-left.fit"), b"fit").unwrap();
@@ -307,14 +303,13 @@ mod tests {
         assert_eq!(out, MonitoringDeleted { days: 0, files: 1, failed: 0, error: None });
         assert!(!vault.join("raw/rf-left.fit").exists());
         assert!(!db::raw_files::hash_exists(&state.db.lock().unwrap(), "hash-left").unwrap());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The OS refusing a removal keeps the row (and the hash): the file is
     /// still there, so the truth is "not deleted", and the answer says so.
     #[test]
     fn a_file_the_os_will_not_remove_is_reported_and_its_row_kept() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         seed_file(&state, "rf-a", &one_day(MIDNIGHT), false);
@@ -338,12 +333,11 @@ mod tests {
         assert!(!vault.join("raw/rf-a.fit").exists());
         assert!(!db::raw_files::hash_exists(&state.db.lock().unwrap(), "hash-rf-a").unwrap());
         assert_eq!(count(&state, "SELECT COUNT(*) FROM raw_file"), 0);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
     fn a_locked_vault_refuses_the_delete_before_touching_anything() {
-        let vault = std::env::temp_dir().join(format!("syz_mon_del_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
         let state = test_state(&vault);
         seed_file(&state, "rf-a", &one_day(MIDNIGHT), false);
@@ -363,7 +357,6 @@ mod tests {
         assert!(err.contains("locked"), "{err}");
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day"), 1);
         assert!(vault.join("raw/rf-a.fit").exists());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]

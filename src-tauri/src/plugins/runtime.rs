@@ -486,8 +486,7 @@ mod tests {
         use crate::state::AppState;
         use std::sync::{Arc, Mutex};
 
-        let vault = std::env::temp_dir().join(format!("syz_wasm_secret_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("wasm_secret");
         let key = [11u8; 32];
         crate::crypto::write_vault_lock(
             &vault,
@@ -502,7 +501,7 @@ mod tests {
         .unwrap();
         let state = Arc::new(AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(Some(key)),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -584,7 +583,6 @@ mod tests {
         // Sign out: an empty value deletes.
         assert_eq!(call(granted.clone(), "secret_set", r#"{"key":"oauth1"}"#).unwrap(), "ok");
         assert_eq!(call(granted, "secret_get", "oauth1").unwrap(), "");
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -621,13 +619,13 @@ mod tests {
         use tauri::Manager;
 
         let plugin_id = "com.syzify.example.sync-demo";
-        let vault = std::env::temp_dir().join(format!("syz_runtime_sync_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("runtime_sync");
         let plugin_dir = vault.join("plugins").join(plugin_id);
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::copy(sync_demo_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
         let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -693,7 +691,6 @@ mod tests {
         // Nothing left to sync: the same action is a no-op status.
         assert!(render(r#"{"action":"sync","values":{}}"#).continue_action.is_none());
         assert!(text(&render(r#"{"action":"reset","values":{}}"#)).contains("0 of 3"));
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The runtime's wiring on a real (windowless) app: the stored
@@ -708,13 +705,13 @@ mod tests {
         use tauri::Manager;
 
         let plugin_id = "com.syzify.example.net-probe";
-        let vault = std::env::temp_dir().join(format!("syz_runtime_net_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("runtime_net");
         let plugin_dir = vault.join("plugins").join(plugin_id);
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::copy(net_probe_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
         let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -784,7 +781,6 @@ mod tests {
         }
         let err = run_contribution(&handle, plugin_id, "probe", r#"{"url":"https://169.254.169.254/"}"#).unwrap_err();
         assert!(err.contains("invalid net host"), "{err}");
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     // End-to-end capability gate: a REAL plugin wasm calling the REAL host_query
@@ -850,14 +846,14 @@ mod tests {
         use tauri::{Listener, Manager};
 
         let plugin_id = "com.syzify.example.gear-demo";
-        let vault = std::env::temp_dir().join(format!("syz_runtime_gear_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("runtime_gear");
         let plugin_dir = vault.join("plugins").join(plugin_id);
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::copy(gear_demo_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
 
         let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -977,7 +973,6 @@ mod tests {
         assert!(err.contains("multisport"), "{err}");
         assert_eq!(gear_of("container"), None);
         assert_eq!(events.lock().unwrap().len(), 2);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     fn paste_import_wasm() -> &'static str {
@@ -999,11 +994,10 @@ mod tests {
         use crate::state::AppState;
         use std::sync::{Arc, Mutex};
 
-        let vault = std::env::temp_dir().join(format!("syz_wasm_import_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("wasm_import");
         let state = Arc::new(AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -1081,7 +1075,6 @@ mod tests {
         assert_eq!(activities, 1);
         drop(conn);
         assert_eq!(std::fs::read_dir(vault.join("raw")).unwrap().count(), 1);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The batch a context accumulated is recomputed once when the
@@ -1095,11 +1088,10 @@ mod tests {
         use crate::state::AppState;
         use std::sync::{Arc, Mutex};
 
-        let vault = std::env::temp_dir().join(format!("syz_finish_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("finish");
         let state = Arc::new(AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -1155,7 +1147,6 @@ mod tests {
         assert_eq!(computed(&state), 2);
         // Finishing again has nothing left to do.
         assert_eq!(super::finish_invocation(&ud).monitoring_days, 0);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// A recompute that fails is logged, not lost with the counters — and
@@ -1204,14 +1195,14 @@ mod tests {
         use tauri::{Listener, Manager};
 
         let plugin_id = "com.syzify.example.paste-import";
-        let vault = std::env::temp_dir().join(format!("syz_runtime_app_{}", uuid::Uuid::new_v4()));
+        let vault = crate::test_support::ScratchDir::new("runtime_app");
         let plugin_dir = vault.join("plugins").join(plugin_id);
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::copy(paste_import_wasm(), plugin_dir.join("plugin.wasm")).unwrap();
 
         let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -1290,6 +1281,5 @@ mod tests {
         let activities: i64 = conn.query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0)).unwrap();
         assert_eq!(activities, 1);
         drop(conn);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 }

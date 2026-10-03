@@ -190,7 +190,8 @@ mod tests {
 
     #[test]
     fn parse_runkeeper_track_level_time() {
-        let tmp = std::env::temp_dir().join("tv_test_runkeeper.gpx");
+        let scratch = crate::test_support::ScratchDir::new("runkeeper");
+        let tmp = scratch.join("test_runkeeper.gpx");
         std::fs::write(&tmp, runkeeper_gpx()).unwrap();
 
         let result = parse_gpx(tmp.to_str().unwrap(), "rk").unwrap();
@@ -199,8 +200,6 @@ mod tests {
         assert!(result.start_time.is_some());
         // Trackpoint times are preserved (only the track-level <time> is stripped).
         assert!(result.trackpoints[0].t.is_some());
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
@@ -226,7 +225,8 @@ mod tests {
 
     #[test]
     fn parse_gpx_basic() {
-        let tmp = std::env::temp_dir().join("tv_test_gpx.gpx");
+        let scratch = crate::test_support::ScratchDir::new("gpx");
+        let tmp = scratch.join("test_gpx.gpx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(sample_gpx().as_bytes()).unwrap();
 
@@ -246,8 +246,6 @@ mod tests {
         assert!(tp0.t.is_some());
 
         assert!(result.start_time.is_some());
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
@@ -264,14 +262,13 @@ mod tests {
   </trk>
 </gpx>"#;
 
-        let tmp = std::env::temp_dir().join("tv_test_gpx_notitle.gpx");
+        let scratch = crate::test_support::ScratchDir::new("gpx_notitle");
+        let tmp = scratch.join("test_gpx_notitle.gpx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(gpx.as_bytes()).unwrap();
 
         let result = parse_gpx(tmp.to_str().unwrap(), "test-gpx2").unwrap();
         assert_eq!(result.title, Some("My Track".to_string()));
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
@@ -281,15 +278,14 @@ mod tests {
   <trk><trkseg></trkseg></trk>
 </gpx>"#;
 
-        let tmp = std::env::temp_dir().join("tv_test_gpx_empty.gpx");
+        let scratch = crate::test_support::ScratchDir::new("gpx_empty");
+        let tmp = scratch.join("test_gpx_empty.gpx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(gpx.as_bytes()).unwrap();
 
         let result = parse_gpx(tmp.to_str().unwrap(), "test-empty").unwrap();
         assert!(result.trackpoints.is_empty());
         assert!(result.start_time.is_none());
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

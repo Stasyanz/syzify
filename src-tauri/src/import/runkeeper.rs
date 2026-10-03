@@ -144,8 +144,7 @@ mod tests {
     #[test]
     fn imports_gpx_and_gpsless_from_zip() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_zip_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("zip_test");
         let zip_path = dir.join("export.zip");
         {
             let f = fs::File::create(&zip_path).unwrap();
@@ -170,7 +169,6 @@ mod tests {
             .unwrap();
         assert_eq!(swim, 1);
 
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -204,8 +202,7 @@ mod tests {
     #[test]
     fn duplicate_gpx_names_do_not_collapse() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_dup_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("dup");
         let zip_path = dir.join("export.zip");
         // Same base name in two folders, different content (different dates/coords).
         let a = gpx_at("2015-01-01", "55.10");
@@ -221,14 +218,12 @@ mod tests {
             .query_row("SELECT DISTINCT original_path FROM raw_file", [], |x| x.get(0))
             .unwrap();
         assert_eq!(orig, "run.gpx", "provenance is the export filename");
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn traversal_named_entry_stays_inside_temp() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_slip_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("slip");
         let zip_path = dir.join("export.zip");
         // A malicious entry name; file_name() must flatten it to evil.gpx in temp.
         write_zip(&zip_path, &[("../../../evil.gpx", gpx_at("2015-03-03", "55.40").as_bytes())]);
@@ -237,7 +232,6 @@ mod tests {
         assert_eq!(r.imported, 1, "imported as a normal flattened file");
         // Nothing escaped to the parent of the temp dir.
         assert!(!dir.parent().unwrap().join("evil.gpx").exists());
-        fs::remove_dir_all(&dir).ok();
     }
 
     /// With the (scope-gated) vault key, the GPX raw file lands in the vault
@@ -246,9 +240,7 @@ mod tests {
     #[test]
     fn import_zip_encrypts_raw_files_with_key() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_enc_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("enc");
         let zip_path = dir.join("export.zip");
         write_zip(&zip_path, &[("run.gpx", gpx_at("2015-04-04", "55.50").as_bytes())]);
 
@@ -264,14 +256,12 @@ mod tests {
         assert!(dir.join(&stored).exists());
         assert!(!dir.join(stored.trim_end_matches(".enc")).exists());
 
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn broken_csv_does_not_abort_gpx_import() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_badcsv_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("badcsv");
         let zip_path = dir.join("export.zip");
         // A valid GPX + a CSV that isn't a Runkeeper export (missing Date/Type).
         write_zip(
@@ -288,6 +278,5 @@ mod tests {
             r.failed.iter().any(|f| f.path.contains("cardioActivities")),
             "the CSV error is reported, not silently dropped: {r:?}"
         );
-        fs::remove_dir_all(&dir).ok();
     }
 }

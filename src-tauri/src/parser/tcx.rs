@@ -372,7 +372,8 @@ mod tests {
 
     #[test]
     fn parse_tcx_basic() {
-        let tmp = std::env::temp_dir().join("tv_test.tcx");
+        let scratch = crate::test_support::ScratchDir::new("tcx");
+        let tmp = scratch.join("test.tcx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(sample_tcx().as_bytes()).unwrap();
 
@@ -394,26 +395,24 @@ mod tests {
         assert_eq!(sm.total_elapsed_time_s, Some(1800.0));
         assert!(sm.avg_hr.unwrap() > 140.0);
         assert_eq!(sm.max_hr, Some(150.0));
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
     fn parse_tcx_extracts_calories() {
-        let tmp = std::env::temp_dir().join("tv_test_cal.tcx");
+        let scratch = crate::test_support::ScratchDir::new("tcx_cal");
+        let tmp = scratch.join("test_cal.tcx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(sample_tcx().as_bytes()).unwrap();
 
         let result = parse_tcx(tmp.to_str().unwrap(), "test-cal").unwrap();
         let sm = result.session_metrics.unwrap();
         assert_eq!(sm.total_calories, Some(250.0));
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
     fn parse_tcx_extracts_laps() {
-        let tmp = std::env::temp_dir().join("tv_test_laps.tcx");
+        let scratch = crate::test_support::ScratchDir::new("tcx_laps");
+        let tmp = scratch.join("test_laps.tcx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(sample_tcx().as_bytes()).unwrap();
 
@@ -424,20 +423,17 @@ mod tests {
         assert_eq!(lap.total_elapsed_time_s, Some(1800.0));
         assert_eq!(lap.total_calories, Some(250.0));
         assert!(lap.start_time.is_some());
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
     fn parse_tcx_empty_file() {
-        let tmp = std::env::temp_dir().join("tv_test_empty.tcx");
+        let scratch = crate::test_support::ScratchDir::new("tcx_empty");
+        let tmp = scratch.join("test_empty.tcx");
         let mut f = std::fs::File::create(&tmp).unwrap();
         f.write_all(b"<?xml version=\"1.0\"?><TrainingCenterDatabase></TrainingCenterDatabase>").unwrap();
 
         let result = parse_tcx(tmp.to_str().unwrap(), "test-empty").unwrap();
         assert!(result.trackpoints.is_empty());
         assert!(result.session_metrics.is_none());
-
-        std::fs::remove_file(&tmp).ok();
     }
 }

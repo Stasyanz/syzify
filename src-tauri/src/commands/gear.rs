@@ -150,10 +150,13 @@ mod tests {
     use crate::models::gear::{GearInput, GearKind};
     use std::sync::{Arc, Mutex};
 
-    fn test_state() -> AppState {
-        AppState {
+    /// The guard comes first in the tuple: tuple bindings drop in reverse
+    /// order, so the state lets go of the path before the directory goes.
+    fn test_state() -> (crate::test_support::ScratchDir, AppState) {
+        let vault = crate::test_support::ScratchDir::new("gear_cmd");
+        let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: std::env::temp_dir(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -161,7 +164,8 @@ mod tests {
             services_started: Mutex::new(false),
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
-        }
+        };
+        (vault, state)
     }
 
     fn bike(name: &str, purchased: Option<&str>) -> GearInput {
@@ -190,7 +194,7 @@ mod tests {
 
     #[test]
     fn an_activity_is_put_on_gear_unless_it_is_a_multisport_whole_or_the_gear_is_retired() {
-        let state = test_state();
+        let (_vault, state) = test_state();
         let (road, old) = {
             let conn = state.db.lock().unwrap();
             let road = db::gear::insert(&conn, &bike("Road", None)).unwrap();
@@ -220,7 +224,7 @@ mod tests {
 
     #[test]
     fn history_assignment_counts_and_refuses_a_retired_item() {
-        let state = test_state();
+        let (_vault, state) = test_state();
         let (road, old) = {
             let conn = state.db.lock().unwrap();
             let old = db::gear::insert(&conn, &bike("Old", None)).unwrap();
@@ -239,7 +243,7 @@ mod tests {
 
     #[test]
     fn filtered_assignment_counts_and_refuses_a_retired_item() {
-        let state = test_state();
+        let (_vault, state) = test_state();
         let (road, old) = {
             let conn = state.db.lock().unwrap();
             let old = db::gear::insert(&conn, &bike("Old", None)).unwrap();

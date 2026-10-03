@@ -122,7 +122,7 @@ mod tests {
     /// filesystems); a volume with an unknown name yields nothing.
     #[test]
     fn a_garmin_volume_yields_activity_and_monitor_files() {
-        let root = std::env::temp_dir().join(format!("syzify-volumes-{}", uuid::Uuid::new_v4()));
+        let root = crate::test_support::ScratchDir::new("volumes");
         let garmin = root.join("GARMIN");
         std::fs::create_dir_all(garmin.join("GARMIN/Activity")).unwrap();
         std::fs::create_dir_all(garmin.join("GARMIN/Monitor")).unwrap();
@@ -144,6 +144,5 @@ mod tests {
         std::fs::create_dir_all(other.join("GARMIN/Activity")).unwrap();
         std::fs::write(other.join("GARMIN/Activity/ride.fit"), b"x").unwrap();
         assert!(check_volume_for_workouts(&other).is_empty());
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }

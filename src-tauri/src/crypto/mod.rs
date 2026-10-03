@@ -634,6 +634,7 @@ mod tests {
     /// failure are fully paired with their callback (≙ DB update); the failing
     /// file and everything after stay untouched plaintext.
     #[test]
+    #[cfg(unix)]
     fn bulk_encrypt_partial_failure_is_consistent() {
         use std::os::unix::fs::PermissionsExt;
 

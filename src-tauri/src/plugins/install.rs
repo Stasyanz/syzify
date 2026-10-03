@@ -140,10 +140,13 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn test_state() -> AppState {
-        AppState {
+    /// The guard comes first in the tuple: tuple bindings drop in reverse
+    /// order, so the state lets go of the path before the directory goes.
+    fn test_state() -> (crate::test_support::ScratchDir, AppState) {
+        let vault = crate::test_support::ScratchDir::new("install");
+        let state = AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: std::env::temp_dir(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -151,7 +154,8 @@ mod tests {
             services_started: Mutex::new(false),
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
-        }
+        };
+        (vault, state)
     }
 
     fn store(state: &AppState, id: &str, signed: bool, key: Option<&str>) {
@@ -180,7 +184,7 @@ mod tests {
     /// manifest without `data:secret` drops them, a signed upgrade keeps them.
     #[test]
     fn register_drops_secrets_on_unsigned_reinstall_or_a_manifest_without_the_permission() {
-        let state = test_state();
+        let (_vault, state) = test_state();
         let with = r#"{"id":"com.sync","name":"S","version":"1.0.0","permissions":["data:secret"]}"#;
         let without = r#"{"id":"com.sync","name":"S","version":"1.1.0"}"#;
         let secret = |state: &AppState| {
@@ -215,7 +219,7 @@ mod tests {
 
     #[test]
     fn replace_rules_block_author_and_trust_hijack() {
-        let state = test_state();
+        let (_vault, state) = test_state();
 
         // Fresh install: anything goes.
         assert!(check_replace_allowed(&state, "com.fresh", false, None).is_ok());

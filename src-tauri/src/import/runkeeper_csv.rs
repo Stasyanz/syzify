@@ -208,8 +208,7 @@ mod tests {
     #[test]
     fn imports_gpsless_rows_and_skips_gpx_rows() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_csv_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("csv");
         let path = dir.join("cardioActivities.csv");
         std::fs::write(&path, CSV).unwrap();
 
@@ -239,14 +238,12 @@ mod tests {
         assert_eq!(swims.2, "Felt, great"); // quoted comma preserved
         assert_eq!(swims.3, "swim");
 
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn unterminated_quote_is_reported() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_q_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("q");
         let path = dir.join("c.csv");
         // Notes field opens a quote that is never closed → truncated tail.
         std::fs::write(
@@ -261,14 +258,12 @@ mod tests {
             r.failed.iter().any(|f| f.reason.contains("quoted field")),
             "truncated CSV must be reported: {r:?}"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn handles_bom_and_non_utf8() {
         let conn = db::test_db();
-        let dir = std::env::temp_dir().join(format!("rk_bom_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("bom");
         let path = dir.join("c.csv");
         // Leading UTF-8 BOM + an invalid byte (0xFF) inside a Notes field.
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
@@ -283,7 +278,6 @@ mod tests {
         // Must not error on the BOM/invalid byte, and must import the row.
         let r = import_runkeeper_csv(&conn, path.to_str().unwrap()).unwrap();
         assert_eq!(r.imported, 1, "{r:?}");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

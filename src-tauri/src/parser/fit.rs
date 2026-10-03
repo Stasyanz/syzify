@@ -1458,14 +1458,13 @@ mod tests {
 
     #[test]
     fn parse_fit_invalid_binary_returns_error() {
-        let tmp = std::env::temp_dir().join("tv_test_bad.fit");
+        let scratch = crate::test_support::ScratchDir::new("fit_bad");
+        let tmp = scratch.join("test_bad.fit");
         std::fs::write(&tmp, b"not a valid FIT file").unwrap();
 
         let result = parse_fit(tmp.to_str().unwrap(), "test-bad");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse FIT"));
-
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

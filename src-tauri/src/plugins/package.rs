@@ -138,8 +138,7 @@ mod tests {
         let wasm = b"\0asm reference";
         let (sig, pk) = sign(manifest, wasm);
 
-        let dir = std::env::temp_dir().join(format!("syzify_pkg_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("pkg");
         let path = dir.join("test.syzify-ext");
         {
             let f = File::create(&path).unwrap();
@@ -157,7 +156,6 @@ mod tests {
         let pkg = open_package(&path).unwrap();
         assert_eq!(pkg.wasm, wasm);
         assert!(verify(&pkg.manifest_json, &pkg.wasm, &pkg.signature_hex, &pk).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -168,8 +166,7 @@ mod tests {
         // 300 KiB of 'x' — compresses to almost nothing in the zip, but would
         // decompress past MAX_MANIFEST; read_capped must reject it via take().
         let big = "x".repeat(MAX_MANIFEST as usize + 10);
-        let dir = std::env::temp_dir().join(format!("syzify_pkg_big_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::ScratchDir::new("pkg_big");
         let path = dir.join("big.syzify-ext");
         {
             let f = File::create(&path).unwrap();
@@ -186,7 +183,6 @@ mod tests {
 
         let err = open_package(&path).unwrap_err();
         assert!(err.contains("exceeds"), "expected size-limit error, got: {err}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

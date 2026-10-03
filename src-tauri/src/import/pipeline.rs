@@ -1508,7 +1508,7 @@ mod tests {
     #[test]
     fn content_duplicate_import_links_its_raw_file() {
         let conn = crate::db::test_db();
-        let tmp = std::env::temp_dir().join(format!("syz_dup_link_{}", uuid::Uuid::new_v4()));
+        let tmp = crate::test_support::ScratchDir::new("dup_link");
         let vault = tmp.join("vault");
         fs::create_dir_all(vault.join("raw")).unwrap();
 
@@ -1553,7 +1553,6 @@ mod tests {
             owners
         );
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Imports are read whole into memory — the size gate must reject
@@ -1714,18 +1713,15 @@ mod tests {
         assert_eq!(m.avg_cadence, Some(175.0));
     }
 
-    fn fresh_vault(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn fresh_vault(name: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(name)
     }
 
     #[test]
     fn import_monitoring_file_stores_samples_and_recomputes_its_day() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring");
+        let vault_dir = fresh_vault("monitoring");
         // An activity pins the device's clock to +03:00 — without one the
         // machine's zone would decide, and under UTC (the CI runner) the
         // fixture's RHR row lands on a second day.
@@ -1784,7 +1780,7 @@ mod tests {
 
     #[test]
     fn expand_paths_replaces_folders_with_their_importable_files() {
-        let root = fresh_vault("tv_test_expand_paths");
+        let root = fresh_vault("expand_paths");
         let deep = root.join("a").join("b").join("c").join("d");
         std::fs::create_dir_all(&deep).unwrap();
         for (rel, body) in [
@@ -1835,7 +1831,7 @@ mod tests {
     /// nesting), an unreadable root is an error.
     #[test]
     fn folder_files_lists_sorted_and_treats_empty_as_empty() {
-        let root = std::env::temp_dir().join(format!("syzify-folder-files-{}", Uuid::new_v4()));
+        let root = crate::test_support::ScratchDir::new("folder_files");
         fs::create_dir_all(root.join("a/b/c/d/e/f")).unwrap();
         assert_eq!(folder_files(&root).unwrap(), Vec::<String>::new());
         // Created out of alphabetical order, so the sort has to do something.
@@ -1854,7 +1850,6 @@ mod tests {
             ]
         );
         assert!(folder_files(&root.join("missing")).unwrap_err().starts_with("Failed to read folder"));
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// The watcher and the scan agree on what is inside a watch folder:
@@ -1881,7 +1876,7 @@ mod tests {
     #[test]
     fn an_unreadable_subfolder_is_skipped_not_fatal() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("syzify-unreadable-sub-{}", Uuid::new_v4()));
+        let root = crate::test_support::ScratchDir::new("unreadable_sub");
         fs::create_dir_all(root.join("Activity")).unwrap();
         fs::create_dir_all(root.join(".Trashes")).unwrap();
         fs::write(root.join("Activity/ride.fit"), b"x").unwrap();
@@ -1896,12 +1891,11 @@ mod tests {
             assert_eq!(found.unwrap(), vec![root.join("Activity/ride.fit").to_str().unwrap().to_string()]);
             assert_eq!((files.len(), failed.len()), (1, 0));
         }
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn expand_paths_refuses_a_folder_over_the_file_cap() {
-        let root = fresh_vault("tv_test_expand_cap");
+        let root = fresh_vault("expand_cap");
         for i in 0..4 {
             std::fs::write(root.join(format!("{i}.fit")), "x").unwrap();
         }
@@ -1923,7 +1917,7 @@ mod tests {
         assert!(failed[0].reason.contains("No workout"));
         // The file cap fires in a subfolder as much as in the root, and the
         // files collected before it are dropped with the folder.
-        let nested = fresh_vault("tv_test_expand_cap_nested");
+        let nested = fresh_vault("expand_cap_nested");
         std::fs::create_dir_all(nested.join("sub")).unwrap();
         std::fs::write(nested.join("0.fit"), "x").unwrap();
         for i in 0..4 {
@@ -1937,7 +1931,7 @@ mod tests {
 
     #[test]
     fn expand_paths_names_empty_and_unreadable_folders_and_follows_a_root_symlink() {
-        let root = fresh_vault("tv_test_expand_empty");
+        let root = fresh_vault("expand_empty");
         std::fs::write(root.join("README.txt"), "x").unwrap();
         let (files, failed) = expand_paths(&[root.to_str().unwrap().to_string()]);
         assert!(files.is_empty());
@@ -1949,17 +1943,17 @@ mod tests {
         #[cfg(unix)]
         {
             // A symlink TO the dropped folder is the folder.
-            let real = fresh_vault("tv_test_expand_symlink_root");
+            let real = fresh_vault("expand_symlink_root");
             std::fs::write(real.join("ride.fit"), "x").unwrap();
-            let link = std::env::temp_dir().join("tv_test_expand_symlink_link");
-            let _ = std::fs::remove_file(&link);
+            let link_home = crate::test_support::ScratchDir::new("expand_symlink_link");
+            let link = link_home.join("link");
             std::os::unix::fs::symlink(&real, &link).unwrap();
             let (files, failed) = expand_paths(&[link.to_str().unwrap().to_string()]);
             assert_eq!((files.len(), failed.len()), (1, 0));
             assert!(files[0].ends_with("ride.fit"));
             // An unreadable folder reports the OS error instead of silence.
             use std::os::unix::fs::PermissionsExt;
-            let locked = fresh_vault("tv_test_expand_locked");
+            let locked = fresh_vault("expand_locked");
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
             // root reads anything — the check is meaningless there (a
             // containerised runner), so only assert when the lock holds.
@@ -1981,7 +1975,7 @@ mod tests {
     fn a_dropped_folder_of_monitor_files_imports_them_all() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_folder_drop");
+        let vault_dir = fresh_vault("folder_drop");
         pin_clock_plus3(&conn);
         let folder = vault_dir.join("Monitor");
         std::fs::create_dir_all(&folder).unwrap();
@@ -2009,7 +2003,7 @@ mod tests {
     fn two_monitor_files_of_one_day_recompute_that_day_once() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_batch");
+        let vault_dir = fresh_vault("monitoring_batch");
         pin_clock_plus3(&conn);
         let midnight = 1_788_555_600;
         // Two files of the same day from two serials (different hashes).
@@ -2032,7 +2026,7 @@ mod tests {
     fn monitor_files_are_encrypted_under_the_activities_key() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_enc");
+        let vault_dir = fresh_vault("monitoring_enc");
         pin_clock_plus3(&conn);
         let path = vault_dir.join("M9500000.FIT");
         std::fs::write(&path, monitoring_fixture(424242, 1_788_555_600)).unwrap();
@@ -2063,7 +2057,7 @@ mod tests {
         use flate2::Compression;
         use std::io::Write;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_gz");
+        let vault_dir = fresh_vault("monitoring_gz");
         pin_clock_plus3(&conn);
         let path = vault_dir.join("M9500000.FIT.gz");
         let mut enc = GzEncoder::new(Vec::new(), Compression::default());
@@ -2083,7 +2077,7 @@ mod tests {
     fn a_failed_store_leaves_no_raw_file_row_or_file_behind() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_store_fail");
+        let vault_dir = fresh_vault("monitoring_store_fail");
         // Make the readings unstorable; the raw_file row and the file must
         // not survive, or the hash would block a re-import forever.
         conn.execute_batch("DROP TABLE monitoring_sample").unwrap();
@@ -2108,7 +2102,7 @@ mod tests {
     fn empty_monitoring_file_is_skipped_not_failed_and_leaves_nothing_behind() {
         use crate::parser::fit_builder::empty_monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_empty");
+        let vault_dir = fresh_vault("monitoring_empty");
         let path = vault_dir.join("M9400000.FIT");
         std::fs::write(&path, empty_monitoring_fixture(1, 1_788_469_200)).unwrap();
         let result =
@@ -2122,7 +2116,7 @@ mod tests {
     fn a_fit_file_of_another_type_is_refused_with_its_type() {
         use crate::parser::fit_builder::settings_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_settings_fit");
+        let vault_dir = fresh_vault("settings_fit");
         let path = vault_dir.join("SETTINGS.FIT");
         std::fs::write(&path, settings_fixture(1, 1_788_469_200)).unwrap();
         let result =
@@ -2135,7 +2129,7 @@ mod tests {
     fn monitoring_takes_the_nearest_activitys_offset() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_test_vault_monitoring_tz");
+        let vault_dir = fresh_vault("monitoring_tz");
         // An activity two days earlier at +03:00 pins the device's clock.
         conn.execute(
             "INSERT INTO activity (id, start_time, sport_type) VALUES ('a1', '2026-09-03T07:35:00+03:00', 'ride')",
@@ -2206,9 +2200,7 @@ mod tests {
     #[test]
     fn import_gpx_file_integration() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_import");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("import");
 
         // Write a sample GPX file
         let gpx_path = vault_dir.join("test_run.gpx");
@@ -2319,15 +2311,12 @@ mod tests {
         assert_eq!(raws.len(), 1);
         assert_eq!(raws[0].format, "gpx");
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn import_duplicate_file_skipped_by_hash() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_dedup");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("dedup");
 
         let gpx_path = vault_dir.join("run.gpx");
         std::fs::write(&gpx_path, r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2348,15 +2337,12 @@ mod tests {
         assert_eq!(r2.skipped, 1);
         assert_eq!(r2.imported, 0);
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn import_tcx_file_integration() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_tcx");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("tcx");
 
         let tcx_path = vault_dir.join("test_run.tcx");
         std::fs::write(&tcx_path, r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2395,15 +2381,12 @@ mod tests {
         // Session metrics from TCX should be populated
         assert!(activities[0].distance_m.is_some());
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn import_unsupported_extension_fails() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_bad_ext");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("bad_ext");
 
         let bad_path = vault_dir.join("data.csv");
         std::fs::write(&bad_path, "not a workout").unwrap();
@@ -2413,27 +2396,21 @@ mod tests {
         assert_eq!(result.failed.len(), 1);
         assert!(result.failed[0].reason.contains("Unsupported format"));
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn import_nonexistent_file_fails() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_nofile");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("nofile");
 
         let result = import_files(&conn, &vault_dir, &["/nonexistent/path.gpx".to_string()], None, |_, _, _| {});
         assert_eq!(result.failed.len(), 1);
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn store_raw_file_creates_dir_and_writes() {
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_copy");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("copy");
 
         let dest = store_raw_file(&vault_dir, b"gpx content", "file-123", "gpx").unwrap();
         assert_eq!(dest, "raw/file-123.gpx");
@@ -2442,15 +2419,12 @@ mod tests {
             b"gpx content"
         );
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn import_with_encryption_creates_enc_file() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_enc_import");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("enc_import");
 
         let gpx_path = vault_dir.join("enc_test.gpx");
         std::fs::write(&gpx_path, r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2490,14 +2464,12 @@ mod tests {
         assert!(enc_data.len() > 12);
         assert_ne!(&enc_data[..5], b"<?xml");
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn enable_disable_encryption_roundtrip() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_enc_roundtrip");
-        let _ = std::fs::remove_dir_all(&vault_dir);
+        let vault_dir = crate::test_support::ScratchDir::new("enc_roundtrip");
         std::fs::create_dir_all(vault_dir.join("raw")).unwrap();
 
         // Import a file first (no encryption)
@@ -2550,7 +2522,6 @@ mod tests {
         assert!(!raws[0].path_in_vault.ends_with(".enc"));
         assert!(vault_dir.join(&raws[0].path_in_vault).exists());
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     /// A zip in memory with the given entries (a name and its bytes).
@@ -2630,7 +2601,7 @@ mod tests {
     fn a_zip_imports_each_entry_like_a_file_of_its_own_and_dedups_by_entry() {
         use crate::parser::fit_builder::monitoring_fixture;
         let conn = crate::db::test_db();
-        let vault = fresh_vault("tv_test_vault_zip");
+        let vault = fresh_vault("zip");
         let midnight = 1_788_555_600;
         let zip = zip_of(&[
             ("ride.gpx", ZIP_GPX.as_bytes()),
@@ -2664,7 +2635,6 @@ mod tests {
         assert_eq!((result.imported, result.skipped, result.monitoring_files), (0, 2, 0));
         assert!(batch.days.is_empty());
         assert!(result.failed.is_empty());
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// Entry names go through the plugin's own name gate, unreadable
@@ -2674,7 +2644,7 @@ mod tests {
     fn zip_entry_names_are_gated_and_unreadable_entries_named() {
         use std::io::Write;
         let conn = crate::db::test_db();
-        let vault = fresh_vault("tv_test_vault_zip_names");
+        let vault = fresh_vault("zip_names");
         let zip = zip_of(&[
             ("dir/", b""),
             ("..", b"x"),
@@ -2715,13 +2685,12 @@ mod tests {
         // Directories only: not zeros, one failed line.
         let (r, _) = archive_result(&conn, &vault, "dirs.zip", &zip_of(&[("a/", b""), ("b/", b"")]), ArchiveLimits::default());
         assert_eq!(r.failed.iter().map(|f| f.reason.as_str()).collect::<Vec<_>>(), ["Archive holds no importable entries"]);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
     fn a_zip_is_bounded_and_a_bad_one_is_one_failed_entry() {
         let conn = crate::db::test_db();
-        let vault = fresh_vault("tv_test_vault_zip_bounds");
+        let vault = fresh_vault("zip_bounds");
         let reasons = |r: &ImportResult| r.failed.iter().map(|f| f.reason.clone()).collect::<Vec<_>>();
 
         let (r, _) = archive_result(&conn, &vault, "junk.zip", b"not a zip at all", ArchiveLimits::default());
@@ -2790,7 +2759,6 @@ mod tests {
         );
         assert_eq!((r.imported, r.failed.len()), (0, 1));
         assert!(r.failed[0].reason.starts_with("2 entries not imported"), "{:?}", r.failed);
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -2800,9 +2768,7 @@ mod tests {
         use std::io::Write;
 
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_gz");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("gz");
 
         let gpx_content = br#"<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
@@ -2858,7 +2824,6 @@ mod tests {
             raws[0].path_in_vault
         );
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
@@ -2903,9 +2868,7 @@ mod tests {
         // End-to-end: an over-limit .gpx.gz is reported as a failed file and
         // creates no activity.
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_gz_bomb");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("gz_bomb");
 
         // 128 MiB of zeros compresses to ~130 KB but blows past the cap.
         let gz_path = vault_dir.join("bomb.gpx.gz");
@@ -2929,12 +2892,12 @@ mod tests {
         .unwrap();
         assert!(activities.is_empty());
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     #[test]
     fn maybe_decompress_gz_rejects_unknown_inner_ext() {
-        let tmp = std::env::temp_dir().join("test.csv.gz");
+        let scratch = crate::test_support::ScratchDir::new("csv_gz");
+        let tmp = scratch.join("test.csv.gz");
         // Write a minimal gzip
         {
             use flate2::write::GzEncoder;
@@ -2947,7 +2910,7 @@ mod tests {
         }
         let result = import_files(
             &crate::db::test_db(),
-            &std::env::temp_dir(),
+            &scratch,
             &[tmp.to_str().unwrap().to_string()],
             None,
             |_, _, _| {},
@@ -2955,15 +2918,12 @@ mod tests {
         assert_eq!(result.imported, 0);
         assert_eq!(result.failed.len(), 1);
         assert!(result.failed[0].reason.contains("Unsupported format"));
-        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
     fn import_empty_fit_file_skipped() {
         let conn = crate::db::test_db();
-        let vault_dir = std::env::temp_dir().join("tv_test_vault_empty_fit");
-        let _ = std::fs::remove_dir_all(&vault_dir);
-        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = crate::test_support::ScratchDir::new("empty_fit");
 
         // Minimal valid FIT file header (14 bytes) with no data records
         // This simulates a non-activity FIT file (e.g. Strava settings/segments)
@@ -2987,7 +2947,6 @@ mod tests {
         ).unwrap();
         assert_eq!(activities.len(), 0);
 
-        std::fs::remove_dir_all(&vault_dir).ok();
     }
 
     /// Smoke: import one real file into a throwaway vault and print the
@@ -2997,7 +2956,7 @@ mod tests {
     fn smoke_import_real_file() {
         let Ok(path) = std::env::var("SYZIFY_IMPORT_FILE") else { return };
         let conn = crate::db::test_db();
-        let vault_dir = fresh_vault("tv_smoke_import_real");
+        let vault_dir = fresh_vault("smoke_import_real");
         let result = import_files(&conn, &vault_dir, &[path], None, |_, _, _| {});
         eprintln!("{result:?}");
     }

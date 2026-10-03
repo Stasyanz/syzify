@@ -624,10 +624,8 @@ mod tests {
   </trkseg></trk>
 </gpx>"#;
 
-    fn fresh_vault(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("syz_host_import_{tag}_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn fresh_vault(tag: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(&format!("host_import_{tag}"))
     }
 
     fn app_state(vault: &Path, key: Option<[u8; 32]>) -> Arc<AppState> {
@@ -648,11 +646,10 @@ mod tests {
     /// one (any scope), refused while locked, refused without a vault.
     #[test]
     fn secrets_follow_the_vault_key_and_the_lock() {
-        let vault = std::env::temp_dir().join(format!("syz_secret_gate_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("secret_gate");
         let state = Arc::new(AppState {
             db: Arc::new(Mutex::new(crate::db::test_db())),
-            vault_path: vault.clone(),
+            vault_path: vault.to_path_buf(),
             encryption_key: Mutex::new(None),
             watcher_handle: Mutex::new(None),
             db_locked: Mutex::new(false),
@@ -739,7 +736,6 @@ mod tests {
         // No vault at all: not available.
         let bare = PluginCtx::new(state.db.clone(), "com.test", vec![Permission::DataSecret]);
         assert!(key_seen(&bare).unwrap_err().contains("not available"));
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     /// The gear host surface (#169): the registry under `read:activities`,
@@ -917,7 +913,6 @@ mod tests {
         assert_eq!(bad.failed[0].path, "broken.gpx");
         assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 2, "run.gpx and the zip's other.gpx");
 
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -959,7 +954,6 @@ mod tests {
         assert_eq!(finished.monitoring_range, Some(("2026-09-05".to_string(), "2026-09-05".to_string())));
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day WHERE computed_at IS NOT NULL"), 1);
 
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -1006,7 +1000,6 @@ mod tests {
         assert!(raw_files(&vault).is_empty(), "nothing may reach raw/");
         assert!(state.vault_flight.try_begin().is_some(), "the slot is released after a refusal");
 
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -1027,7 +1020,6 @@ mod tests {
         assert_eq!(r.imported, 1);
         let files = raw_files(&vault);
         assert!(files.iter().all(|f| f.ends_with(".enc")), "encrypted: {files:?}");
-        let _ = std::fs::remove_dir_all(&vault);
 
         // Key in memory but the activities scope off: plaintext, or the file
         // would be stranded as ciphertext after the scope is disabled.
@@ -1038,7 +1030,6 @@ mod tests {
         assert_eq!(r.imported, 1);
         let files = raw_files(&vault);
         assert!(files.iter().all(|f| f.ends_with(".gpx")), "plaintext: {files:?}");
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]

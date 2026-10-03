@@ -118,11 +118,8 @@ fn swap(tmp: &Path, dest: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("syz_dbcrypt_{}", name));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch(name: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(&format!("dbcrypt_{name}"))
     }
 
     fn make_plain_db(path: &Path) {
@@ -156,8 +153,6 @@ mod tests {
         assert_eq!(ver, 22);
         drop(conn);
         assert!(open_with_key(&db, &[8u8; 32]).is_err());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A crash between writing the tmp dump and the swap strands
@@ -182,8 +177,6 @@ mod tests {
         assert!(!remove_stale_migrating(&db));
         // The encrypted database is untouched and still opens with the key.
         assert!(open_with_key(&db, &key).is_ok());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -204,7 +197,5 @@ mod tests {
         assert_eq!(ver, 22);
         let bytes = fs::read(&db).unwrap();
         assert_eq!(&bytes[..16], b"SQLite format 3\0");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }

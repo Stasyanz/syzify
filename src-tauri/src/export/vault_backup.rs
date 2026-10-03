@@ -518,13 +518,10 @@ mod tests {
 
     #[test]
     fn backup_and_restore_roundtrip() {
-        let tmp = std::env::temp_dir().join("tv_backup_test");
+        let tmp = crate::test_support::ScratchDir::new("backup_test");
         let vault = tmp.join("vault");
         let restored = tmp.join("restored");
         let backup_file = tmp.join("backup.zip");
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(vault.join("raw")).unwrap();
         fs::create_dir_all(vault.join("photos/thumbs")).unwrap();
         fs::create_dir_all(&restored).unwrap();
@@ -566,9 +563,6 @@ mod tests {
             fs::read_to_string(restored.join("photos/thumbs/abc.jpg")).unwrap(),
             "thumb bytes"
         );
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The stale-lock lockout and INV-1 scenarios: restoring a PLAINTEXT
@@ -577,10 +571,9 @@ mod tests {
     /// salt staying together with the `.enc` files it decrypts.
     #[test]
     fn quarantine_moves_lock_with_its_ciphertext() {
-        let tmp = std::env::temp_dir().join(format!("tv_quarantine_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("quarantine");
         let vault = tmp.join("vault");
         let backup_file = tmp.join("backup.zip");
-        let _ = fs::remove_dir_all(&tmp);
 
         // A plaintext backup (no vault.lock).
         let src = tmp.join("src");
@@ -626,7 +619,6 @@ mod tests {
         );
         assert!(!vault.join(".backup-snapshot").exists());
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Symlinks in the vault are skipped, not followed: a link cycle used to
@@ -637,10 +629,9 @@ mod tests {
     fn backup_skips_symlinks_instead_of_following_them() {
         use std::os::unix::fs::symlink;
 
-        let tmp = std::env::temp_dir().join(format!("tv_backup_symlink_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("backup_symlink");
         let vault = tmp.join("vault");
         let backup_file = tmp.join("backup.zip");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
 
         // A cycle (raw/loop → raw) and an out-of-vault link.
@@ -663,7 +654,6 @@ mod tests {
             names
         );
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// dir_size must mirror the archive walk: symlinks contribute nothing.
@@ -674,9 +664,8 @@ mod tests {
     fn dir_size_ignores_symlinks() {
         use std::os::unix::fs::symlink;
 
-        let tmp = std::env::temp_dir().join(format!("tv_dirsize_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("dirsize");
         let raw = tmp.join("raw");
-        let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&raw).unwrap();
         fs::write(raw.join("a.fit"), vec![1u8; 100]).unwrap();
 
@@ -690,22 +679,19 @@ mod tests {
 
         assert_eq!(dir_size(&raw), plain, "symlinks must not add bytes or recurse");
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A fresh/empty vault has nothing to preserve: no quarantine dir appears.
     #[test]
     fn quarantine_on_empty_vault_is_none() {
-        let tmp = std::env::temp_dir().join(format!("tv_quarantine_empty_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("quarantine_empty");
         let vault = tmp.join("vault");
-        let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&vault).unwrap();
 
         assert_eq!(quarantine_current_vault(&vault).unwrap(), None);
         // Nothing created either.
         assert_eq!(fs::read_dir(&vault).unwrap().count(), 0);
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     fn make_vault(dir: &Path) {
@@ -716,10 +702,9 @@ mod tests {
 
     #[test]
     fn backup_produces_valid_archive() {
-        let tmp = std::env::temp_dir().join("tv_backup_valid");
+        let tmp = crate::test_support::ScratchDir::new("backup_valid");
         let vault = tmp.join("vault");
         let backup_file = tmp.join("backup.zip");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
 
         create_backup(&vault, &backup_file).unwrap();
@@ -738,17 +723,15 @@ mod tests {
         // No leftover .part next to the final file.
         assert!(!part_path(&backup_file).exists());
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn progress_reaches_total() {
         use std::cell::Cell;
 
-        let tmp = std::env::temp_dir().join("tv_backup_progress");
+        let tmp = crate::test_support::ScratchDir::new("backup_progress");
         let vault = tmp.join("vault");
         let backup_file = tmp.join("backup.zip");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
         // Add more raw bytes so total > 0 and the callback fires.
         fs::write(vault.join("raw/big.fit"), vec![7u8; 1_000_000]).unwrap();
@@ -767,7 +750,6 @@ mod tests {
         assert_eq!(processed, total, "final progress must reach 100%");
         assert!(calls.get() >= 1, "callback must fire at least once");
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -775,9 +757,8 @@ mod tests {
         use std::io::Write as _;
         use zip::write::FileOptions;
 
-        let tmp = std::env::temp_dir().join(format!("tv_zipslip_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("zipslip");
         let vault = tmp.join("vault");
-        let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&vault).unwrap();
 
         // Craft a malicious archive containing an absolute path. A naive
@@ -803,14 +784,12 @@ mod tests {
             "file must NOT be written outside the vault"
         );
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn failed_backup_leaves_no_dest_or_part() {
-        let tmp = std::env::temp_dir().join("tv_backup_fail");
+        let tmp = crate::test_support::ScratchDir::new("backup_fail");
         let vault = tmp.join("vault");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
 
         // Destination inside a non-existent directory -> writing the .part fails.
@@ -824,7 +803,6 @@ mod tests {
             "failed backup must not leave a .part file"
         );
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// validate_backup accepts a real archive and rejects a bad/missing one —
@@ -832,11 +810,10 @@ mod tests {
     /// DB connection, so a bad archive fails while the app is still working.
     #[test]
     fn validate_backup_accepts_valid_rejects_garbage() {
-        let tmp = std::env::temp_dir().join("tv_validate_backup");
+        let tmp = crate::test_support::ScratchDir::new("validate_backup");
         let vault = tmp.join("vault");
         let good = tmp.join("good.zip");
         let bad = tmp.join("bad.zip");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
         create_backup(&vault, &good).unwrap();
         fs::write(&bad, b"not a zip at all").unwrap();
@@ -845,7 +822,6 @@ mod tests {
         assert!(validate_backup(&bad).is_err());
         assert!(validate_backup(&tmp.join("missing.zip")).is_err());
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// "Opens as a zip" is not enough: restoring a random zip (a Runkeeper
@@ -857,9 +833,7 @@ mod tests {
         use std::io::Write as _;
         use zip::write::FileOptions;
 
-        let tmp = std::env::temp_dir().join(format!("tv_validate_deep_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = crate::test_support::ScratchDir::new("validate_deep");
         let opts: FileOptions<'_, ()> = FileOptions::default();
 
         // A perfectly valid zip that is not a vault backup (no vault.db).
@@ -887,7 +861,6 @@ mod tests {
         let err = validate_backup(&slippery).unwrap_err();
         assert!(err.contains("Unsafe path"), "got: {}", err);
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The restore zip-bomb gate: a huge declared total from a small archive
@@ -914,9 +887,7 @@ mod tests {
         use std::io::Write as _;
         use zip::write::FileOptions;
 
-        let tmp = std::env::temp_dir().join(format!("tv_validate_bomb_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = crate::test_support::ScratchDir::new("validate_bomb");
 
         let bomb = tmp.join("bomb.zip");
         {
@@ -940,7 +911,6 @@ mod tests {
         // The same archive passes with the real floor (4 MiB is harmless).
         assert!(validate_backup(&bomb).is_ok());
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Header sizes are attacker-controlled: an entry whose stream produces
@@ -963,9 +933,8 @@ mod tests {
     /// with the prefix, not other vault entries.
     #[test]
     fn pre_restore_dirs_are_listed() {
-        let tmp = std::env::temp_dir().join(format!("tv_prerestore_list_{}", std::process::id()));
+        let tmp = crate::test_support::ScratchDir::new("prerestore_list");
         let vault = tmp.join("vault");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
 
         assert!(list_pre_restore_dirs(&vault).is_empty());
@@ -988,19 +957,16 @@ mod tests {
         assert!(list_pre_restore_dirs(&vault)
             .contains(&q.file_name().unwrap().to_string_lossy().to_string()));
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn stale_part_is_replaced_by_successful_backup() {
-        let tmp = std::env::temp_dir().join("tv_backup_stale");
+        let tmp = crate::test_support::ScratchDir::new("backup_stale");
         let vault = tmp.join("vault");
         let backup_file = tmp.join("backup.zip");
-        let _ = fs::remove_dir_all(&tmp);
         make_vault(&vault);
 
         // Simulate a corrupt leftover from a previously interrupted run.
-        fs::create_dir_all(&tmp).unwrap();
         fs::write(part_path(&backup_file), b"garbage from a crashed run").unwrap();
 
         create_backup(&vault, &backup_file).unwrap();
@@ -1009,6 +975,5 @@ mod tests {
         let f = File::open(&backup_file).unwrap();
         ZipArchive::new(f).expect("archive must be valid after replacing stale .part");
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

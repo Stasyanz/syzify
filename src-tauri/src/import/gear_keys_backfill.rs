@@ -199,8 +199,7 @@ mod tests {
     /// marks itself done — an undecodable file changes nothing.
     #[test]
     fn run_is_once_and_waits_for_the_key() {
-        let vault = std::env::temp_dir().join(format!("syz_gearkeys_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("gearkeys");
         let state = test_state(&vault);
         stored_file(&state, "a", "raw/a.fit", b"not a fit file");
         run(&state);
@@ -217,7 +216,6 @@ mod tests {
         stored_file(&locked, "e", "raw/e.fit.enc", b"ciphertext");
         run(&locked);
         assert_eq!(flag_of(&locked), None, "deferred until unlocked");
-        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]

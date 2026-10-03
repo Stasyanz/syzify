@@ -63,8 +63,10 @@ mod tests {
 
     #[test]
     fn save_and_get_tile() {
-        let tmp = std::env::temp_dir().join("tv_tile_test");
-        let _ = fs::remove_dir_all(&tmp);
+        // The cache root does not exist yet: a read must say "no tile" and
+        // the first save must create it.
+        let scratch = crate::test_support::ScratchDir::new("tile_test");
+        let tmp = scratch.join("tiles");
 
         assert!(get_cached_tile(&tmp, "osm", 10, 500, 300).is_none());
 
@@ -78,13 +80,12 @@ mod tests {
         // Different layer should not find the tile
         assert!(get_cached_tile(&tmp, "topo", 10, 500, 300).is_none());
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn cache_size_and_clear() {
-        let tmp = std::env::temp_dir().join("tv_tile_size_test");
-        let _ = fs::remove_dir_all(&tmp);
+        let scratch = crate::test_support::ScratchDir::new("tile_size_test");
+        let tmp = scratch.join("tiles");
 
         assert_eq!(cache_size_bytes(&tmp), 0);
 
@@ -96,6 +97,5 @@ mod tests {
         clear_cache(&tmp).unwrap();
         assert_eq!(cache_size_bytes(&tmp), 0);
 
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

@@ -360,13 +360,9 @@ fn dir_size(dir: &Path) -> u64 {
 mod tests {
     use super::*;
 
-    /// Fresh scratch dir per test (mirrors vault_backup's test setup — the
-    /// project deliberately has no tempdir dev-dependency).
-    fn test_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("syz_vault_{}", name));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    /// Fresh scratch dir per test, removed with the guard.
+    fn test_dir(name: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(&format!("vault_{name}"))
     }
 
     fn make_vault(root: &Path) {
@@ -395,7 +391,6 @@ mod tests {
         assert_eq!(read_location(&cfg), None);
         fs::write(cfg.join(LOCATION_FILE), "relative/path").unwrap();
         assert_eq!(read_location(&cfg), None);
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -416,7 +411,6 @@ mod tests {
         fs::create_dir(busy.join("Syzify")).unwrap();
         fs::write(busy.join("Syzify/y.txt"), b"y").unwrap();
         assert!(resolve_target_root(&busy).is_err());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A root the marker can't hold verbatim is refused AND leaves the
@@ -441,7 +435,6 @@ mod tests {
         write_location_checked(&cfg, &good).unwrap();
         assert!(write_location_checked(&cfg, &trailing).is_err());
         assert_eq!(read_location(&cfg), Some(good));
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -456,7 +449,6 @@ mod tests {
         let sub = tmp.join("sub");
         fs::create_dir(&sub).unwrap();
         assert_eq!(normalize_path(&sub.join("../x")).unwrap(), canon.join("x"));
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Opening an existing vault accepts the vault folder or its parent
@@ -482,7 +474,6 @@ mod tests {
         assert!(err.contains("No vault found"), "{err}");
         // The refusal creates nothing.
         assert!(!empty.join("Syzify").exists());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A new vault follows the relocate placement rules, but never lands in
@@ -532,7 +523,6 @@ mod tests {
         let odd = tmp.join("odd");
         fs::create_dir_all(odd.join("vault.db")).unwrap();
         assert_eq!(resolve_new_vault_root(&odd).unwrap(), canon.join("odd/Syzify"));
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A symlink pointing into a vault must not smuggle a new vault inside
@@ -551,7 +541,6 @@ mod tests {
         let err = resolve_new_vault_root(&link.join("new")).unwrap_err();
         assert!(err.contains("inside the vault at"), "{err}");
         assert!(!vault.join("photos/Syzify").exists());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// An ancestor that can't be checked is a refusal, not a pass — the
@@ -574,7 +563,6 @@ mod tests {
             assert!(err.contains("Couldn't check"), "{err}");
         }
         assert!(!locked.join("sub").exists());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Boot-time guard: a marker pointing at a vault-less folder inside a
@@ -589,7 +577,6 @@ mod tests {
         let err = ensure_not_nested(&vault.join("Syzify")).unwrap_err();
         assert!(err.contains("inside the vault at"), "{err}");
         assert!(ensure_not_nested(&tmp.join("fresh")).is_ok());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -605,7 +592,6 @@ mod tests {
         assert!(!src.exists());
         assert_vault_contents(&target);
         assert_eq!(read_location(&cfg), Some(target));
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -620,7 +606,6 @@ mod tests {
         // Untouched on failure.
         assert_vault_contents(&src);
         assert_eq!(read_location(&cfg), None);
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -641,7 +626,6 @@ mod tests {
         assert_eq!(processed, total);
         assert_eq!(seen.borrow().last().copied(), Some((total, total)));
         assert_vault_contents(&dst);
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Progress must never overshoot the reported total, even when the size
@@ -664,7 +648,6 @@ mod tests {
         assert!(processed > stale_total);
         assert!(seen.borrow().iter().all(|&(p, t)| p <= t));
         assert_vault_contents(&dst);
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// Relocation refuses a vault containing a symlink: the rename path would
@@ -687,7 +670,6 @@ mod tests {
         assert_vault_contents(&src);
         assert_eq!(read_location(&cfg), None);
         assert!(!tmp.join("new-home").exists());
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// A symlink looping back into the source must not send the copy into
@@ -708,6 +690,5 @@ mod tests {
         copy_dir_recursive(&src, &dst, total, &mut processed, &|_, _| {}).unwrap();
         assert_vault_contents(&dst);
         assert!(!dst.join("loop").exists());
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

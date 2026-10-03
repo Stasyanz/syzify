@@ -175,9 +175,7 @@ mod tests {
     /// vault. Plaintext and unlocked vaults import normally.
     #[test]
     fn imports_are_refused_while_the_vault_is_locked() {
-        let vault = std::env::temp_dir()
-            .join(format!("syz_imp_gate_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&vault).unwrap();
+        let vault = crate::test_support::ScratchDir::new("imp_gate");
 
         // Plaintext vault (no lock): fine.
         assert!(ensure_vault_unlocked(&test_state(&vault, None)).is_ok());
