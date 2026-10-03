@@ -97,6 +97,20 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to mark trainer-ride backfill done: {}", e))?;
     }
 
+    // Virtual rides re-filed by the step above carried a geocoded name
+    // and segment efforts from their days as a ride (#190): take them off.
+    const SIMULATED_COURSE_FLAG: &str = "simulated_course_scrubbed_v1";
+    if db::settings::get_setting(conn, SIMULATED_COURSE_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        let geocoder_on = import::geocoding::geocoding_enabled(conn);
+        db::activities::scrub_simulated_course(conn, None, geocoder_on)
+            .map_err(|e| format!("Failed to scrub simulated courses: {}", e))?;
+        db::settings::set_setting(conn, SIMULATED_COURSE_FLAG, "1")
+            .map_err(|e| format!("Failed to mark simulated-course scrub done: {}", e))?;
+    }
+
     // Efforts for segments saved before the matching engine existed. New
     // segments backfill on save and new imports match on arrival, so this
     // only needs to run once.
@@ -789,5 +803,56 @@ mod tile_tests {
             assert!(url.starts_with("https://"), "{layer} → {url}");
         }
         assert!(tile_upstream_url("nope", 3, 1, 2).is_err());
+    }
+}
+
+#[cfg(test)]
+mod startup_backfill_tests {
+    use super::*;
+
+    /// The simulated-course scrub at startup (#190) follows the geocoder
+    /// switch: with it off, a virtual ride's name is the user's and stays,
+    /// while the segment efforts go; and the flag keeps it from running
+    /// again, so a name typed later is never looked at.
+    #[test]
+    fn startup_scrub_keeps_typed_names_while_the_geocoder_is_off() {
+        let conn = db::test_db();
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, location_name) VALUES ('zw', '2026-01-01T10:00:00+00:00', 'virtual_ride', 'Home trainer')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO segment (id, name, sport, source_activity_id, created_at, distance_m, start_lat, start_lon, end_lat, end_lon, min_lat, max_lat, min_lon, max_lon) VALUES ('s', 'S', 'ride', 'zw', '', 100, 0, 0, 0, 0, 0, 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx, elapsed_s, distance_m) VALUES ('s', 'zw', 0, 1, 10, 100)",
+            [],
+        )
+        .unwrap();
+
+        run_startup_backfills(&conn).unwrap();
+
+        let name: Option<String> = conn
+            .query_row("SELECT location_name FROM activity WHERE id = 'zw'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name.as_deref(), Some("Home trainer"));
+        let efforts: i64 = conn.query_row("SELECT COUNT(*) FROM segment_effort", [], |r| r.get(0)).unwrap();
+        assert_eq!(efforts, 0);
+        assert_eq!(
+            db::settings::get_setting(&conn, "simulated_course_scrubbed_v1").unwrap().as_deref(),
+            Some("1")
+        );
+
+        // The geocoder switched on later: the one-time pass is done and
+        // does not come back for the name.
+        db::settings::set_setting(&conn, import::geocoding::GEOCODING_SETTING, "true").unwrap();
+        run_startup_backfills(&conn).unwrap();
+        let name: Option<String> = conn
+            .query_row("SELECT location_name FROM activity WHERE id = 'zw'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name.as_deref(), Some("Home trainer"));
     }
 }

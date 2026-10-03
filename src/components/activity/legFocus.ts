@@ -1,4 +1,4 @@
-import type { MultisportLeg, TrackPointColumns } from "../../lib/types";
+import { hasSimulatedCourse, type MultisportLeg, type TrackPointColumns } from "../../lib/types";
 
 /** A FIT-native leg can be focused in place when it has a start and a
  * length to window the track by. Merged legs navigate to their standalone
@@ -26,12 +26,14 @@ export function legTimeWindow(leg: MultisportLeg): [number, number] | null {
 /** ChartPanel's segment-save source. Only the unfocused (whole-activity)
  * view may save segments: a focused leg charts a slice from
  * `sliceTrackpoints`, which drops timestamp-less points and rebases indices,
- * so its selection indices don't address the stored trackpoints. */
+ * so its selection indices don't address the stored trackpoints. A
+ * simulated course (#190) has no ground to save a segment from. */
 export function segmentSourceFor(
   focusedLeg: MultisportLeg | undefined,
   activityId: string,
+  sport: string,
 ): { activityId: string } | undefined {
-  return focusedLeg ? undefined : { activityId };
+  return focusedLeg || hasSimulatedCourse(sport) ? undefined : { activityId };
 }
 
 /** Slice the columnar track to the points whose timestamp falls inside

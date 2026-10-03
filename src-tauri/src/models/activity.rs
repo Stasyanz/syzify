@@ -228,6 +228,19 @@ impl SportType {
     }
 }
 
+/// A sport whose coordinates come from a simulator, not the ground (#190):
+/// a virtual ride carries the lat/lon of its virtual world (Watopia sits
+/// in the Solomon Islands). Such points draw no map, name no place and
+/// match no segment. Mirrors `hasSimulatedCourse` in src/lib/types.ts.
+pub fn has_simulated_course(sport: &str) -> bool {
+    SIMULATED_COURSE_SPORTS.contains(&sport)
+}
+
+/// The sports behind [`has_simulated_course`], for SQL filters that take
+/// them as parameters — one list, so a kind added here reaches every
+/// query at once.
+pub const SIMULATED_COURSE_SPORTS: &[&str] = &["virtual_ride"];
+
 fn is_virtual_activity(sub_sport: &str) -> bool {
     matches!(sub_sport.to_lowercase().as_str(), "virtual_activity" | "virtual activity")
 }
@@ -474,6 +487,18 @@ mod tests {
         // The explicit names need no parent sport.
         assert_eq!(SportType::resolve(Some("running"), Some("virtual_ride")), SportType::VirtualRide);
         assert_eq!(SportType::resolve(Some("running"), Some("indoor_cycling")), SportType::IndoorRide);
+    }
+
+    #[test]
+    fn only_a_virtual_ride_has_a_simulated_course() {
+        assert!(has_simulated_course("virtual_ride"));
+        for sport in ["ride", "indoor_ride", "treadmill", "run", "other", ""] {
+            assert!(!has_simulated_course(sport), "{sport}");
+        }
+        for sport in SIMULATED_COURSE_SPORTS {
+            assert!(has_simulated_course(sport), "{sport}: the SQL list and the predicate agree");
+            assert_eq!(SportType::from_str(sport).as_str(), *sport, "{sport} is a known slug");
+        }
     }
 
     #[test]

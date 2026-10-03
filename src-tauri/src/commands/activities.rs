@@ -100,15 +100,33 @@ pub fn update_activity(
     updates: ActivityUpdate,
     state: State<AppState>,
 ) -> Result<(), String> {
+    update_activity_core(&state, &id, &updates)
+}
+
+/// The State-free part of `update_activity`, testable against a bare
+/// [`AppState`].
+pub(crate) fn update_activity_core(state: &AppState, id: &str, updates: &ActivityUpdate) -> Result<(), String> {
+    use crate::models::activity::has_simulated_course;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::update_activity(&conn, &id, &updates).map_err(|e| e.to_string())?;
+    // The sport before the write: the edit modal sends sport_type on every
+    // save, changed or not, so "changed" is decided here, not by presence.
+    let before = db::segments::activity_sport(&conn, id).map_err(|e| e.to_string())?;
+    db::activities::update_activity(&conn, id, updates).map_err(|e| e.to_string())?;
     // A sport change flips whether this activity earns running distance PBs —
     // recompute (or clear) its best-effort splits so records stay correct.
-    if updates.sport_type.is_some() {
-        db::best_efforts::recompute_for_activity(&conn, &id).map_err(|e| e.to_string())?;
+    if let Some(sport) = updates.sport_type.as_deref() {
+        db::best_efforts::recompute_for_activity(&conn, id).map_err(|e| e.to_string())?;
         // Segment efforts are sport-scoped too: drop the ones earned under
         // the old sport and rematch against the new sport's segments.
-        db::segment_efforts::rematch_activity(&conn, &id).map_err(|e| e.to_string())?;
+        db::segment_efforts::rematch_activity(&conn, id).map_err(|e| e.to_string())?;
+        // Just turned into a simulated course (#190): the name the geocoder
+        // gave it was for a real place the ride never was. Only on the
+        // change — a save that keeps the sport must keep a typed name.
+        let was_real = !before.as_deref().is_some_and(has_simulated_course);
+        if was_real && has_simulated_course(sport) {
+            let geocoder_on = crate::import::geocoding::geocoding_enabled(&conn);
+            db::activities::scrub_simulated_course(&conn, Some(id), geocoder_on).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -388,6 +406,17 @@ pub(crate) fn set_activity_location_point_core(
     if !(lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon))
     {
         return Err(format!("invalid coordinates: {lat}, {lon}"));
+    }
+    // The map is not shown for a simulated course (#190), but the command
+    // is reachable on its own: a point of a virtual world names no place.
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let sport = db::segments::activity_sport(&conn, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "activity not found".to_string())?;
+        if crate::models::activity::has_simulated_course(&sport) {
+            return Err("A virtual ride's course is simulated — its points name no place".to_string());
+        }
     }
 
     // Reverse geocoding sends the picked point to nominatim.openstreetmap.org —
@@ -1112,6 +1141,97 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0))
             .unwrap();
         assert_eq!(survivors, 1);
+    }
+
+    /// The scrub on a sport change (#190) must never reach a name the user
+    /// typed: the modal sends sport_type on every save, and with the
+    /// geocoder off a name without coordinates is the user's.
+    #[test]
+    fn a_typed_name_survives_saves_and_a_geocoded_one_goes_on_the_change() {
+        let vault = ScratchDir::new("act");
+        let state = test_state(&vault);
+        let insert = |id: &str, sport: &str, name: Option<&str>| {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type, location_name) VALUES (?1, '2026-01-01T10:00:00+00:00', ?2, ?3)",
+                rusqlite::params![id, sport, name],
+            )
+            .unwrap();
+        };
+        let name_of = |id: &str| -> Option<String> {
+            let conn = state.db.lock().unwrap();
+            conn.query_row("SELECT location_name FROM activity WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
+                .unwrap()
+        };
+        let save = |id: &str, sport: &str, title: &str| {
+            update_activity_core(
+                &state,
+                id,
+                &ActivityUpdate {
+                    title: Some(title.to_string()),
+                    notes: None,
+                    sport_type: Some(sport.to_string()),
+                    location_name: None,
+                    start_lat: None,
+                    start_lon: None,
+                },
+            )
+            .unwrap();
+        };
+
+        // Geocoder off (the default): a typed name, then a title-only save
+        // that still carries sport_type = virtual_ride.
+        insert("zw", "virtual_ride", None);
+        update_activity_location_core(&state, "zw", "Home trainer", |_| Err("offline".to_string())).unwrap();
+        assert_eq!(name_of("zw").as_deref(), Some("Home trainer"));
+        save("zw", "virtual_ride", "Evening Zwift");
+        assert_eq!(name_of("zw").as_deref(), Some("Home trainer"), "a save that keeps the sport keeps the name");
+
+        // A ride turned virtual with the geocoder off: the name is the
+        // user's by the same rule, and stays.
+        insert("typed-ride", "ride", Some("Garage"));
+        save("typed-ride", "virtual_ride", "Garage ride");
+        assert_eq!(name_of("typed-ride").as_deref(), Some("Garage"));
+
+        // Geocoder on: a ride's auto name goes when it turns virtual, and
+        // the next save does not look at it again.
+        {
+            let conn = state.db.lock().unwrap();
+            db::settings::set_setting(&conn, crate::import::geocoding::GEOCODING_SETTING, "true").unwrap();
+        }
+        insert("auto-ride", "ride", Some("Solomon Islands"));
+        save("auto-ride", "virtual_ride", "Watopia loop");
+        assert_eq!(name_of("auto-ride"), None, "the geocoder's name goes on the change");
+        update_activity_location_core(&state, "auto-ride", "Watopia", |_| Err("offline".to_string())).unwrap();
+        save("auto-ride", "virtual_ride", "Watopia loop 2");
+        assert_eq!(name_of("auto-ride").as_deref(), Some("Watopia"), "already virtual: no scrub on a later save");
+    }
+
+    /// A virtual ride's points are a simulator's (#190): the destination
+    /// point is refused with the reason, and nothing is written.
+    #[test]
+    fn destination_point_is_refused_on_a_virtual_ride() {
+        let vault = ScratchDir::new("act");
+        let state = test_state(&vault);
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES ('zw', '2026-01-01T10:00:00+00:00', 'virtual_ride')",
+                [],
+            )
+            .unwrap();
+        }
+        let err = match set_activity_location_point_core(&state, "zw", -11.64, 166.95) {
+            Ok(_) => panic!("a virtual ride took a destination point"),
+            Err(e) => e,
+        };
+        assert!(err.contains("simulated"), "{err}");
+        assert!(set_activity_location_point_core(&state, "missing", 1.0, 1.0).is_err());
+        let conn = state.db.lock().unwrap();
+        let (name, lat): (Option<String>, Option<f64>) = conn
+            .query_row("SELECT location_name, start_lat FROM activity WHERE id = 'zw'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((name, lat), (None, None));
     }
 
     /// "Set as destination point" with geocoding off must not touch the

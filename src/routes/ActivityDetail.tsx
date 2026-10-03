@@ -469,7 +469,7 @@ export function ActivityDetailPage() {
                 ftpW={activity.threshold_power_w}
                 filler={zonesFiller(activity, data.time_in_zones, focusedLeg != null)}
                 onFillerPlaced={setZonesInCharts}
-                segmentSource={segmentSourceFor(focusedLeg, activity.id)}
+                segmentSource={segmentSourceFor(focusedLeg, activity.id, activity.sport_type)}
                 summaryAverages={
                   focusedLeg
                     ? // A leg's summary carries HR and speed only; power and

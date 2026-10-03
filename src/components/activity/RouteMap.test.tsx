@@ -325,3 +325,47 @@ describe("RouteMap destination point (#179)", () => {
     expect(flagOf(map)!.getLatLng()).toEqual(L.latLng(55.702, 37.6));
   });
 });
+
+describe("a simulated course (#190)", () => {
+  it("draws no map for a virtual ride, only the notice — the track would land on a real island", () => {
+    const mapSpy = vi.spyOn(L, "map");
+    const before = mapSpy.mock.calls.length;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { getByText } = render(
+      <QueryClientProvider client={qc}>
+        <RouteMap trackpoints={track} sport="virtual_ride" activityId="act-1" location={[-11.64, 166.95]} locationName="Watopia" />
+      </QueryClientProvider>,
+    );
+    getByText(/Virtual ride — the course is simulated/);
+    expect(mapSpy.mock.calls.length).toBe(before);
+  });
+
+  it("survives the sport changing under it — ride to virtual ride and back, no remount", () => {
+    const mapSpy = vi.spyOn(L, "map");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (sport: string) => (
+      <QueryClientProvider client={qc}>
+        <RouteMap trackpoints={track} sport={sport} activityId="act-1" />
+      </QueryClientProvider>
+    );
+    const { rerender, getByText, queryByText } = render(ui("ride"));
+    const maps = mapSpy.mock.calls.length;
+    expect(maps).toBeGreaterThan(0);
+    rerender(ui("virtual_ride"));
+    getByText(/Virtual ride — the course is simulated/);
+    rerender(ui("ride"));
+    expect(queryByText(/Virtual ride/)).toBeNull();
+    expect(mapSpy.mock.calls.length).toBe(maps + 1);
+  });
+
+  it("an indoor ride without a track keeps the plain notice", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const empty = { ...track, lat: [null, null, null], lon: [null, null, null] } as typeof track;
+    const { getByText } = render(
+      <QueryClientProvider client={qc}>
+        <RouteMap trackpoints={empty} sport="indoor_ride" activityId="act-1" />
+      </QueryClientProvider>,
+    );
+    getByText(/Indoor activity — no route data/);
+  });
+});

@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, Popup
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, Maximize, Minimize, MapPin } from "lucide-react";
-import type { TrackPointColumns } from "../../lib/types";
+import { hasSimulatedCourse, type TrackPointColumns } from "../../lib/types";
 import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
@@ -406,19 +406,35 @@ function useRoutePositions(trackpoints: TrackPointColumns) {
   }, [trackpoints]);
 }
 
-export function RouteMap({ trackpoints, sport, activityId, location, locationName }: Props) {
+/** The notice or the map. The decision is a separate component on purpose:
+ * the map's hooks live in RouteMapCanvas, so a sport edited on the page
+ * (ride → virtual ride and back, no remount) swaps components instead of
+ * changing the number of hooks rendered. */
+export function RouteMap(props: Props) {
   useUnits();
-  const positions = useRoutePositions(trackpoints);
+  const positions = useRoutePositions(props.trackpoints);
 
-  if (positions.length === 0) {
-    // No GPS track — don't reserve a full map canvas; a slim notice is enough.
+  if (positions.length === 0 || hasSimulatedCourse(props.sport)) {
+    // No GPS track, or a simulator's track that would draw a virtual world
+    // onto a real island (#190) — don't reserve a full map canvas; a slim
+    // notice is enough.
     return (
       <div className="bg-card-2 rounded-card flex items-center justify-center h-16 text-sm text-faint">
-        Indoor activity — no route data
+        {hasSimulatedCourse(props.sport) ? "Virtual ride — the course is simulated, no map" : "Indoor activity — no route data"}
       </div>
     );
   }
+  return <RouteMapCanvas positions={positions} {...props} />;
+}
 
+function RouteMapCanvas({
+  positions,
+  trackpoints,
+  sport,
+  activityId,
+  location,
+  locationName,
+}: Props & { positions: L.LatLngExpression[] }) {
   const { data: savedLayer } = useQuery({
     queryKey: ["setting", "map_layer"],
     queryFn: () => api.getSetting("map_layer"),

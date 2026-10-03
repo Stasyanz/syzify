@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 
 use crate::models::activity::{
     Activity, ActivityFilters, ActivityLocation, ActivitySummary, ActivityUpdate, CalDayActivity,
-    DaySummary, DeviceStats,
+    DaySummary, DeviceStats, SIMULATED_COURSE_SPORTS,
 };
 
 pub fn insert_activity(conn: &Connection, activity: &Activity) -> Result<()> {
@@ -785,6 +785,51 @@ pub fn refile_rides_by_sub_sport(conn: &Connection) -> Result<usize> {
     Ok(changed)
 }
 
+/// Take a simulated course's traces of the real world off (#190): every
+/// segment effort it earned while it was a ride, and — with `clear_names`,
+/// i.e. only while the geocoder is switched on, since a name it could not
+/// have written is the user's — the place name without manual coordinates
+/// (a picked point writes `start_lat`; a typed name does too when the
+/// lookup succeeds, and stays as typed otherwise; "" is the cleared marker
+/// and stays). One activity, or every one whose sport has a simulated
+/// course. Returns (names cleared, efforts removed). Accepted residue: a
+/// name typed while the geocoder was off keeps no mark of its origin, so
+/// once the geocoder is on it reads as the geocoder's.
+pub fn scrub_simulated_course(
+    conn: &Connection,
+    only: Option<&str>,
+    clear_names: bool,
+) -> Result<(usize, usize)> {
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    let not_simulated = not_simulated_clause("", &mut params, &mut idx);
+    let only_clause = match only {
+        Some(id) => {
+            params.push(Box::new(id.to_string()));
+            format!("AND id = ?{idx}")
+        }
+        None => String::new(),
+    };
+    let simulated = format!("NOT ({not_simulated}) {only_clause}");
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let names = if clear_names {
+        conn.execute(
+            &format!(
+                "UPDATE activity SET location_name = NULL
+                 WHERE {simulated} AND start_lat IS NULL AND COALESCE(location_name, '') <> ''"
+            ),
+            params_refs.as_slice(),
+        )?
+    } else {
+        0
+    };
+    let efforts = conn.execute(
+        &format!("DELETE FROM segment_effort WHERE activity_id IN (SELECT id FROM activity WHERE {simulated})"),
+        params_refs.as_slice(),
+    )?;
+    Ok((names, efforts))
+}
+
 /// Re-normalize `sport_type` for already-imported activities using the current
 /// mapping. The original raw sport string isn't stored, so we feed the existing
 /// `sport_type` plus the stored `sub_sport` through `SportType::resolve` — this
@@ -944,11 +989,9 @@ pub fn get_activity_start_locations(
     let mut conditions: Vec<String> = Vec::new();
     let mut idx = 1;
     push_facet_conditions(filters, "a.", &mut conditions, &mut params, &mut idx);
-    let where_sql = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    // A simulated course has no place on the map of real ones (#190).
+    conditions.push(not_simulated_clause("a.", &mut params, &mut idx));
+    let where_sql = format!("WHERE {}", conditions.join(" AND "));
 
     let sql = format!(
         "SELECT a.id, a.start_time, a.sport_type, a.title, a.distance_m, a.duration_s,
@@ -1018,15 +1061,40 @@ pub fn clear_location(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// `<prefix>sport_type NOT IN (?N, …)` over the simulated-course sports
+/// (#190), appending their parameters; `idx` moves past them.
+fn not_simulated_clause(
+    prefix: &str,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    idx: &mut usize,
+) -> String {
+    let marks: Vec<String> = SIMULATED_COURSE_SPORTS
+        .iter()
+        .map(|s| {
+            params.push(Box::new(s.to_string()));
+            *idx += 1;
+            format!("?{}", *idx - 1)
+        })
+        .collect();
+    format!("{prefix}sport_type NOT IN ({})", marks.join(", "))
+}
+
+/// Activities still to be named by the background geocoder: never looked
+/// up (`location_name` NULL — "" is the cleared marker). A virtual ride is
+/// left out (#190): its start point would name an island in the Pacific.
 pub fn get_activities_without_location(conn: &Connection) -> Result<Vec<(String, f64, f64)>> {
-    let mut stmt = conn.prepare(
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    let not_simulated = not_simulated_clause("a.", &mut params, &mut idx);
+    let mut stmt = conn.prepare(&format!(
         "SELECT a.id,
                 (SELECT lat FROM trackpoint WHERE activity_id = a.id AND lat IS NOT NULL ORDER BY rowid ASC LIMIT 1),
                 (SELECT lon FROM trackpoint WHERE activity_id = a.id AND lon IS NOT NULL ORDER BY rowid ASC LIMIT 1)
          FROM activity a
-         WHERE a.location_name IS NULL",
-    )?;
-    let rows = stmt.query_map([], |row| {
+         WHERE a.location_name IS NULL AND {not_simulated}"
+    ))?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
         let id: String = row.get(0)?;
         let lat: Option<f64> = row.get(1)?;
         let lon: Option<f64> = row.get(2)?;
@@ -1420,6 +1488,103 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert!((locations[0].lat - 48.85).abs() < 0.001);
         assert!((locations[0].lon - 2.35).abs() < 0.001);
+    }
+
+    /// A virtual ride's points are a simulator's (#190): the library map
+    /// leaves it out, and so does the geocoding queue — with or without
+    /// manual coordinates, with a track or without.
+    #[test]
+    fn a_virtual_ride_is_on_no_map_and_in_no_geocoding_queue() {
+        let conn = db::test_db();
+        let mut zwift = sample_activity("zwift");
+        zwift.sport_type = "virtual_ride".to_string();
+        zwift.start_lat = Some(-11.64);
+        zwift.start_lon = Some(166.95);
+        insert_activity(&conn, &zwift).unwrap();
+        let mut tracked = sample_activity("zwift-track");
+        tracked.sport_type = "virtual_ride".to_string();
+        insert_activity(&conn, &tracked).unwrap();
+        conn.execute(
+            "INSERT INTO trackpoint (activity_id, lat, lon) VALUES ('zwift-track', -11.64, 166.95)",
+            [],
+        )
+        .unwrap();
+        let mut road = sample_activity("road");
+        road.sport_type = "ride".to_string();
+        insert_activity(&conn, &road).unwrap();
+        conn.execute("INSERT INTO trackpoint (activity_id, lat, lon) VALUES ('road', 36.54, 32.0)", []).unwrap();
+
+        let on_map: Vec<String> = get_activity_start_locations(&conn, &ActivityFilters::default())
+            .unwrap()
+            .into_iter()
+            .map(|l| l.id)
+            .collect();
+        assert_eq!(on_map, vec!["road"]);
+        let queue: Vec<String> = get_activities_without_location(&conn).unwrap().into_iter().map(|(id, _, _)| id).collect();
+        assert_eq!(queue, vec!["road"]);
+    }
+
+    /// The scrub (#190) takes the geocoder's name and the segment efforts
+    /// off a virtual ride, and nothing else: a name the user typed or
+    /// picked (it carries start_lat) stays, the cleared marker stays, a
+    /// road ride is untouched.
+    #[test]
+    fn scrub_takes_the_geocoded_name_and_the_efforts_off_a_virtual_ride() {
+        let conn = db::test_db();
+        let row = |id: &str, sport: &str, name: Option<&str>, lat: Option<f64>| {
+            let mut a = sample_activity(id);
+            a.sport_type = sport.to_string();
+            a.location_name = name.map(str::to_string);
+            a.start_lat = lat;
+            a.start_lon = lat.map(|_| 166.95);
+            insert_activity(&conn, &a).unwrap();
+        };
+        row("geocoded", "virtual_ride", Some("Solomon Islands"), None);
+        row("typed", "virtual_ride", Some("Watopia"), Some(-11.64));
+        row("cleared", "virtual_ride", Some(""), None);
+        row("unnamed", "virtual_ride", None, None);
+        row("road", "ride", Some("Alanya"), None);
+        conn.execute("INSERT INTO segment (id, name, sport, source_activity_id, created_at, distance_m, start_lat, start_lon, end_lat, end_lon, min_lat, max_lat, min_lon, max_lon) VALUES ('s', 'S', 'ride', 'road', '', 100, 0, 0, 0, 0, 0, 0, 0, 0)", []).unwrap();
+        for id in ["geocoded", "road"] {
+            conn.execute(
+                "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx, elapsed_s, distance_m) VALUES ('s', ?1, 0, 1, 10, 100)",
+                params![id],
+            )
+            .unwrap();
+        }
+
+        // The geocoder off: a name without coordinates is the user's, and
+        // only the efforts go.
+        assert_eq!(scrub_simulated_course(&conn, None, false).unwrap(), (0, 1));
+        let name = |id: &str| -> Option<String> {
+            conn.query_row("SELECT location_name FROM activity WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(name("geocoded").as_deref(), Some("Solomon Islands"));
+        // Re-plant the effort, then the geocoder on: the name goes too.
+        conn.execute(
+            "INSERT INTO segment_effort (segment_id, activity_id, start_idx, end_idx, elapsed_s, distance_m) VALUES ('s', 'geocoded', 0, 1, 10, 100)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(scrub_simulated_course(&conn, None, true).unwrap(), (1, 1));
+        assert_eq!(name("geocoded"), None);
+        assert_eq!(name("typed").as_deref(), Some("Watopia"));
+        assert_eq!(name("cleared").as_deref(), Some(""));
+        assert_eq!(name("road").as_deref(), Some("Alanya"));
+        let efforts: Vec<String> = {
+            let mut st = conn.prepare("SELECT activity_id FROM segment_effort ORDER BY activity_id").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_>>().unwrap()
+        };
+        assert_eq!(efforts, vec!["road"]);
+        assert_eq!(scrub_simulated_course(&conn, None, true).unwrap(), (0, 0), "idempotent");
+
+        // One activity: the badge changed it just now.
+        row("just-changed", "virtual_ride", Some("Honiara"), None);
+        row("other", "virtual_ride", Some("Gizo"), None);
+        assert_eq!(scrub_simulated_course(&conn, Some("just-changed"), true).unwrap(), (1, 0));
+        assert_eq!(name("just-changed"), None);
+        assert_eq!(name("other").as_deref(), Some("Gizo"));
+        assert_eq!(scrub_simulated_course(&conn, Some("road"), true).unwrap(), (0, 0), "a road ride is no simulated course");
     }
 
     #[test]

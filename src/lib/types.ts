@@ -566,6 +566,14 @@ export function isTrainerRide(sport: string): boolean {
   return sport === "indoor_ride" || sport === "virtual_ride";
 }
 
+/** A sport whose coordinates come from a simulator, not the ground (#190):
+ * a virtual ride carries the lat/lon of its virtual world. No map, no
+ * destination point, no segment from it. Mirrors `has_simulated_course`
+ * in src-tauri/src/models/activity.rs. */
+export function hasSimulatedCourse(sport: string): boolean {
+  return sport === "virtual_ride";
+}
+
 /** Sports whose recorded "elevation gain" is instrument noise — the water
  * sports, and a trainer with no course, where a watch's barometer drifts
  * in a room all the same (#189). Mirrors `elevation_is_noise` in

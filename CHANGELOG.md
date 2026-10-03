@@ -21,7 +21,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   in a room), a virtual ride keeps its simulated climb. Import dedup now
   matches within a sport's family — a ride against its trainer kinds and
   mountain bike, a run against treadmill and trail run — so the same
-  workout filed under two kinds by two files lands once.
+  workout filed under two kinds by two files lands once. A virtual
+  ride's course is simulated (#190), so it draws no map, is left off the
+  library map, is never geocoded, and neither matches nor saves a
+  segment; the segment efforts one earned while it was a Ride are taken
+  off once at the next start and whenever the badge turns a ride into a
+  virtual ride, and so is the place name — only while location lookup is
+  on, since with it off every name is one you typed.
 
 ### Fixed
 - A refused action said "undefined" instead of why (#174): changing the

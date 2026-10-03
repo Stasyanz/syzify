@@ -114,12 +114,23 @@ describe("sliceTrackpoints", () => {
   });
 });
 
+describe("segmentSourceFor at its call site", () => {
+  it("ActivityDetail hands the sport over, so a virtual ride offers no segment to save (#190)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../../routes/ActivityDetail.tsx", import.meta.url), "utf8");
+    expect(src).toContain("segmentSourceFor(focusedLeg, activity.id, activity.sport_type)");
+  });
+});
+
 describe("segmentSourceFor", () => {
   it("offers segment saving only in the whole-activity view", () => {
     // A focused leg charts rebased indices that don't address the stored
     // trackpoints — the source must be withheld, or a saved segment would
     // silently copy the wrong slice.
-    expect(segmentSourceFor(leg(), "act-1")).toBeUndefined();
-    expect(segmentSourceFor(undefined, "act-1")).toEqual({ activityId: "act-1" });
+    expect(segmentSourceFor(leg(), "act-1", "ride")).toBeUndefined();
+    expect(segmentSourceFor(undefined, "act-1", "ride")).toEqual({ activityId: "act-1" });
+    // A simulated course has no ground to save a segment from (#190).
+    expect(segmentSourceFor(undefined, "act-1", "virtual_ride")).toBeUndefined();
+    expect(segmentSourceFor(undefined, "act-1", "indoor_ride")).toEqual({ activityId: "act-1" });
   });
 });

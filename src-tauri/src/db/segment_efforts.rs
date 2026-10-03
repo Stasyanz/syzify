@@ -154,6 +154,9 @@ pub fn match_activity(conn: &Connection, activity_id: &str) -> Result<usize> {
     let Some(sport) = crate::db::segments::activity_sport(conn, activity_id)? else {
         return Ok(0);
     };
+    if crate::models::activity::has_simulated_course(&sport) {
+        return Ok(0); // a simulator's coordinates lie on no real segment (#190)
+    }
     let geo = crate::db::trackpoints::get_track_geometry(conn, activity_id)?;
     let mut t_bbox: Option<(f64, f64, f64, f64)> = None; // min/max lat, min/max lon
     for i in 0..geo.lat.len().min(geo.lon.len()) {
@@ -216,9 +219,14 @@ pub fn segment_sport(conn: &Connection, segment_id: &str) -> Result<Option<Strin
     .optional()
 }
 
-/// Every activity id of a sport (merged-triathlon legs included — they are
-/// activities with their own tracks and sports).
+/// The activities a segment of `sport` is matched against: every activity
+/// of that sport (merged-triathlon legs included — they are activities with
+/// their own tracks and sports), none for a sport whose course is
+/// simulated (#190).
 pub fn activity_ids_for_sport(conn: &Connection, sport: &str) -> Result<Vec<String>> {
+    if crate::models::activity::has_simulated_course(sport) {
+        return Ok(Vec::new());
+    }
     let mut stmt = conn.prepare("SELECT id FROM activity WHERE sport_type = ?1")?;
     let ids = stmt.query_map(params![sport], |r| r.get(0))?.collect();
     ids
@@ -660,6 +668,28 @@ mod tests {
         insert_track(&conn, "r1", 100, 10);
         assert_eq!(match_activity(&conn, "r1").unwrap(), 0);
         assert!(efforts_for_activity(&conn, "r1").unwrap().is_empty());
+    }
+
+    /// A virtual ride's track is a simulator's (#190): it matches no
+    /// segment on import, the backfill skips it, and a segment of its own
+    /// sport reaches no activity.
+    #[test]
+    fn a_virtual_ride_matches_no_segment() {
+        let mut conn = db::test_db();
+        setup(&mut conn);
+        insert_activity(&conn, "zw", "virtual_ride");
+        insert_track(&conn, "zw", 100, 10);
+        assert_eq!(match_activity(&conn, "zw").unwrap(), 0);
+        assert_eq!(rematch_activity(&conn, "zw").unwrap(), 0);
+        assert!(efforts_for_activity(&conn, "zw").unwrap().is_empty());
+
+        // Even a segment of the virtual sport itself matches nothing.
+        insert_line_segment(&mut conn, "vseg", "zw", 20, 50);
+        conn.execute("UPDATE segment SET sport = 'virtual_ride' WHERE id = 'vseg'", []).unwrap();
+        assert!(activity_ids_for_sport(&conn, "virtual_ride").unwrap().is_empty());
+        assert_eq!(backfill_segment(&conn, "vseg").unwrap(), 0);
+        assert_eq!(backfill_all_segments(&conn).unwrap(), 1, "only the road ride's pass");
+        assert!(efforts_for_activity(&conn, "zw").unwrap().is_empty());
     }
 
     #[test]

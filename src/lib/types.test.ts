@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { elevationIsNoise, isPaceSport, isTrainerRide, isWaterSport, SPORT_TYPES, triathlonDiscipline } from "./types";
+import { elevationIsNoise, hasSimulatedCourse, isPaceSport, isTrainerRide, isWaterSport, SPORT_TYPES, triathlonDiscipline } from "./types";
 
 describe("isPaceSport", () => {
   it("covers every running form, matching the backend RUNNING_SPORTS", () => {
@@ -35,6 +35,14 @@ describe("isTrainerRide", () => {
     expect(triathlonDiscipline("ride")).toBe("bike");
     expect(triathlonDiscipline("indoor_ride")).toBeNull();
     expect(triathlonDiscipline("virtual_ride")).toBeNull();
+  });
+});
+
+describe("hasSimulatedCourse", () => {
+  it("is the virtual ride alone (#190)", () => {
+    expect(hasSimulatedCourse("virtual_ride")).toBe(true);
+    expect(hasSimulatedCourse("indoor_ride")).toBe(false);
+    expect(hasSimulatedCourse("ride")).toBe(false);
   });
 });
 

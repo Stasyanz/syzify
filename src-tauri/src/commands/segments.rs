@@ -18,8 +18,34 @@ fn segment_source(
     let sport = db::segments::activity_sport(conn, activity_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "activity not found".to_string())?;
+    if crate::models::activity::has_simulated_course(&sport) {
+        return Err("A virtual ride's course is simulated — no segment to save from it".to_string());
+    }
     let geo = db::trackpoints::get_track_geometry(conn, activity_id).map_err(|e| e.to_string())?;
     Ok((sport, geo))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A segment is saved from real ground (#190): a virtual ride's
+    /// selection is refused before any geometry is read.
+    #[test]
+    fn segment_source_refuses_a_simulated_course() {
+        let conn = db::test_db();
+        for (id, sport) in [("zw", "virtual_ride"), ("road", "ride")] {
+            conn.execute(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES (?1, '2026-01-01T10:00:00+00:00', ?2)",
+                rusqlite::params![id, sport],
+            )
+            .unwrap();
+        }
+        let err = segment_source(&conn, "zw").unwrap_err();
+        assert!(err.contains("simulated"), "{err}");
+        assert_eq!(segment_source(&conn, "road").unwrap().0, "ride");
+        assert_eq!(segment_source(&conn, "none").unwrap_err(), "activity not found");
+    }
 }
 
 /// Existing segments that look like duplicates of the would-be segment
