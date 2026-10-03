@@ -40,6 +40,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   location lookup is on.
 
 ### Fixed
+- One broken file inside a Runkeeper export no longer fails the whole
+  import (#203). A file past its size limit, one whose data is damaged
+  or packed in a way the importer can't open, or one whose name the
+  system refuses is listed among the failures, and every other activity
+  in the export comes in. The export as a whole is still refused when it
+  is too large or holds too many files — and a password-protected export
+  now says so.
 - A virtual ride or run could still pick up a place name: a location
   lookup already on its way when the sport changed wrote the answer
   anyway — and could overwrite a name typed meanwhile; so could picking

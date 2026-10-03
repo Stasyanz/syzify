@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use uuid::Uuid;
+use zip::result::ZipError;
 use zip::ZipArchive;
 
 use crate::import::pipeline::{self, FailedFile, ImportResult};
@@ -21,6 +22,38 @@ const MAX_GPX_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB per GPX
 const MAX_CSV_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB for the CSV
 const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB uncompressed total
 const MAX_FILES: usize = 5000;
+
+/// The bounds an export is held to. One set in production; tests shrink
+/// them to reach the edges without inflating gigabytes.
+#[derive(Clone, Copy)]
+struct Limits {
+    gpx_bytes: u64,
+    csv_bytes: u64,
+    total_bytes: u64,
+    files: usize,
+}
+
+const LIMITS: Limits = Limits {
+    gpx_bytes: MAX_GPX_BYTES,
+    csv_bytes: MAX_CSV_BYTES,
+    total_bytes: MAX_TOTAL_BYTES,
+    files: MAX_FILES,
+};
+
+/// A reader that tallies the bytes it hands out — what an entry actually
+/// inflated, whether the read then succeeds or not.
+struct Counted<'a, R> {
+    inner: R,
+    n: &'a mut u64,
+}
+
+impl<R: std::io::Read> std::io::Read for Counted<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let k = self.inner.read(buf)?;
+        *self.n += k as u64;
+        Ok(k)
+    }
+}
 
 /// Remove a temp directory on drop.
 struct TempDir(PathBuf);
@@ -36,6 +69,16 @@ pub fn import_zip(
     zip_path: &str,
     encryption_key: Option<&[u8; 32]>,
 ) -> Result<ImportResult, String> {
+    import_zip_within(conn, vault_path, zip_path, encryption_key, LIMITS)
+}
+
+fn import_zip_within(
+    conn: &Connection,
+    vault_path: &Path,
+    zip_path: &str,
+    encryption_key: Option<&[u8; 32]>,
+    limits: Limits,
+) -> Result<ImportResult, String> {
     let file = fs::File::open(zip_path).map_err(|e| format!("Failed to open export: {e}"))?;
     let mut zip = ZipArchive::new(file).map_err(|e| format!("Not a valid .zip export: {e}"))?;
 
@@ -47,15 +90,18 @@ pub fn import_zip(
     let mut csv_path: Option<PathBuf> = None;
     let mut total_bytes: u64 = 0;
     let mut file_count: usize = 0;
+    // An entry that can't be opened (an unsupported packing), read (past
+    // its cap, damaged data) or written under its name is that entry's
+    // failure, not the archive's (#203): the rest of the export imports.
+    // The archive-wide bounds, a password, a full or unwritable temp dir
+    // still refuse the whole of it.
+    let mut entry_failures: Vec<FailedFile> = Vec::new();
 
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| format!("Corrupt zip entry: {e}"))?;
-        // Only regular files: this deliberately rejects directory and symlink
-        // entries (a zip symlink could otherwise be a write-outside vector).
-        if !entry.is_file() {
-            continue;
-        }
-        let Some(fname) = bare_entry_name(entry.name()) else {
+        // Name first, without opening the entry: only GPX and the CSV are
+        // ours, so an entry of anything else — even one that can't be
+        // opened — is neither counted nor reported.
+        let Some(fname) = zip.name_for_index(i).and_then(bare_entry_name) else {
             continue;
         };
         let lower = fname.to_ascii_lowercase();
@@ -66,19 +112,56 @@ pub fn import_zip(
         }
 
         file_count += 1;
-        if file_count > MAX_FILES {
-            return Err(format!("export has too many files (limit {MAX_FILES})"));
+        if file_count > limits.files {
+            return Err(format!("export has too many files (limit {})", limits.files));
         }
 
-        let cap = if is_csv { MAX_CSV_BYTES } else { MAX_GPX_BYTES };
-        let bytes = crate::util::read_capped(&mut entry, cap, &fname)?;
-        total_bytes += bytes.len() as u64;
-        if total_bytes > MAX_TOTAL_BYTES {
+        let mut entry = match zip.by_index(i) {
+            Ok(entry) => entry,
+            // A password is the archive's matter: said once, with its
+            // reason, instead of every file failing without one.
+            Err(ZipError::UnsupportedArchive(ZipError::PASSWORD_REQUIRED)) => {
+                return Err("The export is password-protected — export it again without a password".to_string());
+            }
+            // An entry packed in a way this reader can't open (an old
+            // method — Shrink, Implode, Reduce) is that entry's failure.
+            Err(e) => {
+                entry_failures.push(FailedFile { reason: format!("Can't open {fname}: {e}"), path: fname });
+                continue;
+            }
+        };
+        // Only regular files: this deliberately rejects directory and symlink
+        // entries (a zip symlink could otherwise be a write-outside vector).
+        if !entry.is_file() {
+            continue;
+        }
+
+        let cap = if is_csv { limits.csv_bytes } else { limits.gpx_bytes };
+        // What the entry really inflated counts toward the archive's total
+        // — a refused one too, so thousands of oversized entries can't each
+        // be inflated in turn.
+        let mut inflated = 0u64;
+        let read = crate::util::read_capped(&mut Counted { inner: &mut entry, n: &mut inflated }, cap, &fname);
+        total_bytes += inflated;
+        if total_bytes > limits.total_bytes {
             return Err("export is too large (uncompressed) — refusing to import".to_string());
         }
+        let bytes = match read {
+            Ok(bytes) => bytes,
+            Err(reason) => {
+                entry_failures.push(FailedFile { path: fname, reason });
+                continue;
+            }
+        };
 
         let dest = tmp.join(extracted_name(i, &fname));
-        fs::write(&dest, &bytes).map_err(|e| format!("Failed to extract {fname}: {e}"))?;
+        if let Err(e) = fs::write(&dest, &bytes) {
+            if write_failure_is_the_entrys(e.kind()) {
+                entry_failures.push(FailedFile { reason: format!("Failed to extract {fname}: {e}"), path: fname });
+                continue;
+            }
+            return Err(format!("Failed to extract {fname}: {e}"));
+        }
 
         if is_gpx {
             gpx_entries.push((dest.to_string_lossy().into_owned(), fname));
@@ -93,6 +176,14 @@ pub fn import_zip(
     // 1) GPX first (real tracks). 2) CSV adds only the GPS-less rows (it skips
     //    rows that reference a GPX file). Dedup guards any overlap.
     let mut result = pipeline::import_files(conn, vault_path, &gpx_paths, encryption_key, |_, _, _| {});
+    // A GPX the pipeline refused is named as in the export, like the
+    // entries refused above — not by its soon-deleted temp path.
+    for failed in &mut result.failed {
+        if let Some((_, name)) = gpx_entries.iter().find(|(temp, _)| *temp == failed.path) {
+            failed.path = name.clone();
+        }
+    }
+    result.failed.splice(0..0, entry_failures);
     // Provenance: store the real export filename, not the (soon-deleted) temp path.
     for (temp, name) in &gpx_entries {
         let _ = conn.execute(
@@ -128,6 +219,13 @@ fn bare_entry_name(name: &str) -> Option<String> {
         "" | "." | ".." => None,
         s => Some(s.to_string()),
     }
+}
+
+/// Whether a failed extraction write is the entry's own matter — a name
+/// the OS refuses (too long, a NUL) — or every entry's, like a full or
+/// unwritable temp dir, which is said once for the whole import.
+fn write_failure_is_the_entrys(kind: std::io::ErrorKind) -> bool {
+    matches!(kind, std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::InvalidInput)
 }
 
 /// The name an entry is extracted under: its index first, so same-named
@@ -211,6 +309,172 @@ mod tests {
             zw.write_all(bytes).unwrap();
         }
         zw.finish().unwrap();
+    }
+
+    /// An entry the OS won't take a file for (a name past 255 bytes, a
+    /// NUL in it) is that entry's failure: reported by name, and the rest
+    /// of the export imports (#203).
+    #[test]
+    fn an_unwritable_entry_name_fails_only_that_entry() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("unwritable");
+        let zip_path = dir.join("export.zip");
+        let long = format!("{}.gpx", "x".repeat(300));
+        write_zip(
+            &zip_path,
+            &[
+                (long.as_str(), gpx_at("2015-05-05", "55.10").as_bytes()),
+                ("bad\0name.gpx", gpx_at("2015-06-06", "55.20").as_bytes()),
+                ("good.gpx", gpx_at("2015-07-07", "55.30").as_bytes()),
+            ],
+        );
+        let r = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap();
+        assert_eq!(r.imported, 1, "the good entry imports: {r:?}");
+        let failed: Vec<&str> = r.failed.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(failed, vec![long.as_str(), "bad\0name.gpx"]);
+        assert!(r.failed.iter().all(|f| f.reason.starts_with("Failed to extract")), "{r:?}");
+    }
+
+    /// Rewrite one central-directory header of a written zip: the `nth`
+    /// entry's (PK\x01\x02) bytes at `offset` go through `patch`.
+    fn patch_central(zip_path: &Path, nth: usize, patch: impl Fn(&mut [u8])) {
+        let mut bytes = fs::read(zip_path).unwrap();
+        let at = bytes
+            .windows(4)
+            .enumerate()
+            .filter(|(_, w)| *w == b"PK\x01\x02")
+            .nth(nth)
+            .map(|(at, _)| at)
+            .unwrap();
+        patch(&mut bytes[at..at + 46]);
+        fs::write(zip_path, &bytes).unwrap();
+    }
+
+    /// A GPX whose data is damaged (its checksum fails) is that entry's
+    /// failure; what it actually inflated is what it spends of the budget —
+    /// counted at its cap instead, two damaged files would refuse this
+    /// export as too large, which it is not.
+    #[test]
+    fn a_damaged_entry_fails_alone_and_spends_what_it_inflated() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("damaged");
+        let zip_path = dir.join("export.zip");
+        let a = gpx_at("2016-01-01", "55.10");
+        let b = gpx_at("2016-02-02", "55.20");
+        let c = gpx_at("2016-03-03", "55.30");
+        write_zip(&zip_path, &[("a.gpx", a.as_bytes()), ("b.gpx", b.as_bytes()), ("c.gpx", c.as_bytes())]);
+        for nth in [0, 1] {
+            patch_central(&zip_path, nth, |h| h[16] ^= 0xff); // CRC-32
+        }
+        let total = (a.len() + b.len() + c.len()) as u64;
+        let limits = Limits { gpx_bytes: 1 << 20, csv_bytes: 1 << 20, total_bytes: total, files: 10 };
+        let r = import_zip_within(&conn, &dir, zip_path.to_str().unwrap(), None, limits).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        let failed: Vec<&str> = r.failed.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(failed, vec!["a.gpx", "b.gpx"]);
+    }
+
+    /// A refused name is the entry's; a full disk, a permission or any
+    /// other failure is the import's.
+    #[test]
+    fn only_a_refused_name_is_the_entrys_write_failure() {
+        use std::io::ErrorKind::*;
+        assert!(write_failure_is_the_entrys(InvalidFilename));
+        assert!(write_failure_is_the_entrys(InvalidInput));
+        for kind in [StorageFull, PermissionDenied, NotFound, ReadOnlyFilesystem, Other] {
+            assert!(!write_failure_is_the_entrys(kind), "{kind:?}");
+        }
+    }
+
+    /// A GPX packed with a method this reader can't open (Reduce, 7) is
+    /// that entry's failure; the others import.
+    #[test]
+    fn a_gpx_packed_in_an_unsupported_way_fails_only_itself() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("method");
+        let zip_path = dir.join("export.zip");
+        write_zip(
+            &zip_path,
+            &[("a.gpx", gpx_at("2016-04-04", "55.10").as_bytes()), ("b.gpx", gpx_at("2016-05-05", "55.20").as_bytes())],
+        );
+        patch_central(&zip_path, 1, |h| h[10..12].copy_from_slice(&7u16.to_le_bytes()));
+        let r = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        let failed: Vec<&str> = r.failed.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(failed, vec!["b.gpx"]);
+        assert!(r.failed[0].reason.contains("not supported"), "{}", r.failed[0].reason);
+    }
+
+    /// An entry that is not ours (not a GPX, not the CSV) is never opened:
+    /// one that can't be is no failure, and it counts toward no limit.
+    #[test]
+    fn an_unopenable_entry_of_another_kind_is_not_ours() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("other");
+        let zip_path = dir.join("export.zip");
+        write_zip(&zip_path, &[("README.txt", b"hello"), ("good.gpx", gpx_at("2015-11-11", "55.30").as_bytes())]);
+        patch_central(&zip_path, 0, |h| h[8] |= 1); // encrypted
+        let small = Limits { gpx_bytes: 1 << 20, csv_bytes: 1 << 20, total_bytes: 1 << 22, files: 1 };
+        let r = import_zip_within(&conn, &dir, zip_path.to_str().unwrap(), None, small).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        assert!(r.failed.is_empty(), "{r:?}");
+    }
+
+    /// A password-protected export is refused as a whole, with the reason
+    /// — not reported as every file failing without one.
+    #[test]
+    fn a_password_protected_export_is_refused_with_its_reason() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("password");
+        let zip_path = dir.join("export.zip");
+        write_zip(&zip_path, &[("run.gpx", gpx_at("2015-12-12", "55.40").as_bytes())]);
+        patch_central(&zip_path, 0, |h| h[8] |= 1);
+        let err = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap_err();
+        assert!(err.contains("password-protected"), "{err}");
+    }
+
+    /// A GPX the pipeline refuses is named as in the export, not by its
+    /// temp path.
+    #[test]
+    fn a_gpx_the_pipeline_refuses_keeps_its_export_name() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("junk");
+        let zip_path = dir.join("export.zip");
+        write_zip(&zip_path, &[("folder/junk.gpx", b"not a gpx at all")]);
+        let r = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap();
+        assert_eq!(r.imported, 0);
+        assert_eq!(r.failed.len(), 1, "{r:?}");
+        assert_eq!(r.failed[0].path, "junk.gpx");
+    }
+
+    /// One entry past its size cap is skipped and reported, the rest
+    /// import; but the bytes inflated for it count toward the archive's
+    /// total, so a flood of oversized entries still refuses the export
+    /// instead of being inflated one after another.
+    #[test]
+    fn an_oversized_entry_is_skipped_but_still_spends_the_budget() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("oversized");
+        let small = Limits { gpx_bytes: 4096, csv_bytes: 4096, total_bytes: 20_000, files: 50 };
+        let big = vec![b'x'; 10_000];
+
+        let one = dir.join("one.zip");
+        write_zip(&one, &[("big.gpx", &big), ("good.gpx", gpx_at("2015-08-08", "55.40").as_bytes())]);
+        let r = import_zip_within(&conn, &dir, one.to_str().unwrap(), None, small).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        assert_eq!(r.failed.len(), 1);
+        assert_eq!(r.failed[0].path, "big.gpx");
+        assert!(r.failed[0].reason.contains("exceeds the 4096-byte limit"), "{}", r.failed[0].reason);
+
+        // Each refused entry inflated its cap and one byte before it was
+        // refused: five are 5 × 4097, past the 20 000-byte budget — the
+        // export as a whole is refused.
+        let flood = dir.join("flood.zip");
+        let names: Vec<String> = (0..5).map(|i| format!("big{i}.gpx")).collect();
+        let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), big.as_slice())).collect();
+        write_zip(&flood, &entries);
+        let err = import_zip_within(&conn, &dir, flood.to_str().unwrap(), None, small).unwrap_err();
+        assert!(err.contains("too large"), "{err}");
     }
 
     #[test]
