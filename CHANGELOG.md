@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-10
+
 ### Changed
 - Turning encryption on encrypts all three parts — raw files, the
   database and photos — and the three checkboxes are gone (#209). A route
