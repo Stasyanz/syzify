@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-10
+
 ### Added
 - Indoor and virtual rides are sports of their own (#189). A trainer
   with no course (Garmin "Indoor Cycling", a spin class) files as Indoor
