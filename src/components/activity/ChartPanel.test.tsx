@@ -29,6 +29,8 @@ const cursorSets: { left: number; top: number; label?: string }[] = [];
 const valToPosArgs: number[] = [];
 /** The bar-path configs handed to uPlot.paths.bars — their fill painter. */
 const barCfgs: { disp: { fill: { values: (u: unknown) => string[] } } }[] = [];
+/** What valToPos answers — 0 unless a test lays the x column out. */
+let valToPosImpl: (v: number) => number = () => 0;
 
 vi.mock("uplot", () => ({
   default: class {
@@ -64,8 +66,9 @@ vi.mock("uplot", () => ({
     }
     valToPos(v: number) {
       valToPosArgs.push(v);
-      return 0;
+      return valToPosImpl(v);
     }
+    setSelect() {}
     destroy() {}
   },
 }));
@@ -352,6 +355,95 @@ describe("ChartPanel elevation layers", () => {
     expect(hover(2)).not.toContain(mid![0]);
     expect(hover(2)).toMatch(/0\.0%/);
     expect(hover(null)).not.toMatch(/%/);
+  });
+
+  it("clamps the hover tip and the selection badge into the card (#206)", () => {
+    const N = 20;
+    const track = columns(N, {
+      distance_m: seq((i) => i * 100),
+      // A climb: the selection badge rides only on a graded profile.
+      altitude_m: seq((i) => (i < 6 ? 100 : i < 14 ? 100 + (i - 6) * 10 : 180)),
+    });
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 800,
+    });
+    try {
+      const { getByTestId, queryByTestId } = renderPanel(track, vi.fn());
+      const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+      const hooks = elevation.opts.hooks as {
+        setCursor: ((u: unknown) => void)[];
+        setSelect: ((u: unknown) => void)[];
+      };
+      // Tailwind v4's translate utilities set `translate`, which stacks with
+      // the inline transform — a stray one re-centres the tip.
+      const placed = (el: HTMLElement) => {
+        expect(el.className).not.toMatch(/translate/);
+        return el.style.transform;
+      };
+
+      const hover = (idx: number, left: number) => {
+        act(() => hooks.setCursor[0]({ cursor: { idx, left }, over: document.createElement("div") }));
+        return placed(getByTestId("chart-tip"));
+      };
+      expect(hover(19, 790)).toBe("translateX(clamp(-790px, -50%, calc(10px - 100%)))");
+      expect(hover(0, 10)).toBe("translateX(clamp(-10px, -50%, calc(790px - 100%)))");
+      act(() => hooks.setCursor[0]({ cursor: { idx: null }, over: document.createElement("div") }));
+
+      const xs = elevation.data[0] as number[];
+      // The badge is anchored at the middle of the box, not at its start:
+      // a box 700..780 clamps around 740.
+      const select = (left: number, w: number) => {
+        act(() =>
+          hooks.setSelect[0]({
+            select: { left, width: w },
+            // The 800 px plot spans the x column end to end.
+            posToVal: (px: number) => (px / 800) * xs[xs.length - 1],
+            over: document.createElement("div"),
+          }),
+        );
+        return placed(getByTestId("chart-sel-badge"));
+      };
+      expect(select(700, 80)).toBe("translateX(clamp(-740px, -50%, calc(60px - 100%)))");
+      expect(select(0, 40)).toBe("translateX(clamp(-20px, -50%, calc(780px - 100%)))");
+      // The hover tip yields to the badge.
+      expect(queryByTestId("chart-tip")).toBeNull();
+    } finally {
+      if (width) Object.defineProperty(HTMLElement.prototype, "clientWidth", width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+      useActivityStore.setState({ selectedRange: null });
+    }
+  });
+
+  it("clamps the badge of a selection set from outside — a segment-effort click (#206)", async () => {
+    const N = 20;
+    const climb = columns(N, {
+      distance_m: seq((i) => i * 100),
+      altitude_m: seq((i) => (i < 6 ? 100 : i < 14 ? 100 + (i - 6) * 10 : 180)),
+    });
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 800,
+    });
+    try {
+      const { findByTestId } = renderPanel(climb, vi.fn());
+      const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+      const xs = elevation.data[0] as number[];
+      // The x column laid out over 760 px: point 15 at 600, point 19 at 760.
+      valToPosImpl = (v) => (v / xs[xs.length - 1]) * 760;
+      act(() => useActivityStore.setState({ selectedRange: [15, 19] }));
+      const badge = await findByTestId("chart-sel-badge");
+      expect(badge.className).not.toMatch(/translate/);
+      // Anchored at the box's middle, 680, inside the 800 px card.
+      expect(badge.style.transform).toBe("translateX(clamp(-680px, -50%, calc(120px - 100%)))");
+    } finally {
+      valToPosImpl = () => 0;
+      if (width) Object.defineProperty(HTMLElement.prototype, "clientWidth", width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+      act(() => useActivityStore.setState({ selectedRange: null }));
+    }
   });
 
   it("fills an inverted chart down from the line toward the slow edge", () => {

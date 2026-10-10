@@ -7,6 +7,7 @@ import { api } from "../../lib/tauri";
 import { chartTextColor, chartGridColor } from "../../lib/chartTheme";
 import { useResolvedDark } from "../../lib/theme";
 import { AXIS_SPLITS, formatWindow, mergeCurveData, tooltipText } from "./powerCurve";
+import { tipTransform } from "./chartTip";
 
 const HEIGHT = 220;
 // Matches the Power metric in ChartPanel — the curve is the same quantity.
@@ -23,7 +24,7 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
   const dark = useResolvedDark();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
-  const [tip, setTip] = useState<{ left: number; text: string } | null>(null);
+  const [tip, setTip] = useState<{ left: number; plotW: number; text: string } | null>(null);
   // The record under the cursor, for the click-through; a ref because the
   // click handler is registered once at plot creation.
   const hoveredRecord = useRef<string | null>(null);
@@ -127,12 +128,14 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
               rec && rec.activity_id !== activityId ? rec.activity_id : null;
             // The pointer cursor is the only affordance for the click-through.
             u.over.style.cursor = hoveredRecord.current ? "pointer" : "default";
+            const cont = containerRef.current;
             const left =
               u.over.getBoundingClientRect().left -
-              (containerRef.current?.getBoundingClientRect().left ?? 0) +
+              (cont?.getBoundingClientRect().left ?? 0) +
               (u.cursor.left ?? 0);
             setTip({
               left,
+              plotW: cont?.clientWidth ?? 0,
               text: tooltipText(merged.x[idx], merged.activity[idx], rec, activityId),
             });
           },
@@ -193,8 +196,15 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
         <div ref={containerRef} className="w-full" />
         {tip && (
           <div
-            className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
-            style={{ top: 2, left: tip.left, background: "var(--ink)", color: "var(--surface)" }}
+            data-testid="chart-tip"
+            className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+            style={{
+              top: 2,
+              left: tip.left,
+              transform: tipTransform(tip.left, tip.plotW),
+              background: "var(--ink)",
+              color: "var(--surface)",
+            }}
           >
             {tip.text}
           </div>

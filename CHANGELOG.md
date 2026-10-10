@@ -40,6 +40,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   location lookup is on.
 
 ### Fixed
+- Chart tooltips stay inside their card (#206). Hovering near either end
+  of the Power Curve or an activity chart, or selecting a stretch at the
+  edge of the elevation profile, used to cut half the label off; the
+  label now stays centred over the cursor and stops at the card's edge.
 - One broken file inside a Runkeeper export no longer fails the whole
   import (#203). A file past its size limit, one whose data is damaged
   or packed in a way the importer can't open, or one whose name the

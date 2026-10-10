@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, waitFor, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PowerCurveData } from "../../lib/types";
@@ -118,5 +118,44 @@ describe("PowerCurvePanel", () => {
     expect(opts.scales.x.distr).toBe(3);
     expect(opts.cursor.drag).toEqual({ x: false, y: false });
     expect(opts.axes[0].filter?.(null, [5, null, 60])).toEqual([5, null, 60]);
+  });
+
+  it("keeps the hover tip inside the card at both ends of the curve (#206)", async () => {
+    vi.mocked(api.getPowerCurve).mockResolvedValue({
+      points: [
+        { window_s: 1, watts: 740 },
+        { window_s: 3600, watts: 209 },
+      ],
+      envelope: [],
+    } as PowerCurveData);
+    // happy-dom lays nothing out — give the plot a width to be halved.
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 800,
+    });
+    try {
+      const { getByText, getByTestId } = renderPanel();
+      await waitFor(() => getByText("Power Curve"));
+      const opts = constructed[0].opts as {
+        hooks: { setCursor: ((u: unknown) => void)[] };
+      };
+      const hover = (idx: number, left: number) => {
+        act(() =>
+          opts.hooks.setCursor[0]({ cursor: { idx, left }, over: document.createElement("div") }),
+        );
+        const tip = getByTestId("chart-tip");
+        // Tailwind v4's translate utilities set `translate`, which stacks
+        // with the inline transform — a stray one re-centres the tip.
+        expect(tip.className).not.toMatch(/translate/);
+        return tip.style.transform;
+      };
+      // Clamped into the 800 px card at both ends — the 1 h end included.
+      expect(hover(1, 790)).toBe("translateX(clamp(-790px, -50%, calc(10px - 100%)))");
+      expect(hover(0, 10)).toBe("translateX(clamp(-10px, -50%, calc(790px - 100%)))");
+    } finally {
+      if (width) Object.defineProperty(HTMLElement.prototype, "clientWidth", width);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
   });
 });

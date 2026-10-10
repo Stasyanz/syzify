@@ -66,6 +66,7 @@ import {
 } from "../../lib/chartTheme";
 import { SaveSegmentPopover } from "./SaveSegmentPopover";
 import { useResolvedDark } from "../../lib/theme";
+import { tipTransform } from "./chartTip";
 import { useUnits, isImperial, distanceUnit, M_PER_MILE, MPH_PER_MPS } from "../../lib/units";
 
 export type { SummaryAverages } from "./chartConfigs";
@@ -189,9 +190,15 @@ function SingleChart({
   // that differs came from OUTSIDE (a segment-effort click) and must be
   // drawn onto the plot instead of being treated as our own echo.
   const publishedRange = useRef<[number, number] | null>(null);
-  const [tip, setTip] = useState<{ left: number; text: string } | null>(null);
+  // plotW: the container's width when the tip was placed — the clamp's box.
+  const [tip, setTip] = useState<{ left: number; plotW: number; text: string } | null>(null);
   // Drag-selection badge: the selected span's stats, centered over the box.
-  const [sel, setSel] = useState<{ left: number; width: number; text: string } | null>(
+  const [sel, setSel] = useState<{
+    left: number;
+    width: number;
+    plotW: number;
+    text: string;
+  } | null>(
     null,
   );
   // Recreate the plot on theme change — uPlot bakes axis/grid colors in.
@@ -422,7 +429,12 @@ function SingleChart({
                   const overLeft =
                     u.over.getBoundingClientRect().left -
                     cont.getBoundingClientRect().left;
-                  setSel({ left: overLeft + u.select.left, width: u.select.width, text });
+                  setSel({
+                    left: overLeft + u.select.left,
+                    width: u.select.width,
+                    plotW: cont.clientWidth,
+                    text,
+                  });
                 },
               ],
             }
@@ -451,7 +463,11 @@ function SingleChart({
               const gradeTxt = g != null && isFinite(g) ? ` · ${formatGrade(g)}` : "";
               // Over a gap the popup says there is no reading, not "0 m".
               const v = values[chartIdx];
-              setTip({ left, text: (Number.isNaN(v) ? "—" : fmtVal(v)) + gradeTxt });
+              setTip({
+                left,
+                plotW: cont.clientWidth,
+                text: (Number.isNaN(v) ? "—" : fmtVal(v)) + gradeTxt,
+              });
             }
             const tpIdx = indexMap[chartIdx] ?? null;
             isLocalCursor.current = true;
@@ -625,7 +641,7 @@ function SingleChart({
       if (text) {
         const overLeft =
           u.over.getBoundingClientRect().left - cont.getBoundingClientRect().left;
-        setSel({ left: overLeft + left, width: right - left, text });
+        setSel({ left: overLeft + left, width: right - left, plotW: cont.clientWidth, text });
       }
     }, 0);
     return () => clearTimeout(t);
@@ -661,10 +677,12 @@ function SingleChart({
       <div ref={containerRef} className="w-full" />
       {sel && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+          data-testid="chart-sel-badge"
+          className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
           style={{
             top: 2,
             left: sel.left + sel.width / 2,
+            transform: tipTransform(sel.left + sel.width / 2, sel.plotW),
             background: "var(--ink)",
             color: "var(--surface)",
           }}
@@ -674,8 +692,15 @@ function SingleChart({
       )}
       {tip && !sel && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
-          style={{ top: 2, left: tip.left, background: "var(--ink)", color: "var(--surface)" }}
+          data-testid="chart-tip"
+          className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+          style={{
+            top: 2,
+            left: tip.left,
+            transform: tipTransform(tip.left, tip.plotW),
+            background: "var(--ink)",
+            color: "var(--surface)",
+          }}
         >
           {tip.text}
         </div>
