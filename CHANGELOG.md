@@ -6,6 +6,17 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Changed
+- Turning encryption on encrypts all three parts — raw files, the
+  database and photos — and the three checkboxes are gone (#209). A route
+  is stored twice, in its original file and point by point in the
+  database, so ticking only one of the two left every GPS point readable
+  in the other while the app still asked for the password. A vault
+  encrypted earlier with only some of the three keeps working; Settings →
+  Vault names what it leaves readable and how to cover the rest: back up,
+  then turn encryption off and on again. The map tile cache and installed
+  plugins are outside encryption, as before.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added

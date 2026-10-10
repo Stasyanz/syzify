@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -234,9 +234,80 @@ describe("SettingsPage tabs", () => {
     fireEvent.click(screen.getByLabelText("Enable encryption"));
     fireEvent.change(screen.getByPlaceholderText("Password (min 8 characters)"), { target: { value: "hunter2hunter2" } });
     fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
-    fireEvent.click(screen.getByLabelText("Raw files (activities & monitoring)"));
     fireEvent.click(screen.getByRole("button", { name: "Enable Encryption" }));
   }
+
+  it("turning encryption on asks for a password and nothing else — there is no scope to tick (#209)", async () => {
+    vi.mocked(api.enableEncryption).mockResolvedValue(undefined);
+    await startEnablingEncryption();
+    expect(screen.queryAllByRole("checkbox")).toEqual([]);
+    expect(
+      screen.getByText(
+        /^Raw files \(activities and monitoring\), the database and photos\s+will be encrypted\. You will need this password to open your\s+vault, and it cannot be recovered$/,
+      ),
+    ).toBeTruthy();
+    // Which scopes go to the backend is the bridge's business (tauri.encryption.test.ts).
+    await waitFor(() => expect(api.enableEncryption).toHaveBeenCalledWith("hunter2hunter2"));
+  });
+
+  /** Until the status answers, the row reads exactly as it does for a vault
+   * with encryption off — so "the off wording is on screen" proves nothing
+   * about what the answer did. Wait for the answer itself. */
+  async function statusDelivered() {
+    await waitFor(() => expect(api.getEncryptionStatus).toHaveBeenCalled());
+    await act(async () => {
+      await vi.mocked(api.getEncryptionStatus).mock.results[0].value;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it.each([
+    [{ activities: true, database: false, photos: false }, "the database, photos"],
+    [{ activities: false, database: true, photos: true }, "raw files (activities and monitoring)"],
+    // A lock whose enable died before any scope was done: nothing is covered.
+    [
+      { activities: false, database: false, photos: false },
+      "raw files (activities and monitoring), the database, photos",
+    ],
+  ])("names what a vault encrypted with %j still leaves readable, and what covering it takes (#209)", async (scopes, parts) => {
+    vi.mocked(api.getEncryptionStatus).mockResolvedValue({ enabled: true, locked: false, scopes });
+    renderAt("/settings?tab=vault");
+    await waitFor(() =>
+      expect(screen.getByText("Raw files, the database and photos are not all encrypted at rest")).toBeTruthy(),
+    );
+    const warning = screen.getByText(/^Not encrypted:/);
+    expect(warning.textContent?.replace(/\s+/g, " ")).toBe(
+      `Not encrypted: ${parts}. To cover all three, back up the vault, then turn encryption off and on again. ` +
+        "The vault is unencrypted in between, and a pre-restore folder inside it has to be moved out first",
+    );
+    expect(warning.parentElement?.className).toBe("sd warn");
+    // The scopes are not offered for editing: covering the rest is off and on.
+    expect(screen.queryAllByRole("checkbox")).toEqual([]);
+  });
+
+  it("says a fully encrypted vault is encrypted, with no warning (#209)", async () => {
+    vi.mocked(api.getEncryptionStatus).mockResolvedValue({
+      enabled: true,
+      locked: false,
+      scopes: { activities: true, database: true, photos: true },
+    });
+    renderAt("/settings?tab=vault");
+    await waitFor(() =>
+      expect(
+        screen.getByText("Raw files (activities and monitoring), the database and photos are encrypted at rest"),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText(/Not encrypted/)).toBeNull();
+  });
+
+  it("offers encryption while it is off, with no warning about a vault that was never encrypted (#209)", async () => {
+    renderAt("/settings?tab=vault");
+    await statusDelivered();
+    expect(
+      screen.getByText("Encrypt raw files (activities and monitoring), the database and photos at rest"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Not encrypted/)).toBeNull();
+  });
 
   it("shows a failed encryption switch in the dialog while the Vault tab is open, without a toast", async () => {
     vi.mocked(api.enableEncryption).mockRejectedValue(new Error("disk full"));
@@ -332,12 +403,9 @@ describe("SettingsPage tabs", () => {
     fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "different" } });
     enable();
     expect(screen.getByText("Passwords do not match.")).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
-    enable();
-    expect(screen.getByText("Select at least one thing to encrypt.")).toBeTruthy();
     expect(api.enableEncryption).not.toHaveBeenCalled();
-    // Ticking a scope and cancelling closes the dialog with nothing sent.
-    fireEvent.click(screen.getByLabelText("Photos"));
+    // Cancelling closes the dialog with nothing sent.
+    fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Confirm password")).toBeNull();
     expect(api.enableEncryption).not.toHaveBeenCalled();

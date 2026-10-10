@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ALL_SCOPES } from "./encryptionScopes";
 import type {
   ActivitySummary,
   ActivityDetail,
@@ -23,7 +24,6 @@ import type {
   ScanPreview,
   EncryptionStatus,
   UpdateCheck,
-  EncryptionScopes,
   LocationUpdateResult,
   LocationHit,
   FtpUpdateResult,
@@ -240,8 +240,10 @@ export const api = {
   unlockVault: (password: string) =>
     invoke<void>("unlock_vault", { password }),
 
-  enableEncryption: (password: string, scopes: EncryptionScopes) =>
-    invoke<void>("enable_encryption", { password, scopes }),
+  // Always all three scopes (#209): the command still takes a set, but a
+  // partial one must not be expressible from the frontend.
+  enableEncryption: (password: string) =>
+    invoke<void>("enable_encryption", { password, scopes: ALL_SCOPES }),
 
   disableEncryption: (password: string) =>
     invoke<void>("disable_encryption", { password }),

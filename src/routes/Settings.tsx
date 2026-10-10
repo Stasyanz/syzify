@@ -12,6 +12,7 @@ import {
   Github,
   Mail,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { api } from "../lib/tauri";
 import { confirmDialog } from "../stores/confirmStore";
@@ -22,7 +23,6 @@ import { useThemeStore, type ThemeMode } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
 import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
-import { Checkbox } from "../components/ui/Checkbox";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
 import { UpdateCheck } from "../components/settings/UpdateCheck";
 import { VaultLocation } from "../components/settings/VaultLocation";
@@ -39,15 +39,7 @@ import {
 } from "../lib/settingsTabs";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 import { errorText } from "../lib/errors";
-
-/** What each encryption scope covers. Raw files include Garmin monitoring
- * (night heart rate, stress, SpO2) — the same `raw/` machinery, so the
- * same scope (ADR 0002). */
-const SCOPE_LABELS = {
-  activities: "Raw files (activities & monitoring)",
-  database: "Database",
-  photos: "Photos",
-} as const;
+import { unencryptedParts } from "../lib/encryptionScopes";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 
@@ -157,13 +149,9 @@ export function SettingsPage() {
   const [showDecryptDialog, setShowDecryptDialog] = useState(false);
   const [decPassword, setDecPassword] = useState("");
   const [decError, setDecError] = useState<string | null>(null);
-  // What to encrypt when enabling. When already enabled the row reflects the
-  // active scopes read-only (changing scopes in place is a separate op).
-  const [encScopes, setEncScopes] = useState({
-    activities: false,
-    database: false,
-    photos: false,
-  });
+  // What a vault encrypted before #209 left out; changing scopes in place is
+  // a separate op, so the row can only say how to cover the rest.
+  const leftReadable = encryptionStatus?.enabled ? unencryptedParts(encryptionStatus.scopes) : [];
 
   async function handlePageSizeChange(value: string) {
     await api.setSetting("page_size", value);
@@ -305,13 +293,9 @@ export function SettingsPage() {
       setEncError("Passwords do not match.");
       return;
     }
-    if (!encScopes.activities && !encScopes.database && !encScopes.photos) {
-      setEncError("Select at least one thing to encrypt.");
-      return;
-    }
     setEncBusy(true);
     try {
-      await api.enableEncryption(encPassword, encScopes);
+      await api.enableEncryption(encPassword);
       setShowEncryptDialog(false);
       setEncPassword("");
       setEncConfirm("");
@@ -520,33 +504,27 @@ export function SettingsPage() {
               <div className="flex-1">
                 <div className="sl">Encryption</div>
                 <div className="sd">
-                  Encrypt selected data at rest with AES-256-GCM
+                  {!encryptionStatus?.enabled
+                    ? "Encrypt raw files (activities and monitoring), the database and photos at rest"
+                    : leftReadable.length === 0
+                      ? "Raw files (activities and monitoring), the database and photos are encrypted at rest"
+                      : "Raw files, the database and photos are not all encrypted at rest"}
                 </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5">
-                  {(["activities", "database", "photos"] as const).map((scope) => {
-                    const enabled = !!encryptionStatus?.enabled;
-                    const checked = enabled
-                      ? !!encryptionStatus?.scopes?.[scope]
-                      : encScopes[scope];
-                    return (
-                      <label
-                        key={scope}
-                        className={`flex items-center gap-1.5 text-[13px] ${
-                          enabled ? "cursor-default text-muted" : "cursor-pointer text-ink"
-                        }`}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          disabled={enabled}
-                          onChange={() =>
-                            setEncScopes((s) => ({ ...s, [scope]: !s[scope] }))
-                          }
-                        />
-                        {SCOPE_LABELS[scope]}
-                      </label>
-                    );
-                  })}
-                </div>
+                {leftReadable.length > 0 && (
+                  // The way out is disable + enable, and each half can strand
+                  // the vault: everything is readable in between, a failed
+                  // disable leaves it half-decrypted, and enable refuses
+                  // while a pre-restore folder is inside. Say so up front.
+                  <div className="sd warn">
+                    <AlertTriangle size={13} aria-hidden="true" />
+                    <span>
+                      Not encrypted: {leftReadable.join(", ")}. To cover all three,
+                      back up the vault, then turn encryption off and on again.
+                      The vault is unencrypted in between, and a pre-restore
+                      folder inside it has to be moved out first
+                    </span>
+                  </div>
+                )}
               </div>
               <Toggle
                 on={!!encryptionStatus?.enabled}
@@ -570,8 +548,9 @@ export function SettingsPage() {
                   Set encryption password
                 </p>
                 <p className="sd">
-                  The selected data will be encrypted. You will need this password
-                  to access your vault
+                  Raw files (activities and monitoring), the database and photos
+                  will be encrypted. You will need this password to open your
+                  vault, and it cannot be recovered
                 </p>
                 <input
                   type="password"
