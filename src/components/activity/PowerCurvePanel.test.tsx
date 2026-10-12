@@ -120,6 +120,39 @@ describe("PowerCurvePanel", () => {
     expect(opts.axes[0].filter?.(null, [5, null, 60])).toEqual([5, null, 60]);
   });
 
+  it("sizes the watts axis by its labels, so 1,000 is not cut (#219)", async () => {
+    vi.mocked(api.getPowerCurve).mockResolvedValue({
+      points: [
+        { window_s: 1, watts: 1050 },
+        { window_s: 60, watts: 420 },
+      ],
+      envelope: [],
+    } as PowerCurveData);
+
+    const { getByText } = renderPanel();
+    await waitFor(() => getByText("Power Curve"));
+
+    // "1,000" needs 43 px, the axis had a fixed 40, and the plot has no left
+    // padding to absorb the rest. The axis must ask for what its labels need.
+    const opts = constructed[0].opts as {
+      axes: Array<{ size: unknown; font: string }>;
+    };
+    const size = opts.axes[1].size as (u: unknown, values: string[] | null) => number;
+    expect(typeof size).toBe("function");
+    const measuredIn: string[] = [];
+    const ctx = {
+      font: "22px sans-serif",
+      measureText(s: string) {
+        measuredIn.push(this.font);
+        return { width: s.length * 5.5 };
+      },
+    };
+    expect(size({ ctx }, ["0", "200", "800"])).toBeLessThan(40);
+    expect(size({ ctx }, ["800", "1,000"])).toBe(43);
+    // Measured in the font the axis is drawn with.
+    expect(new Set(measuredIn)).toEqual(new Set([opts.axes[1].font]));
+  });
+
   it("keeps the hover tip inside the card at both ends of the curve (#206)", async () => {
     vi.mocked(api.getPowerCurve).mockResolvedValue({
       points: [

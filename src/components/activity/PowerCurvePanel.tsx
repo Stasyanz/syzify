@@ -8,6 +8,7 @@ import { chartTextColor, chartGridColor } from "../../lib/chartTheme";
 import { useResolvedDark } from "../../lib/theme";
 import { AXIS_SPLITS, formatWindow, mergeCurveData, tooltipText } from "./powerCurve";
 import { tipTransform } from "./chartTip";
+import { yAxisSize } from "./chartAxis";
 
 const HEIGHT = 220;
 // Matches the Power metric in ChartPanel — the curve is the same quantity.
@@ -80,7 +81,7 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
           values: (_u, ticks) => ticks.map((v) => (v == null ? "" : formatWindow(v))),
         },
         {
-          size: 40,
+          size: yAxisSize,
           font: "11px sans-serif",
           stroke: tickColor,
           grid: { stroke: gridColor, width: 1 },

@@ -67,6 +67,7 @@ import {
 import { SaveSegmentPopover } from "./SaveSegmentPopover";
 import { useResolvedDark } from "../../lib/theme";
 import { tipTransform } from "./chartTip";
+import { yAxisSize } from "./chartAxis";
 import { useUnits, isImperial, distanceUnit, M_PER_MILE, MPH_PER_MPS } from "../../lib/units";
 
 export type { SummaryAverages } from "./chartConfigs";
@@ -102,17 +103,6 @@ interface Props {
 
 type XAxis = "distance" | "time";
 const SYNC_KEY = "activity-charts";
-
-/** Fit the y-axis to its actual tick labels instead of reserving a fixed
- * 48px: "80" needs half of what "20:00" does, and the difference is plot
- * width. measureText is transform-independent, so the plain 11px font gives
- * CSS-px widths; 15 covers the tick marks (10) + label gap. */
-function yAxisSize(u: uPlot, values: string[] | null): number {
-  if (!values || values.length === 0) return 40;
-  u.ctx.font = "11px sans-serif";
-  const widest = Math.max(...values.map((v) => u.ctx.measureText(v).width));
-  return Math.max(28, Math.ceil(widest) + 15);
-}
 
 function SingleChart({
   config,

@@ -7,6 +7,12 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 ## [Unreleased]
 
 ### Fixed
+- The Power Curve no longer cuts the left edge of the "1,000" label on its
+  watts axis (#219). The axis had a fixed width that fit labels up to
+  three digits; it is now as wide as its widest label, like the other
+  charts. The label appears once the scale reaches 1,000, that is, when
+  the activity or the all-time best drawn in grey tops about 950 W — so
+  one such record cut the label on every Power Curve of that sport.
 - The exercise of a strength set is stored by its name (#213). A Garmin
   watch writes the category of a set as a list padded with "unknown", and
   the parser kept the raw dump of that list — `[UInt16(14), UInt16(14),

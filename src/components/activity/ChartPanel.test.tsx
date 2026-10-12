@@ -19,6 +19,7 @@ type PlotOpts = {
   height?: number;
   hooks?: { setCursor?: ((u: unknown) => void)[] };
   scales?: { y?: { range?: RangeFn; dir?: number } };
+  axes?: { size?: unknown }[];
 };
 const built: { opts: PlotOpts; data: unknown[] }[] = [];
 /** Every setSize the panel asked of a plot, in order. */
@@ -77,6 +78,7 @@ vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 import { ChartPanel, clampWideChartHeight, CHART_HEIGHT_PX, WIDE_CHART_MAX_HEIGHT_PX } from "./ChartPanel";
 import { api } from "../../lib/tauri";
 import { GRADE_COLORS, GRADE_COLORS_DARK } from "./chartZones";
+import { yAxisSize } from "./chartAxis";
 import { useActivityStore } from "../../stores/activityStore";
 
 /** A trackpoint column set with every column null-filled to `n`, then the
@@ -472,6 +474,12 @@ describe("ChartPanel elevation layers", () => {
     expect(elevation!.opts.series).toHaveLength(2);
     expect(typeof elevation!.opts.series[1].stroke).toBe("function");
     expect(elevation!.data).toHaveLength(2);
+  });
+
+  it("sizes every chart's y axis by its labels, not by uPlot's fixed default", () => {
+    renderPanel(threeCharts, vi.fn());
+    expect(built.length).toBeGreaterThan(1);
+    for (const b of built) expect(b.opts.axes?.[1]?.size).toBe(yAxisSize);
   });
 });
 
