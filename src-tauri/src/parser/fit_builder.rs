@@ -18,6 +18,7 @@ pub const MSG_FILE_ID: u16 = 0;
 pub const MSG_MONITORING: u16 = 55;
 pub const MSG_MONITORING_INFO: u16 = 103;
 pub const MSG_MONITORING_HR_DATA: u16 = 211;
+pub const MSG_SET: u16 = 225;
 pub const MSG_STRESS_LEVEL: u16 = 227;
 pub const MSG_SPO2_DATA: u16 = 269;
 pub const MSG_RESPIRATION_RATE: u16 = 297;
@@ -45,6 +46,8 @@ pub enum Val {
     I16(i16),
     U16(u16),
     U32(u32),
+    /// A three-element uint16 array — a field defined with size 6.
+    U16x3([u16; 3]),
 }
 
 /// The FIT CRC-16 (the 4-bit-table variant from the SDK).
@@ -103,6 +106,7 @@ impl FitBuilder {
                 Val::I16(x) => x.to_le_bytes().to_vec(),
                 Val::U16(x) => x.to_le_bytes().to_vec(),
                 Val::U32(x) => x.to_le_bytes().to_vec(),
+                Val::U16x3(xs) => xs.iter().flat_map(|x| x.to_le_bytes()).collect(),
             };
             assert_eq!(bytes.len(), size as usize, "value size must match the definition");
             self.records.extend_from_slice(&bytes);
@@ -223,6 +227,28 @@ pub fn empty_monitoring_fixture(serial: u32, created_unix: i64) -> Vec<u8> {
     file_id(&mut b, FILE_TYPE_MONITORING_B, serial, created_unix);
     b.define(1, MSG_MONITORING_INFO, &[F_TIMESTAMP, (0, 4, UINT32)]);
     b.data(1, &[Val::U32(fit_ts(created_unix)), Val::U32(fit_ts(created_unix + 3600))]);
+    b.build()
+}
+
+/// The sets of a strength activity the way a fenix writes them (#213): each
+/// set's repetitions (10, 11, …) and its category as a three-element array
+/// padded with the profile's "unknown" (65534), plus the parallel subtype
+/// array where one is given.
+pub fn strength_fixture(sets: &[([u16; 3], Option<[u16; 3]>)]) -> Vec<u8> {
+    let mut b = FitBuilder::new();
+    file_id(&mut b, FILE_TYPE_ACTIVITY, 3_314_747_279, 1_788_555_600);
+    // set: repetitions, category[3] — and category_subtype[3].
+    b.define(1, MSG_SET, &[(3, 2, UINT16), (7, 6, UINT16)]);
+    b.define(2, MSG_SET, &[(3, 2, UINT16), (7, 6, UINT16), (8, 6, UINT16)]);
+    for (i, (category, subtype)) in sets.iter().enumerate() {
+        let repetitions = Val::U16(10 + i as u16);
+        match subtype {
+            None => b.data(1, &[repetitions, Val::U16x3(*category)]),
+            Some(subtype) => {
+                b.data(2, &[repetitions, Val::U16x3(*category), Val::U16x3(*subtype)])
+            }
+        };
+    }
     b.build()
 }
 

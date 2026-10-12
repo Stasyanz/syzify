@@ -58,6 +58,48 @@ pub fn get_exercise_sets(conn: &Connection, activity_id: &str) -> Result<Vec<Exe
     Ok(sets)
 }
 
+/// Activities with a set that says anything about its exercise — the ones a
+/// change in how exercises are named can touch.
+pub fn activities_naming_exercises(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT activity_id FROM exercise_set
+         WHERE category IS NOT NULL OR category_subtype IS NOT NULL
+         ORDER BY activity_id",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// Activities holding a set whose exercise is still the debug dump of a FIT
+/// array (`[UInt16(14), UInt16(14), UInt16(65534)]`) — what the parser
+/// stored before #213. A decoded name never starts with a bracket.
+pub fn activities_with_undecoded_exercises(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT activity_id FROM exercise_set
+         WHERE category LIKE '[%' OR category_subtype LIKE '[%'
+         ORDER BY activity_id",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// Rename the exercise of one stored set. Everything else about the set —
+/// its time, repetitions, weight — is left as imported.
+pub fn set_exercise(
+    conn: &Connection,
+    activity_id: &str,
+    set_number: i32,
+    category: Option<&str>,
+    category_subtype: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE exercise_set SET category = ?3, category_subtype = ?4
+         WHERE activity_id = ?1 AND set_number = ?2",
+        params![activity_id, set_number, category, category_subtype],
+    )?;
+    Ok(())
+}
+
 // Symmetric per-table delete. Activity removal cascades via ON DELETE CASCADE,
 // so this targeted helper is currently exercised only by tests.
 #[allow(dead_code)]
@@ -155,6 +197,63 @@ mod tests {
 
         let sets = get_exercise_sets(&conn, "es-empty").unwrap();
         assert!(sets.is_empty());
+    }
+
+    /// #213: only activities with a set still holding the dump are listed,
+    /// whichever of the two columns holds it; renaming a set touches that
+    /// set alone and nothing but its exercise.
+    #[test]
+    fn undecoded_exercises_are_listed_and_renamed_per_set() {
+        let conn = db::test_db();
+        for id in ["es-dump", "es-sub-dump", "es-fine", "es-none"] {
+            insert_test_activity(&conn, id);
+        }
+        let with = |id: &str, num: i32, category: Option<&str>, subtype: Option<&str>| ExerciseSet {
+            category: category.map(str::to_string),
+            category_subtype: subtype.map(str::to_string),
+            ..sample_exercise_set(id, num)
+        };
+        let dump = "[UInt16(14), UInt16(14), UInt16(65534)]";
+        insert_exercise_sets(
+            &conn,
+            &[
+                with("es-dump", 1, Some(dump), None),
+                with("es-dump", 2, Some(dump), None),
+                with("es-sub-dump", 1, Some("curl"), Some("[UInt16(3), UInt16(65534)]")),
+                with("es-fine", 1, Some("bench_press"), Some("barbell_bench_press")),
+                with("es-none", 1, None, None),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            activities_with_undecoded_exercises(&conn).unwrap(),
+            vec!["es-dump".to_string(), "es-sub-dump".to_string()]
+        );
+        // Every activity whose sets say anything about an exercise, in
+        // whichever column and whatever form; not the one that says nothing.
+        assert_eq!(
+            activities_naming_exercises(&conn).unwrap(),
+            vec!["es-dump".to_string(), "es-fine".to_string(), "es-sub-dump".to_string()]
+        );
+
+        set_exercise(&conn, "es-dump", 1, Some("lateral_raise"), Some("seated_lateral_raise")).unwrap();
+        let sets = get_exercise_sets(&conn, "es-dump").unwrap();
+        assert_eq!(sets[0].category.as_deref(), Some("lateral_raise"));
+        assert_eq!(sets[0].category_subtype.as_deref(), Some("seated_lateral_raise"));
+        assert_eq!(sets[0].repetitions, Some(10));
+        assert_eq!(sets[0].weight_kg, Some(60.0));
+        assert_eq!(sets[1].category.as_deref(), Some(dump), "the other set is not touched");
+        // Still listed while one set holds the dump; gone once none does.
+        assert!(activities_with_undecoded_exercises(&conn).unwrap().contains(&"es-dump".to_string()));
+        set_exercise(&conn, "es-dump", 2, None, None).unwrap();
+        assert_eq!(
+            activities_with_undecoded_exercises(&conn).unwrap(),
+            vec!["es-sub-dump".to_string()]
+        );
+        // A set number the activity does not have is a no-op, not an error.
+        set_exercise(&conn, "es-fine", 9, Some("row"), None).unwrap();
+        assert_eq!(get_exercise_sets(&conn, "es-fine").unwrap()[0].category.as_deref(), Some("bench_press"));
     }
 
     #[test]

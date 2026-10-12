@@ -6,6 +6,22 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- The exercise of a strength set is stored by its name (#213). A Garmin
+  watch writes the category of a set as a list padded with "unknown", and
+  the parser kept the raw dump of that list — `[UInt16(14), UInt16(14),
+  UInt16(65534)]` — where it now stores `lateral_raise`. The first entry
+  that names an exercise is taken; when the file also carries the
+  exercise within the category, that is named from the category's own
+  table (`seated_lateral_raise`, not a bare 24), and padding is no longer
+  kept as a category called "unknown". Sets already in the vault are
+  renamed at the next start from their original files, by position, and
+  only from a file that decodes to the very sets the activity holds —
+  the same count, each with the same type, duration, repetitions and
+  weight. A raw dump whose file cannot be read stays and is tried again
+  at the following start. Nothing else about a set changes. No screen shows sets yet, so the
+  difference is in the stored data only.
+
 ## [0.10.1] - 2026-10-10
 
 ### Changed

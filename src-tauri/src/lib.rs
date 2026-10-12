@@ -351,6 +351,7 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         run_power_curve_backfill(&state);
         import::device_backfill::run(&state);
         import::gear_keys_backfill::run(&state);
+        import::exercise_names_backfill::run(&state);
         run_monitoring_recompute(&state);
         let conn = match state.db.lock() {
             Ok(c) => c,

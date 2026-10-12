@@ -320,6 +320,206 @@ pub fn fit_has_barometer(data: &[u8]) -> bool {
     })
 }
 
+/// The sets of a strength activity, numbered from 1 in file order. The one
+/// place sets are numbered: the import stores them under these numbers and
+/// the backfill (#213) finds them again by the same.
+pub fn exercise_sets_of(
+    messages: &[fitparser::FitDataRecord],
+    activity_id: &str,
+) -> Vec<ExerciseSet> {
+    messages
+        .iter()
+        .filter(|m| m.kind() == MesgNum::Set)
+        .enumerate()
+        .map(|(i, m)| exercise_set_of(m, activity_id, i as i32 + 1))
+        .collect()
+}
+
+/// `exercise_sets_of` over raw file bytes — for the one-time backfill that
+/// re-reads stored FIT files (#213). Undecodable bytes give None.
+pub fn exercise_sets_of_bytes(data: &[u8], activity_id: &str) -> Option<Vec<ExerciseSet>> {
+    fitparser::from_bytes(data)
+        .ok()
+        .map(|messages| exercise_sets_of(&messages, activity_id))
+}
+
+fn exercise_set_of(
+    msg: &fitparser::FitDataRecord,
+    activity_id: &str,
+    set_number: i32,
+) -> ExerciseSet {
+    let mut set = ExerciseSet {
+        id: None,
+        activity_id: activity_id.to_string(),
+        set_number,
+        start_time: None,
+        category: None,
+        category_subtype: None,
+        set_type: None,
+        duration_s: None,
+        repetitions: None,
+        weight_kg: None,
+        wkt_step_index: None,
+    };
+    let (mut category, mut subtype) = (None, None);
+
+    for field in msg.fields() {
+        match field.name() {
+            "start_time" | "timestamp" => {
+                if set.start_time.is_none() {
+                    set.start_time = value_to_timestamp(field.value());
+                }
+            }
+            "category" => category = Some(field.value()),
+            "category_subtype" => subtype = Some(field.value()),
+            "set_type" => {
+                set.set_type = Some(format!("{}", field.value()));
+            }
+            "duration" => {
+                set.duration_s = field_to_f64(field);
+            }
+            "repetitions" => {
+                set.repetitions = field_to_f64(field).map(|v| v as i32);
+            }
+            "weight" => {
+                set.weight_kg = field_to_f64(field);
+            }
+            "wkt_step_index" => {
+                set.wkt_step_index = field_to_f64(field).map(|v| v as i32);
+            }
+            _ => {}
+        }
+    }
+
+    (set.category, set.category_subtype) = exercise_of(category, subtype);
+    set
+}
+
+/// FIT's "no value" for a uint16. fitparser 0.7 drops a field that holds it
+/// — a whole array when one element is it — so this guards a decoder that
+/// would hand the element through instead.
+const NO_VALUE: i64 = 0xFFFF;
+/// What a watch pads the exercise arrays with: the profile's `unknown`.
+const UNKNOWN_EXERCISE: i64 = 0xFFFE;
+
+/// The exercise a set names, as profile names: `("lateral_raise",
+/// "seated_lateral_raise")`.
+///
+/// `category` and `category_subtype` are parallel arrays in the FIT profile,
+/// and the decoder names an enum only when it arrives as a single value —
+/// the elements of an array stay raw numbers, which were stored as their
+/// debug dump, `[UInt16(14), UInt16(14), UInt16(65534)]` (#213). A watch
+/// pads the arrays with "unknown"; the first entry that names an exercise is
+/// taken as the set's, and the subtype is read at the same position, since
+/// what a subtype number means depends on the category beside it.
+fn exercise_of(
+    category: Option<&fitparser::Value>,
+    subtype: Option<&fitparser::Value>,
+) -> (Option<String>, Option<String>) {
+    let named = category
+        .map(elements)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .find_map(|(at, value)| category_name(value).map(|name| (at, name)));
+    let Some((at, category)) = named else {
+        return (None, None);
+    };
+    let subtype = subtype
+        .map(elements)
+        .and_then(|values| values.into_iter().nth(at))
+        .and_then(|value| subtype_name(&category, value));
+    (Some(category), subtype)
+}
+
+/// A field's values: the elements of an array, or the single value itself.
+fn elements(value: &fitparser::Value) -> Vec<&fitparser::Value> {
+    match value {
+        fitparser::Value::Array(values) => values.iter().collect(),
+        single => vec![single],
+    }
+}
+
+/// The category one element names; None for padding. A category the profile
+/// has no name for keeps its number, so nothing a file says is dropped.
+fn category_name(value: &fitparser::Value) -> Option<String> {
+    use fitparser::profile::field_types::ExerciseCategory;
+    use std::convert::TryInto;
+
+    let name = match value {
+        fitparser::Value::String(name) => name.clone(),
+        other => {
+            let code: i64 = other.try_into().ok()?;
+            if code == NO_VALUE {
+                return None;
+            }
+            ExerciseCategory::from(u16::try_from(code).ok()?).to_string()
+        }
+    };
+    (name != "unknown").then_some(name)
+}
+
+/// The exercise within `category` one subtype element names; None for
+/// padding. A number that category's table does not list is kept as is.
+fn subtype_name(category: &str, value: &fitparser::Value) -> Option<String> {
+    use fitparser::profile::get_field_variant_as_string;
+    use std::convert::TryInto;
+
+    if let fitparser::Value::String(name) = value {
+        return Some(name.clone());
+    }
+    let code: i64 = value.try_into().ok()?;
+    if code == NO_VALUE || code == UNKNOWN_EXERCISE {
+        return None;
+    }
+    Some(match exercise_names_of(category) {
+        Some(table) if table.is_named_variant(code) => get_field_variant_as_string(table, code),
+        _ => code.to_string(),
+    })
+}
+
+/// The profile's table of exercise names for a category.
+fn exercise_names_of(category: &str) -> Option<fitparser::profile::FieldDataType> {
+    use fitparser::profile::FieldDataType as T;
+
+    Some(match category {
+        "bench_press" => T::BenchPressExerciseName,
+        "calf_raise" => T::CalfRaiseExerciseName,
+        "cardio" => T::CardioExerciseName,
+        "carry" => T::CarryExerciseName,
+        "chop" => T::ChopExerciseName,
+        "core" => T::CoreExerciseName,
+        "crunch" => T::CrunchExerciseName,
+        "curl" => T::CurlExerciseName,
+        "deadlift" => T::DeadliftExerciseName,
+        "flye" => T::FlyeExerciseName,
+        "hip_raise" => T::HipRaiseExerciseName,
+        "hip_stability" => T::HipStabilityExerciseName,
+        "hip_swing" => T::HipSwingExerciseName,
+        "hyperextension" => T::HyperextensionExerciseName,
+        "lateral_raise" => T::LateralRaiseExerciseName,
+        "leg_curl" => T::LegCurlExerciseName,
+        "leg_raise" => T::LegRaiseExerciseName,
+        "lunge" => T::LungeExerciseName,
+        "olympic_lift" => T::OlympicLiftExerciseName,
+        "plank" => T::PlankExerciseName,
+        "plyo" => T::PlyoExerciseName,
+        "pull_up" => T::PullUpExerciseName,
+        "push_up" => T::PushUpExerciseName,
+        "row" => T::RowExerciseName,
+        "shoulder_press" => T::ShoulderPressExerciseName,
+        "shoulder_stability" => T::ShoulderStabilityExerciseName,
+        "shrug" => T::ShrugExerciseName,
+        "sit_up" => T::SitUpExerciseName,
+        "squat" => T::SquatExerciseName,
+        "total_body" => T::TotalBodyExerciseName,
+        "triceps_extension" => T::TricepsExtensionExerciseName,
+        "warm_up" => T::WarmUpExerciseName,
+        "run" => T::RunExerciseName,
+        _ => return None,
+    })
+}
+
 /// Parse FIT from in-memory bytes (e.g. decompressed from a .gz import).
 pub fn parse_fit_bytes(data: &[u8], activity_id: &str) -> Result<ParsedActivity, String> {
     let messages =
@@ -345,7 +545,7 @@ pub fn parse_fit_records(
     let mut sessions: Vec<(Option<String>, Option<String>, SessionMetrics)> = Vec::new();
     let mut laps: Vec<Lap> = Vec::new();
     let mut lengths: Vec<SwimLength> = Vec::new();
-    let mut sets: Vec<ExerciseSet> = Vec::new();
+    let sets = exercise_sets_of(messages, activity_id);
     // One entry per TimeInZone message: (its reference_mesg, its rows).
     // Resolved after the loop — see select_time_in_zones.
     let mut time_in_zone_groups: Vec<(Option<String>, Vec<TimeInZone>)> = Vec::new();
@@ -840,55 +1040,6 @@ pub fn parse_fit_records(
 
                 lengths.push(length);
             }
-            MesgNum::Set => {
-                let mut set = ExerciseSet {
-                    id: None,
-                    activity_id: activity_id.to_string(),
-                    set_number: (sets.len() + 1) as i32,
-                    start_time: None,
-                    category: None,
-                    category_subtype: None,
-                    set_type: None,
-                    duration_s: None,
-                    repetitions: None,
-                    weight_kg: None,
-                    wkt_step_index: None,
-                };
-
-                for field in msg.fields() {
-                    match field.name() {
-                        "start_time" | "timestamp" => {
-                            if set.start_time.is_none() {
-                                set.start_time = value_to_timestamp(field.value());
-                            }
-                        }
-                        "category" => {
-                            set.category = Some(format!("{}", field.value()));
-                        }
-                        "category_subtype" => {
-                            set.category_subtype = Some(format!("{}", field.value()));
-                        }
-                        "set_type" => {
-                            set.set_type = Some(format!("{}", field.value()));
-                        }
-                        "duration" => {
-                            set.duration_s = field_to_f64(field);
-                        }
-                        "repetitions" => {
-                            set.repetitions = field_to_f64(field).map(|v| v as i32);
-                        }
-                        "weight" => {
-                            set.weight_kg = field_to_f64(field);
-                        }
-                        "wkt_step_index" => {
-                            set.wkt_step_index = field_to_f64(field).map(|v| v as i32);
-                        }
-                        _ => {}
-                    }
-                }
-
-                sets.push(set);
-            }
             MesgNum::TimeInZone => {
                 let mut reference_mesg: Option<String> = None;
                 let mut time_in_zones: Vec<TimeInZone> = Vec::new();
@@ -1189,6 +1340,208 @@ mod tests {
         assert_eq!(compose_device_name(None, s("garmin"), None), s("Garmin"));
         assert_eq!(compose_device_name(None, None, s("fenix6x")), s("fenix6x"));
         assert_eq!(compose_device_name(None, None, None), None);
+    }
+
+    fn set_msg(fields: Vec<(&str, fitparser::Value)>) -> fitparser::FitDataRecord {
+        let mut msg = fitparser::FitDataRecord::new(MesgNum::Set);
+        for (i, (name, value)) in fields.into_iter().enumerate() {
+            msg.push(fitparser::FitDataField::new(name.to_string(), i as u8, value, String::new()));
+        }
+        msg
+    }
+
+    fn codes(values: &[u16]) -> fitparser::Value {
+        fitparser::Value::Array(values.iter().map(|v| fitparser::Value::UInt16(*v)).collect())
+    }
+
+    fn exercise(set: &ExerciseSet) -> (Option<&str>, Option<&str>) {
+        (set.category.as_deref(), set.category_subtype.as_deref())
+    }
+
+    /// #213: the shape a fenix writes — the category as an array padded with
+    /// "unknown", which the decoder leaves as raw numbers. It was stored as
+    /// `[UInt16(14), UInt16(14), UInt16(65534)]`.
+    #[test]
+    fn a_set_names_its_exercise_from_the_category_array() {
+        use fitparser::Value;
+        // The real file: a category array and no subtype at all.
+        let sets = exercise_sets_of(
+            &[set_msg(vec![
+                ("category", codes(&[14, 14, 65534])),
+                ("set_type", Value::String("active".into())),
+                ("repetitions", Value::UInt16(53)),
+                ("duration", Value::Float64(2113.0)),
+            ])],
+            "act",
+        );
+        assert_eq!(exercise(&sets[0]), (Some("lateral_raise"), None));
+        assert_eq!(sets[0].activity_id, "act");
+        assert_eq!((sets[0].set_number, sets[0].repetitions, sets[0].duration_s), (1, Some(53), Some(2113.0)));
+        assert_eq!(sets[0].set_type.as_deref(), Some("active"));
+
+        // With a subtype: named from the category's own table.
+        let both = exercise_sets_of(
+            &[set_msg(vec![
+                ("category", codes(&[14, 14, 65534])),
+                ("category_subtype", codes(&[24, 24, 65534])),
+            ])],
+            "act",
+        );
+        assert_eq!(exercise(&both[0]), (Some("lateral_raise"), Some("seated_lateral_raise")));
+    }
+
+    /// The subtype is read at the position of the category it belongs to:
+    /// the same number names a different exercise in another category's
+    /// table, so reading the first subtype beside the second category would
+    /// name the wrong exercise.
+    #[test]
+    fn a_subtype_is_read_beside_its_own_category() {
+        use fitparser::Value;
+        let one = |fields| exercise_sets_of(&[set_msg(fields)], "a").remove(0);
+
+        // Padding first: the exercise is the second entry, and so is its subtype.
+        let padded = one(vec![("category", codes(&[65534, 0])), ("category_subtype", codes(&[24, 1]))]);
+        assert_eq!(exercise(&padded), (Some("bench_press"), Some("barbell_bench_press")));
+        // FIT's own "no value" must not be named an exercise either.
+        // (fitparser 0.7 never hands this shape over — it drops such a
+        // field whole — so only hand-built messages reach it.)
+        let invalid = one(vec![("category", codes(&[65535, 14])), ("category_subtype", codes(&[65535, 24]))]);
+        assert_eq!(exercise(&invalid), (Some("lateral_raise"), Some("seated_lateral_raise")));
+        // A subtype that is padding names nothing; the category still stands.
+        let no_sub = one(vec![("category", codes(&[14])), ("category_subtype", codes(&[65534]))]);
+        assert_eq!(exercise(&no_sub), (Some("lateral_raise"), None));
+        let short_sub = one(vec![("category", codes(&[65534, 14])), ("category_subtype", codes(&[24]))]);
+        assert_eq!(exercise(&short_sub), (Some("lateral_raise"), None), "no subtype at the category's position");
+
+        // Nothing but padding, or no category at all: the set names no
+        // exercise — and a subtype without a category means nothing.
+        let empty = one(vec![("category", codes(&[65534, 65535])), ("category_subtype", codes(&[24]))]);
+        assert_eq!(exercise(&empty), (None, None));
+        let bare = one(vec![("category_subtype", codes(&[24])), ("repetitions", Value::UInt16(8))]);
+        assert_eq!(exercise(&bare), (None, None));
+        assert_eq!(bare.repetitions, Some(8));
+    }
+
+    /// A single value arrives already named by the decoder (a one-element
+    /// array is decoded as a scalar), and a number the profile has no name
+    /// for is kept rather than dropped.
+    #[test]
+    fn single_values_and_unlisted_numbers_are_kept() {
+        use fitparser::Value;
+        let one = |fields| exercise_sets_of(&[set_msg(fields)], "a").remove(0);
+
+        let scalar = one(vec![
+            ("category", Value::String("curl".into())),
+            ("category_subtype", Value::UInt16(0)),
+        ]);
+        assert_eq!(scalar.category.as_deref(), Some("curl"));
+        assert_eq!(
+            scalar.category_subtype,
+            Some(fitparser::profile::get_field_variant_as_string(
+                fitparser::profile::FieldDataType::CurlExerciseName,
+                0
+            ))
+        );
+        let numeric = one(vec![("category", Value::UInt16(14)), ("category_subtype", Value::UInt16(24))]);
+        assert_eq!(exercise(&numeric), (Some("lateral_raise"), Some("seated_lateral_raise")));
+        let unknown_scalar = one(vec![("category", Value::String("unknown".into()))]);
+        assert_eq!(exercise(&unknown_scalar), (None, None));
+
+        // A category newer than the bundled profile, and a subtype its
+        // table does not list.
+        let newer = one(vec![("category", codes(&[999])), ("category_subtype", codes(&[7]))]);
+        assert_eq!(exercise(&newer), (Some("999"), Some("7")));
+        let unlisted = one(vec![("category", codes(&[14])), ("category_subtype", codes(&[60000]))]);
+        assert_eq!(exercise(&unlisted), (Some("lateral_raise"), Some("60000")));
+    }
+
+    /// Every category the profile names has its OWN table of exercises: a
+    /// typo in `exercise_names_of` would silently store numbers instead of
+    /// names, and two arms swapped would name the wrong exercise.
+    #[test]
+    fn every_named_category_has_its_own_exercise_table() {
+        use fitparser::profile::field_types::ExerciseCategory;
+        let named: Vec<String> = (0u16..=64)
+            .filter(|c| ExerciseCategory::is_named_variant(*c as i64))
+            .map(|c| ExerciseCategory::from(c).to_string())
+            .collect();
+        assert_eq!(named.len(), 33, "the profile's categories, bench_press … run");
+        for name in &named {
+            // "bench_press" → "BenchPressExerciseName", the profile's naming.
+            let expected: String = name
+                .split('_')
+                .map(|w| w[..1].to_uppercase() + &w[1..])
+                .chain(["ExerciseName".to_string()])
+                .collect();
+            let table = exercise_names_of(name).unwrap_or_else(|| panic!("no exercise table for {name}"));
+            assert_eq!(format!("{table:?}"), expected);
+        }
+        assert!(exercise_names_of("unknown").is_none());
+        assert!(exercise_names_of("999").is_none());
+    }
+
+    /// The same through the real decoder, on the bytes of a file: what a
+    /// fenix writes is a uint16[3], and it is the decoder — not a hand-built
+    /// message — that leaves the array's elements unnamed.
+    #[test]
+    fn the_sets_of_a_strength_file_are_named_from_its_bytes() {
+        use crate::parser::fit_builder::strength_fixture;
+        let bytes = strength_fixture(&[
+            ([14, 14, 65534], None),
+            ([65534, 65534, 65534], None),
+            ([0, 65534, 65534], Some([1, 65534, 65534])),
+        ]);
+        // What the old parser stored for the first set — the bug itself.
+        let messages = fitparser::from_bytes(&bytes).unwrap();
+        let raw = messages
+            .iter()
+            .find(|m| m.kind() == MesgNum::Set)
+            .and_then(|m| m.fields().iter().find(|f| f.name() == "category"))
+            .map(|f| format!("{}", f.value()));
+        assert_eq!(raw.as_deref(), Some("[UInt16(14), UInt16(14), UInt16(65534)]"));
+
+        let sets = exercise_sets_of_bytes(&bytes, "act").unwrap();
+        assert_eq!(
+            sets.iter().map(|s| (s.set_number, s.repetitions, exercise(s))).collect::<Vec<_>>(),
+            vec![
+                (1, Some(10), (Some("lateral_raise"), None)),
+                (2, Some(11), (None, None)),
+                (3, Some(12), (Some("bench_press"), Some("barbell_bench_press"))),
+            ]
+        );
+        // The import stores exactly these.
+        let parsed = parse_fit_bytes(&bytes, "act").unwrap();
+        assert_eq!(
+            parsed.sets.iter().map(|s| (s.set_number, exercise(s))).collect::<Vec<_>>(),
+            sets.iter().map(|s| (s.set_number, exercise(s))).collect::<Vec<_>>()
+        );
+    }
+
+    /// Sets are numbered in file order, other messages do not take a number,
+    /// and the import path stores the same names the backfill re-derives.
+    #[test]
+    fn sets_are_numbered_in_file_order_on_both_paths() {
+        let msgs = vec![
+            set_msg(vec![("category", codes(&[0, 65534]))]),
+            device_msg(MesgNum::Sport, &[("sport", "training"), ("name", "Strength")]),
+            set_msg(vec![("category", codes(&[65534]))]),
+            set_msg(vec![("category", codes(&[7, 65534])), ("category_subtype", codes(&[0, 65534]))]),
+        ];
+        let sets = exercise_sets_of(&msgs, "a");
+        assert_eq!(sets.iter().map(|s| s.set_number).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            sets.iter().map(|s| s.category.as_deref()).collect::<Vec<_>>(),
+            vec![Some("bench_press"), None, Some("curl")]
+        );
+
+        let parsed = parse_fit_records(&msgs, "a").unwrap();
+        assert_eq!(
+            parsed.sets.iter().map(|s| (s.set_number, s.category.clone(), s.category_subtype.clone())).collect::<Vec<_>>(),
+            sets.iter().map(|s| (s.set_number, s.category.clone(), s.category_subtype.clone())).collect::<Vec<_>>()
+        );
+        assert!(parsed.sets.iter().all(|s| !s.category.as_deref().unwrap_or("").starts_with('[')));
+
+        assert!(exercise_sets_of_bytes(b"not a fit file", "a").is_none());
     }
 
     fn device_msg(kind: MesgNum, fields: &[(&str, &str)]) -> fitparser::FitDataRecord {
