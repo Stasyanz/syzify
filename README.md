@@ -17,6 +17,13 @@ No account, no server, no telemetry.
 [Security model](https://syzify.siliconbasement.com/docs/security/) ·
 [Changelog](CHANGELOG.md)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/activity-dark.webp">
+    <img src=".github/screenshots/activity-light.webp" width="820" alt="An activity in Syzify: the route on a map, the elevation profile, and power, heart rate, speed and cadence charts colored by zone">
+  </picture>
+</p>
+
 ## Why Syzify
 
 - **Encrypted at rest.** One password encrypts the workout files, the database
