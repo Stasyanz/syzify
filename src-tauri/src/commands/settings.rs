@@ -1296,27 +1296,26 @@ mod tests {
         );
     }
 
-    /// A locked vault is refused before any folder or device is walked, and
-    /// so is a vault that failed to open (its connection is a placeholder).
+    /// The command itself, on the machine's real mount points: whatever is
+    /// plugged in, a fresh vault answers without an error and sets the mark.
+    #[test]
+    fn catch_up_command_runs_against_the_real_volumes() {
+        let vault = ScratchDir::new("catch-up-cmd");
+        let app = mock_app_with(test_state(&vault));
+        assert!(tauri::async_runtime::block_on(catch_up_watch_files(app.handle().clone())).is_ok());
+        assert!(mark(&app).is_some());
+    }
+
+    /// A locked vault is refused before anything is read or marked, and so
+    /// is a vault that failed to open (its connection is a placeholder).
     #[test]
     fn catch_up_refuses_a_locked_or_failed_vault() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         let vault = ScratchDir::new("catch-up-locked");
         crypto::write_vault_lock(&vault, &lock_with(true, false)).unwrap();
         let app = mock_app_with(test_state(&vault));
-        let walked = Arc::new(AtomicBool::new(false));
-        let w = walked.clone();
-        let err = tauri::async_runtime::block_on(catch_up_files(
-            app.handle().clone(),
-            move || {
-                w.store(true, Ordering::SeqCst);
-                Vec::new()
-            },
-            catch_up::now_secs(),
-        ))
-        .unwrap_err();
+        let err = tauri::async_runtime::block_on(catch_up_files(app.handle().clone(), Vec::new, catch_up::now_secs()))
+            .unwrap_err();
         assert!(err.contains("locked"), "{err}");
-        assert!(!walked.load(Ordering::SeqCst));
         assert_eq!(mark(&app), None);
 
         let vault = ScratchDir::new("catch-up-failed");

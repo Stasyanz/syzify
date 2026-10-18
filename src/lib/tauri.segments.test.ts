@@ -63,3 +63,10 @@ describe("update api wrapper", () => {
     expect(mocked).toHaveBeenCalledWith("install_update");
   });
 });
+
+describe("watch-folder api wrapper", () => {
+  it("maps the launch catch-up to its command", async () => {
+    await api.catchUpWatchFiles();
+    expect(mocked).toHaveBeenCalledWith("catch_up_watch_files");
+  });
+});

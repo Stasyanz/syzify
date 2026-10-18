@@ -231,6 +231,13 @@ mod tests {
         assert_eq!(offered, vec![rides.join("new.fit").to_str().unwrap().to_lowercase()]);
     }
 
+    /// The real mount points: directories only, and none at all (not an
+    /// error) where /Volumes does not exist, as on Linux.
+    #[test]
+    fn current_volumes_lists_directories_or_nothing() {
+        assert!(current_volumes().iter().all(|vol| vol.is_dir()));
+    }
+
     /// The launch catch-up's walk (#221): every device mount point under the
     /// directory, the device's files only; a stray file there is no volume.
     #[test]
