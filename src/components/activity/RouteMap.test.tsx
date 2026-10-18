@@ -326,34 +326,105 @@ describe("RouteMap destination point (#179)", () => {
   });
 });
 
-describe("a simulated course (#190)", () => {
-  it("draws no map for a virtual ride, only the notice — the track would land on a real island", () => {
-    const mapSpy = vi.spyOn(L, "map");
-    const before = mapSpy.mock.calls.length;
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { getByText } = render(
-      <QueryClientProvider client={qc}>
-        <RouteMap trackpoints={track} sport="virtual_ride" activityId="act-1" location={[-11.64, 166.95]} locationName="Watopia" />
-      </QueryClientProvider>,
-    );
-    getByText(/Virtual ride — the course is simulated/);
-    expect(mapSpy.mock.calls.length).toBe(before);
+const tileLayers = (map: L.Map) => {
+  let n = 0;
+  map.eachLayer((l) => {
+    if (l instanceof L.TileLayer) n++;
+  });
+  return n;
+};
+const polylines = (map: L.Map) => {
+  let n = 0;
+  map.eachLayer((l) => {
+    if (l instanceof L.Polyline) n++;
+  });
+  return n;
+};
+const tooltipsWith = (text: string) =>
+  Array.from(document.querySelectorAll(".leaflet-tooltip")).some((t) => t.textContent?.includes(text));
+
+describe("a simulated course (#190, #222)", () => {
+  it("draws the course on a blank canvas — no tiles, no credit, no layer switch — the track would land on a real island", () => {
+    // The location sits on the course, as a Watopia point would: no flag.
+    const { map, getByText, queryByTitle } = mount({
+      sport: "virtual_ride",
+      location: [55.701, 37.6],
+      locationName: "Watopia",
+    });
+    expect(tileLayers(map)).toBe(0);
+    expect(map.attributionControl).toBeUndefined();
+    expect(document.querySelector(".leaflet-control-attribution")).toBeNull();
+    expect(queryByTitle("Change map layer")).toBeNull();
+    getByText("Simulated course — not a place on the map");
+    // The course itself, with its start and finish, and nothing else.
+    expect(polylines(map)).toBe(1);
+    expect(markers(map)).toHaveLength(2);
+    expect(flagOf(map)).toBeUndefined();
+    // No tile layer caps the zoom here, so the map does.
+    expect(map.getMaxZoom()).toBe(18);
+    // Nothing is fetched: not a tile, not an icon.
+    expect(document.querySelectorAll(".leaflet-container img")).toHaveLength(0);
+    // The canvas is the page's color: it has an edge of its own.
+    expect(map.getContainer().classList.contains("border")).toBe(true);
+    // The view stays around the course: the course's box, once more on each side.
+    const box = (map.options.maxBounds as L.LatLngBounds | undefined)!;
+    expect(box.getSouth()).toBeCloseTo(55.698, 6);
+    expect(box.getNorth()).toBeCloseTo(55.704, 6);
+    expect(box.contains(L.latLng(55.701, 37.6))).toBe(true);
+    expect(map.options.maxBoundsViscosity).toBe(1);
+    // The fullscreen button stays.
+    expect(queryByTitle("Fullscreen map")).not.toBeNull();
   });
 
-  it("names the sport in the notice — a virtual run is no ride (#192)", () => {
-    const mapSpy = vi.spyOn(L, "map");
-    const before = mapSpy.mock.calls.length;
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { getByText } = render(
-      <QueryClientProvider client={qc}>
-        <RouteMap trackpoints={track} sport="virtual_run" activityId="act-1" />
-      </QueryClientProvider>,
-    );
-    getByText("Virtual run — the course is simulated, no map");
-    expect(mapSpy.mock.calls.length).toBe(before);
+  it("a real map neither gets the edge nor is held around the route", () => {
+    const { map } = mount();
+    expect(map.getContainer().classList.contains("border")).toBe(false);
+    expect(map.options.maxBounds).toBeUndefined();
   });
 
-  it("survives the sport changing under it — ride to virtual ride and back, no remount", () => {
+  it("fits a course that never moved to a finite zoom", () => {
+    // A ride on a trainer with the simulator paused: every point the same.
+    const still = { ...track, lat: [55.7, 55.7, 55.7], lon: [37.6, 37.6, 37.6] };
+    vi.spyOn(L.Map.prototype, "getSize").mockReturnValue(L.point(600, 320));
+    const { map } = mount({ sport: "virtual_ride", trackpoints: still });
+    expect(map.getZoom()).toBe(18);
+  });
+
+  it("a virtual run gets the same canvas (#192)", () => {
+    const { map, getByText } = mount({ sport: "virtual_run" });
+    expect(tileLayers(map)).toBe(0);
+    getByText("Simulated course — not a place on the map");
+  });
+
+  it("a click moves the hover onto the course and reads it, but opens no destination menu", () => {
+    const { map } = mount({
+      sport: "virtual_ride",
+      trackpoints: { ...track, distance_m: [0, 111, 222], hr: [140, 150, 160] },
+    });
+    for (const type of ["click", "contextmenu"]) {
+      act(() => void map.fire(type, { latlng: L.latLng(55.7011, 37.6) }));
+      expect(menuButton(), type).toBeUndefined();
+    }
+    expect(useActivityStore.getState().hoveredPointIndex).toBe(1);
+    expect(tooltipsWith("150 bpm")).toBe(true);
+    act(() => void map.fire("mousemove", { latlng: L.latLng(55.702, 37.6) }));
+    expect(useActivityStore.getState().hoveredPointIndex).toBe(2);
+    expect(tooltipsWith("160 bpm")).toBe(true);
+    expect(api.setActivityLocationPoint).not.toHaveBeenCalled();
+  });
+
+  it("highlights the elevation chart's selection on the course", () => {
+    useActivityStore.setState({ selectedRange: null });
+    const { map } = mount({ sport: "virtual_ride" });
+    const base = polylines(map);
+    act(() => useActivityStore.setState({ selectedRange: [0, 1] }));
+    // Two shadows, the casing and the core over the course.
+    expect(polylines(map)).toBe(base + 4);
+    act(() => useActivityStore.setState({ selectedRange: null }));
+    expect(polylines(map)).toBe(base);
+  });
+
+  it("swaps canvases when the sport changes under it — ride to virtual ride and back", () => {
     const mapSpy = vi.spyOn(L, "map");
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const ui = (sport: string) => (
@@ -364,21 +435,36 @@ describe("a simulated course (#190)", () => {
     const { rerender, getByText, queryByText } = render(ui("ride"));
     const maps = mapSpy.mock.calls.length;
     expect(maps).toBeGreaterThan(0);
+    expect(tileLayers(mapSpy.mock.results.at(-1)!.value as L.Map)).toBe(1);
+
+    // The map's options are fixed at creation: each crossing is a new map.
     rerender(ui("virtual_ride"));
-    getByText(/Virtual ride — the course is simulated/);
-    rerender(ui("ride"));
-    expect(queryByText(/Virtual ride/)).toBeNull();
+    getByText("Simulated course — not a place on the map");
     expect(mapSpy.mock.calls.length).toBe(maps + 1);
+    expect(tileLayers(mapSpy.mock.results.at(-1)!.value as L.Map)).toBe(0);
+
+    rerender(ui("ride"));
+    expect(queryByText(/Simulated course/)).toBeNull();
+    expect(mapSpy.mock.calls.length).toBe(maps + 2);
+    const back = mapSpy.mock.results.at(-1)!.value as L.Map;
+    expect(tileLayers(back)).toBe(1);
+    expect(back.attributionControl).toBeDefined();
   });
 
-  it("an indoor ride without a track keeps the plain notice", () => {
+  it("an indoor activity without a track keeps the plain notice, simulated or not", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const empty = { ...track, lat: [null, null, null], lon: [null, null, null] } as typeof track;
-    const { getByText } = render(
-      <QueryClientProvider client={qc}>
-        <RouteMap trackpoints={empty} sport="indoor_ride" activityId="act-1" />
-      </QueryClientProvider>,
-    );
-    getByText(/Indoor activity — no route data/);
+    for (const sport of ["indoor_ride", "virtual_ride"]) {
+      const mapSpy = vi.spyOn(L, "map");
+      const before = mapSpy.mock.calls.length;
+      const { getByText } = render(
+        <QueryClientProvider client={qc}>
+          <RouteMap trackpoints={empty} sport={sport} activityId="act-1" />
+        </QueryClientProvider>,
+      );
+      getByText(/Indoor activity — no route data/);
+      expect(mapSpy.mock.calls.length, sport).toBe(before);
+      cleanup();
+    }
   });
 });

@@ -65,6 +65,11 @@ interface MapContainerProps {
   className?: string;
   style?: CSSProperties;
   scrollWheelZoom?: boolean;
+  /** Leaflet's credit line in the corner; a map with no tile layer has no
+   * one to credit. */
+  attributionControl?: boolean;
+  /** Without a tile layer nothing caps the zoom; tiles stop at 18. */
+  maxZoom?: number;
   children?: ReactNode;
 }
 
@@ -74,19 +79,22 @@ export function MapContainer({
   className,
   style,
   scrollWheelZoom = true,
+  attributionControl = true,
+  maxZoom,
   children,
 }: MapContainerProps) {
   const divRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
-  // center/zoom are only the map's initial state; from then on the user and
-  // fitBounds drive it, so prop changes must not touch the instance.
-  const initial = useRef({ center, zoom, scrollWheelZoom });
+  // These props are only the map's initial state; from then on the user and
+  // fitBounds drive it, so prop changes must not touch the instance — a
+  // caller that needs other options remounts the container.
+  const initial = useRef({ center, zoom, scrollWheelZoom, attributionControl, maxZoom });
 
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
-    const opts = initial.current;
-    const m = L.map(el, { scrollWheelZoom: opts.scrollWheelZoom }).setView(opts.center, opts.zoom);
+    const { center, zoom, ...options } = initial.current;
+    const m = L.map(el, options).setView(center, zoom);
     setMap(m);
     return () => {
       setMap(null);

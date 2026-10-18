@@ -6,6 +6,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- A virtual ride or run shows its course (#222): the track a simulator
+  such as Zwift records is drawn on a blank canvas in place of the map,
+  with the start and finish, the readings under the pointer and the
+  elevation chart's selection, as on a ride outdoors. It is still not
+  placed on the world map: a virtual world sits at made-up coordinates
+  (Watopia lies in the Pacific), so there are no map tiles under it and no
+  destination point to pick on it, and it still gets no place name, no
+  segments and no Library map pin.
+
 ### Fixed
 - Files that reach a watch folder while Syzify is closed, and a Garmin
   plugged in before it starts, are offered at the next launch (#221) —

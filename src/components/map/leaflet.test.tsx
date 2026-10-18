@@ -63,6 +63,27 @@ describe("map/leaflet wrapper", () => {
     expect(container.querySelector(".leaflet-tooltip")?.textContent).toBe("tip-content");
   });
 
+  it("credits by default and caps nothing; a blank canvas drops the credit and caps the zoom", () => {
+    let map!: L.Map;
+    const { container } = render(
+      <MapContainer center={[55.75, 37.62]} zoom={13}>
+        <GrabMap onMap={(m) => (map = m)} />
+      </MapContainer>,
+    );
+    expect(container.querySelector(".leaflet-control-attribution")).toBeTruthy();
+    expect(map.getMaxZoom()).toBe(Infinity);
+    cleanup();
+
+    const blank = render(
+      <MapContainer center={[55.75, 37.62]} zoom={13} attributionControl={false} maxZoom={18} scrollWheelZoom={false}>
+        <GrabMap onMap={(m) => (map = m)} />
+      </MapContainer>,
+    );
+    expect(blank.container.querySelector(".leaflet-control-attribution")).toBeNull();
+    expect(map.getMaxZoom()).toBe(18);
+    expect(map.scrollWheelZoom.enabled()).toBe(false);
+  });
+
   it("moves a marker on position change without recreating its DOM node", () => {
     const { container, rerender } = render(
       <MapContainer center={[55.75, 37.62]} zoom={13}>

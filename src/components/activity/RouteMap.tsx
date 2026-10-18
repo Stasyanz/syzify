@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, Popup
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, Maximize, Minimize, MapPin } from "lucide-react";
-import { hasSimulatedCourse, SPORT_LABELS, type SportType, type TrackPointColumns } from "../../lib/types";
+import { hasSimulatedCourse, type TrackPointColumns } from "../../lib/types";
 import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
 import { formatDistance, formatElevation, formatPaceOrSpeed, formatHR } from "../../lib/format";
@@ -270,12 +270,14 @@ function MapClickHandler({
 }: {
   trackpoints: TrackPointColumns;
   /** A click (either button) snapped to the route — where the menu opens;
-   * clicks off the route do not call. */
-  onRouteMenu: (point: [number, number]) => void;
+   * clicks off the route do not call. None on a simulated course: its
+   * points are no place to geocode (#222). */
+  onRouteMenu?: (point: [number, number]) => void;
 }) {
   const setHoveredPointIndex = useActivityStore((s) => s.setHoveredPointIndex);
 
   const menuAt = (latlng: L.LatLng) => {
+    if (!onRouteMenu) return;
     const idx = findNearestPointIndex(trackpoints, latlng);
     const lat = idx >= 0 ? trackpoints.lat[idx] : null;
     const lon = idx >= 0 ? trackpoints.lon[idx] : null;
@@ -406,41 +408,57 @@ function useRoutePositions(trackpoints: TrackPointColumns) {
   }, [trackpoints]);
 }
 
-/** "Virtual Run" → "Virtual run": the sport's label at the head of a sentence. */
-function sentenceLabel(sport: string): string {
-  const label = SPORT_LABELS[sport as SportType] ?? "Activity";
-  return label.charAt(0) + label.slice(1).toLowerCase();
+/** A blank canvas has no streets to find the way back by: the view may not
+ * leave the course's surroundings, so a pan or a zoom out cannot lose it.
+ * At runtime, not at creation: the course is known by then anyway. */
+function KeepCourseInView({ positions }: { positions: L.LatLngExpression[] }) {
+  const map = useMap();
+  useEffect(() => {
+    map.options.maxBoundsViscosity = 1;
+    map.setMaxBounds(L.latLngBounds(positions).pad(1));
+    // An empty box lifts the hold, should this ever unmount without its map.
+    return () => {
+      map.setMaxBounds(undefined);
+    };
+  }, [map, positions]);
+  return null;
 }
 
-/** The notice or the map. The decision is a separate component on purpose:
- * the map's hooks live in RouteMapCanvas, so a sport edited on the page
- * (ride → virtual ride and back, no remount) swaps components instead of
- * changing the number of hooks rendered. */
+/** The notice (no GPS track) or the canvas. The decision is a separate
+ * component on purpose: the map's hooks live in RouteMapCanvas, so a sport
+ * edited on the page swaps components instead of changing the number of
+ * hooks rendered. */
 export function RouteMap(props: Props) {
   useUnits();
   const positions = useRoutePositions(props.trackpoints);
 
-  if (positions.length === 0 || hasSimulatedCourse(props.sport)) {
-    // No GPS track, or a simulator's track that would draw a virtual world
-    // onto a real island (#190) — don't reserve a full map canvas; a slim
-    // notice is enough.
+  if (positions.length === 0) {
+    // No GPS track — don't reserve a full map canvas; a slim notice is enough.
     return (
       <div className="bg-card-2 rounded-card flex items-center justify-center h-16 text-sm text-faint">
-        {hasSimulatedCourse(props.sport) ? `${sentenceLabel(props.sport)} — the course is simulated, no map` : "Indoor activity — no route data"}
+        Indoor activity — no route data
       </div>
     );
   }
-  return <RouteMapCanvas positions={positions} {...props} />;
+  // A simulator's track would draw a virtual world onto a real island
+  // (#190): its shape goes on a blank canvas instead (#222). The key
+  // remounts the canvas when an edit moves the sport across that line —
+  // the Leaflet instance's options are fixed at creation.
+  const simulated = hasSimulatedCourse(props.sport);
+  return <RouteMapCanvas key={simulated ? "course" : "map"} positions={positions} simulated={simulated} {...props} />;
 }
 
 function RouteMapCanvas({
   positions,
+  simulated,
   trackpoints,
   sport,
   activityId,
   location,
   locationName,
-}: Props & { positions: L.LatLngExpression[] }) {
+}: Props & { positions: L.LatLngExpression[]; simulated: boolean }) {
+  // The layer state below goes unused on a simulated course; it stays
+  // unconditional, as hooks must.
   const { data: savedLayer } = useQuery({
     queryKey: ["setting", "map_layer"],
     queryFn: () => api.getSetting("map_layer"),
@@ -495,9 +513,11 @@ function RouteMapCanvas({
     },
     [saving, forgetLastSave],
   );
+  // A simulated course is no place to stand a flag on, nor to pick one:
+  // the menu would geocode the virtual world's coordinates.
   const flag = useMemo(
-    () => flagPosition(trackpoints, locLat != null && locLon != null ? [locLat, locLon] : null),
-    [trackpoints, locLat, locLon],
+    () => (simulated ? null : flagPosition(trackpoints, locLat != null && locLon != null ? [locLat, locLon] : null)),
+    [simulated, trackpoints, locLat, locLon],
   );
 
   useEffect(() => {
@@ -537,13 +557,22 @@ function RouteMapCanvas({
       <MapContainer
         center={start}
         zoom={13}
-        className="h-full w-full rounded-lg z-0"
+        // A blank canvas is the page's own color, so it needs an edge.
+        className={`h-full w-full rounded-lg z-0${simulated ? " border border-border" : ""}`}
+        // No tiles on a simulated course: no place, no network, no credit.
+        // And no tile layer to cap the zoom, so the map does — not cosmetic:
+        // a container still 0×0 fits to an infinite zoom, and the view's
+        // NaN center would break KeepCourseInView's setMaxBounds.
+        attributionControl={!simulated}
+        maxZoom={simulated ? 18 : undefined}
       >
-        <TileLayer
-          key={layer}
-          attribution={ATTRIBUTIONS[layer]}
-          url={tileUrl}
-        />
+        {!simulated && (
+          <TileLayer
+            key={layer}
+            attribution={ATTRIBUTIONS[layer]}
+            url={tileUrl}
+          />
+        )}
         <Polyline positions={positions} color="#d8521d" weight={3} />
         <SelectedSegment trackpoints={trackpoints} />
         <Marker position={start} icon={startIcon} />
@@ -558,7 +587,7 @@ function RouteMapCanvas({
             </Tooltip>
           </Marker>
         )}
-        <MapClickHandler trackpoints={trackpoints} onRouteMenu={onRouteMenu} />
+        <MapClickHandler trackpoints={trackpoints} onRouteMenu={simulated ? undefined : onRouteMenu} />
         {menu && (
           <PopupAt
             key={menu.seq}
@@ -590,9 +619,17 @@ function RouteMapCanvas({
           </PopupAt>
         )}
         <FitBounds positions={positions} />
+        {simulated && <KeepCourseInView positions={positions} />}
         <InvalidateSize isFullscreen={isFullscreen} height={height} />
       </MapContainer>
-      <LayerSwitcher layer={layer} onSelect={handleLayerSelect} />
+      {simulated ? (
+        // On a backing of its own: a pan can bring the course under it.
+        <div className="absolute bottom-2 left-2 z-[1000] pointer-events-none rounded bg-card px-1.5 py-0.5 text-xs text-muted">
+          Simulated course — not a place on the map
+        </div>
+      ) : (
+        <LayerSwitcher layer={layer} onSelect={handleLayerSelect} />
+      )}
       <button
         onClick={() => setIsFullscreen((f) => !f)}
         className="absolute top-2 right-2 z-[1000] bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2"
