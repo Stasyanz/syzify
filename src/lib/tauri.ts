@@ -186,6 +186,10 @@ export const api = {
   scanWatchFolders: () =>
     invoke<ScanResult>("scan_watch_folders"),
 
+  /** Files that arrived while the app was closed, not yet in the vault (#221). */
+  catchUpWatchFiles: () =>
+    invoke<string[]>("catch_up_watch_files"),
+
   getVaultPath: () =>
     invoke<string>("get_vault_path"),
 

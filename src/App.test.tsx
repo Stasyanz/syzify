@@ -23,13 +23,19 @@ vi.mock("./hooks/useDropImport", () => ({
   useDropImport: () => ({ dragging: false }),
 }));
 
+// Every `vaultOpen` the app hands the watch listener, render by render.
+const watchVaultOpen = vi.hoisted(() => [] as boolean[]);
+
 vi.mock("./hooks/useWatchFolderListener", () => ({
-  useWatchFolderListener: () => ({
-    pendingFiles: [],
-    importing: false,
-    handleImport: vi.fn(),
-    handleDismiss: vi.fn(),
-  }),
+  useWatchFolderListener: (vaultOpen: boolean) => {
+    watchVaultOpen.push(vaultOpen);
+    return {
+      pendingFiles: [],
+      importing: false,
+      handleImport: vi.fn(),
+      handleDismiss: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -78,6 +84,57 @@ describe("App boot", { timeout: 20_000 }, () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  });
+
+  /** The launch catch-up (#221) may run only on a vault the app shows:
+   * loaded, unlocked, without an error. */
+  it("tells the watch listener the vault is open only when it is", async () => {
+    watchVaultOpen.length = 0;
+    await bootApp(UNLOCKED);
+    await waitFor(() => expect(watchVaultOpen).toContain(true));
+    expect(watchVaultOpen[0]).toBe(false);
+
+    cleanup();
+    watchVaultOpen.length = 0;
+    await bootApp(
+      Promise.resolve({
+        enabled: true,
+        locked: true,
+        scopes: { activities: true, database: true, photos: true },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(watchVaultOpen).not.toContain(true);
+
+    cleanup();
+    watchVaultOpen.length = 0;
+    await bootApp(UNLOCKED, "Failed to run migrations: DatabaseTooFarAhead");
+    await screen.findByText("Can't open your vault");
+    expect(watchVaultOpen).not.toContain(true);
+  });
+
+  /** Half an answer is no answer: unlocked but the vault error still
+   * pending, or the other way round, is not an open vault yet. */
+  it("waits for both the encryption status and the vault error", async () => {
+    watchVaultOpen.length = 0;
+    vi.resetModules();
+    const { api } = await import("./lib/tauri");
+    vi.mocked(api.getEncryptionStatus).mockReturnValue(
+      UNLOCKED as ReturnType<typeof api.getEncryptionStatus>,
+    );
+    vi.mocked(api.getVaultError).mockReturnValue(new Promise(() => {}));
+    const { default: App } = await import("./App");
+    render(<App />);
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(watchVaultOpen).not.toContain(true);
+
+    cleanup();
+    watchVaultOpen.length = 0;
+    await bootApp(new Promise(() => {}), null);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(watchVaultOpen.length).toBeGreaterThan(0);
+    expect(watchVaultOpen).not.toContain(true);
   });
 
   it("vault error screen switches to a picked vault and restarts", async () => {

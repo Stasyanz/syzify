@@ -7,15 +7,28 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::state::AppState;
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
 /// Known device activity paths relative to the volume mount point.
 /// Each entry: (volume_name_prefix, sub_paths_to_check)
 const DEVICE_PATHS: &[(&str, &[&str])] = &[
-    // Activities and the Monitor files behind the recovery index alike.
-    ("GARMIN", &["Garmin/Activity", "GARMIN/Activity", "Garmin/Monitor", "GARMIN/Monitor"]),
+    // Activities and the Monitor files behind the recovery index alike. A
+    // watch keeps rides in Activity, an Edge bike computer in Activities.
+    (
+        "GARMIN",
+        &[
+            "Garmin/Activity",
+            "GARMIN/Activity",
+            "Garmin/Activities",
+            "GARMIN/Activities",
+            "Garmin/Monitor",
+            "GARMIN/Monitor",
+        ],
+    ),
     ("ELEMNT", &["activities"]),
     ("COROS", &["Activity"]),
     ("SUUNTO", &["moves"]),
@@ -63,7 +76,11 @@ fn check_volume_for_workouts(volume_path: &Path) -> Vec<String> {
 
 /// Get the set of currently mounted volumes under /Volumes.
 fn current_volumes() -> HashSet<PathBuf> {
-    let volumes_dir = Path::new("/Volumes");
+    volumes_under(Path::new("/Volumes"))
+}
+
+/// The directories directly under `volumes_dir` — the mount points.
+fn volumes_under(volumes_dir: &Path) -> HashSet<PathBuf> {
     let mut set = HashSet::new();
     if let Ok(entries) = std::fs::read_dir(volumes_dir) {
         for entry in entries.flatten() {
@@ -76,9 +93,29 @@ fn current_volumes() -> HashSet<PathBuf> {
     set
 }
 
+/// The workout files on every device volume mounted right now. The poll
+/// loop takes these volumes as already known, so the launch catch-up
+/// (#221) is what offers a device plugged in before Syzify started.
+pub fn mounted_device_files() -> Vec<String> {
+    device_files_under(Path::new("/Volumes"))
+}
+
+/// [`mounted_device_files`] for any directory of mount points.
+fn device_files_under(volumes_dir: &Path) -> Vec<String> {
+    volumes_under(volumes_dir)
+        .iter()
+        .flat_map(|vol| check_volume_for_workouts(vol))
+        .collect()
+}
+
+/// What a newly mounted volume offers: its device files the vault lacks.
+fn files_to_offer(state: &AppState, volume_path: &Path) -> Vec<String> {
+    crate::import::catch_up::device_files_not_in_vault(state, check_volume_for_workouts(volume_path))
+}
+
 /// Start a background thread that polls /Volumes for new mounts.
 /// When a new volume appears and matches a known device, emits
-/// `watch:files-detected` with the found workout files.
+/// `watch:files-detected` with the workout files the vault lacks.
 pub fn start_volume_monitor(app_handle: AppHandle) {
     std::thread::spawn(move || {
         let mut known_volumes = current_volumes();
@@ -90,7 +127,7 @@ pub fn start_volume_monitor(app_handle: AppHandle) {
             let new_volumes: Vec<PathBuf> = now.difference(&known_volumes).cloned().collect();
 
             for vol in &new_volumes {
-                let files = check_volume_for_workouts(vol);
+                let files = files_to_offer(&app_handle.state::<AppState>(), vol);
                 if !files.is_empty() {
                     let volume_name = vol
                         .file_name()
@@ -144,5 +181,68 @@ mod tests {
         std::fs::create_dir_all(other.join("GARMIN/Activity")).unwrap();
         std::fs::write(other.join("GARMIN/Activity/ride.fit"), b"x").unwrap();
         assert!(check_volume_for_workouts(&other).is_empty());
+    }
+
+    /// An Edge bike computer keeps its rides in Garmin/Activities, not the
+    /// watch's Activity: the device walk takes both.
+    #[test]
+    fn an_edge_volume_yields_its_activities() {
+        let root = crate::test_support::ScratchDir::new("edge-volume");
+        let edge = root.join("GARMIN");
+        std::fs::create_dir_all(edge.join("Garmin/Activities")).unwrap();
+        std::fs::write(edge.join("Garmin/Activities/2026-10-18-18-31-04.fit"), b"x").unwrap();
+        let found: Vec<String> = check_volume_for_workouts(&edge).iter().map(|f| f.to_lowercase()).collect();
+        assert_eq!(
+            found,
+            vec![edge.join("Garmin/Activities/2026-10-18-18-31-04.fit").to_str().unwrap().to_lowercase()]
+        );
+    }
+
+    /// A plugged-in device offers what the vault lacks, not every ride on it.
+    #[test]
+    fn a_new_volume_offers_only_what_the_vault_lacks() {
+        let root = crate::test_support::ScratchDir::new("offer-volume");
+        let edge = root.join("GARMIN");
+        let rides = edge.join("Garmin/Activities");
+        std::fs::create_dir_all(&rides).unwrap();
+        std::fs::write(rides.join("old.fit"), b"old ride").unwrap();
+        std::fs::write(rides.join("new.fit"), b"new ride").unwrap();
+        let conn = crate::db::test_db();
+        let old = crate::import::catch_up::content_hash(&rides.join("old.fit")).unwrap();
+        crate::db::raw_files::insert_raw_file(
+            &conn,
+            &crate::models::raw_file::RawFile {
+                id: "rf-old".into(),
+                activity_id: None,
+                path_in_vault: "raw/old.fit".into(),
+                original_path: None,
+                format: "fit".into(),
+                hash_sha256: old,
+                imported_at: String::new(),
+                parse_status: "ok".into(),
+                failure_reason: None,
+            },
+        )
+        .unwrap();
+        let offered: Vec<String> = files_to_offer(&crate::test_support::app_state_on(conn), &edge)
+            .iter()
+            .map(|f| f.to_lowercase())
+            .collect();
+        assert_eq!(offered, vec![rides.join("new.fit").to_str().unwrap().to_lowercase()]);
+    }
+
+    /// The launch catch-up's walk (#221): every device mount point under the
+    /// directory, the device's files only; a stray file there is no volume.
+    #[test]
+    fn device_files_under_walks_every_device_mount() {
+        let root = crate::test_support::ScratchDir::new("mounts");
+        std::fs::create_dir_all(root.join("GARMIN/Garmin/Activity")).unwrap();
+        std::fs::write(root.join("GARMIN/Garmin/Activity/ride.fit"), b"x").unwrap();
+        std::fs::create_dir_all(root.join("BACKUP/Garmin/Activity")).unwrap();
+        std::fs::write(root.join("BACKUP/Garmin/Activity/old.fit"), b"x").unwrap();
+        std::fs::write(root.join("stray.fit"), b"x").unwrap();
+        let found: Vec<String> = device_files_under(&root).iter().map(|f| f.to_lowercase()).collect();
+        assert_eq!(found, vec![root.join("GARMIN/Garmin/Activity/ride.fit").to_str().unwrap().to_lowercase()]);
+        assert!(device_files_under(&root.join("absent")).is_empty());
     }
 }

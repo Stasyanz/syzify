@@ -617,6 +617,7 @@ pub fn run() {
             commands::settings::install_update,
             commands::settings::get_detected_devices,
             commands::settings::preview_watch_folders,
+            commands::settings::catch_up_watch_files,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_legal_text,

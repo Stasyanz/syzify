@@ -8,7 +8,9 @@ import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { useWatchFolderListener } from "./useWatchFolderListener";
 
-vi.mock("../lib/tauri", () => ({ api: { getSetting: vi.fn(), importFiles: vi.fn() } }));
+vi.mock("../lib/tauri", () => ({
+  api: { getSetting: vi.fn(), importFiles: vi.fn(), catchUpWatchFiles: vi.fn() },
+}));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("../lib/activityInvalidation", () => ({ invalidateActivityData: vi.fn() }));
 
@@ -26,7 +28,7 @@ async function mount() {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  const hook = renderHook(() => useWatchFolderListener(), { wrapper });
+  const hook = renderHook(() => useWatchFolderListener(false), { wrapper });
   await waitFor(() => expect(handler).toBeTruthy());
   return { hook, fire: (files: string[]) => act(async () => handler!({ payload: { files } })) };
 }
@@ -40,7 +42,21 @@ beforeEach(() => {
   vi.mocked(listen).mockClear();
   vi.mocked(api.getSetting).mockReset();
   vi.mocked(api.importFiles).mockReset();
+  vi.mocked(api.catchUpWatchFiles).mockReset();
 });
+
+/** Mounts the hook with the vault closed, so a test can open it later. */
+function mountClosed() {
+  vi.mocked(listen).mockResolvedValue(() => {});
+  const qc = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  return renderHook(({ open }) => useWatchFolderListener(open), {
+    wrapper,
+    initialProps: { open: false },
+  });
+}
 
 describe("useWatchFolderListener", () => {
   /** The backend refuses with a bare string; a JS-side failure is an
@@ -76,7 +92,7 @@ describe("useWatchFolderListener", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     );
-    const hook = renderHook(() => useWatchFolderListener(), { wrapper });
+    const hook = renderHook(() => useWatchFolderListener(false), { wrapper });
     await waitFor(() => expect(listen).toHaveBeenCalledTimes(1));
     await act(async () => {});
     expect(unlisten).not.toHaveBeenCalled();
@@ -97,7 +113,7 @@ describe("useWatchFolderListener", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     );
-    const hook = renderHook(() => useWatchFolderListener(), { wrapper });
+    const hook = renderHook(() => useWatchFolderListener(false), { wrapper });
     await waitFor(() => expect(resolveListen).toBeDefined());
     hook.unmount();
     expect(unlisten).not.toHaveBeenCalled();
@@ -105,5 +121,83 @@ describe("useWatchFolderListener", () => {
       resolveListen!(unlisten);
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  describe("launch catch-up (#221)", () => {
+    it("waits for the vault, then asks once and queues the files in ask mode", async () => {
+      vi.mocked(api.getSetting).mockResolvedValue(null);
+      vi.mocked(api.catchUpWatchFiles).mockResolvedValue(["/w/a.fit", "/w/b.fit"]);
+      const hook = mountClosed();
+      await act(async () => {});
+      expect(api.catchUpWatchFiles).not.toHaveBeenCalled();
+
+      hook.rerender({ open: true });
+      await waitFor(() => expect(hook.result.current.pendingFiles).toEqual(["/w/a.fit", "/w/b.fit"]));
+      expect(api.importFiles).not.toHaveBeenCalled();
+
+      // Re-renders, and the vault closing and opening again, do not ask twice.
+      hook.rerender({ open: false });
+      hook.rerender({ open: true });
+      await act(async () => {});
+      expect(api.catchUpWatchFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it("imports what it finds in auto mode", async () => {
+      vi.mocked(api.getSetting).mockResolvedValue("auto");
+      vi.mocked(api.catchUpWatchFiles).mockResolvedValue(["/w/a.fit"]);
+      vi.mocked(api.importFiles).mockResolvedValue({
+        imported: 1,
+        skipped: 0,
+        failed: [],
+        monitoring_files: 0,
+        monitoring_days: 0,
+        monitoring_night: false,
+        monitoring_range: null,
+      });
+      const hook = mountClosed();
+      hook.rerender({ open: true });
+      await waitFor(() => expect(api.importFiles).toHaveBeenCalledWith(["/w/a.fit"]));
+      expect(hook.result.current.pendingFiles).toEqual([]);
+    });
+
+    it("stays quiet when nothing arrived", async () => {
+      vi.mocked(api.getSetting).mockResolvedValue("auto");
+      vi.mocked(api.catchUpWatchFiles).mockResolvedValue([]);
+      const hook = mountClosed();
+      hook.rerender({ open: true });
+      await waitFor(() => expect(api.catchUpWatchFiles).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      expect(api.importFiles).not.toHaveBeenCalled();
+      expect(hook.result.current.pendingFiles).toEqual([]);
+      expect(lastToast()).toBeUndefined();
+    });
+
+    it("says why the check failed", async () => {
+      vi.mocked(api.catchUpWatchFiles).mockRejectedValue("The vault is locked — unlock it first");
+      const hook = mountClosed();
+      hook.rerender({ open: true });
+      await waitFor(() =>
+        expect(lastToast()).toMatchObject({
+          type: "error",
+          message: "Could not check for new files: The vault is locked — unlock it first",
+        }),
+      );
+    });
+
+    /** main.tsx renders under StrictMode: its doubled effect pass must not
+     * ask — and auto-import — twice. */
+    it("asks once under StrictMode", async () => {
+      vi.mocked(api.getSetting).mockResolvedValue("auto");
+      vi.mocked(api.catchUpWatchFiles).mockResolvedValue([]);
+      vi.mocked(listen).mockResolvedValue(() => {});
+      const qc = new QueryClient();
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      );
+      renderHook(() => useWatchFolderListener(true), { wrapper, reactStrictMode: true });
+      await waitFor(() => expect(api.catchUpWatchFiles).toHaveBeenCalled());
+      await act(async () => {});
+      expect(api.catchUpWatchFiles).toHaveBeenCalledTimes(1);
+    });
   });
 });

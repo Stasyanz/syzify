@@ -1,4 +1,5 @@
 pub mod best_effort;
+pub mod catch_up;
 pub mod datasource;
 pub mod dedup;
 pub mod device_backfill;

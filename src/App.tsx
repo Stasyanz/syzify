@@ -141,7 +141,6 @@ function DropImportOverlay() {
 
 function AppContent() {
   const qc = useQueryClient();
-  const { pendingFiles, importing: watchImporting, handleImport: watchImport, handleDismiss: watchDismiss } = useWatchFolderListener();
   usePluginImportRefresh();
   const { data: encStatus, isLoading } = useQuery({
     queryKey: ["encryptionStatus"],
@@ -151,6 +150,9 @@ function AppContent() {
     queryKey: ["vaultError"],
     queryFn: () => api.getVaultError(),
   });
+  // Both answers in, no vault error, not locked: what the app shows below.
+  const vaultOpen = encStatus !== undefined && !encStatus.locked && vaultError === null;
+  const { pendingFiles, importing: watchImporting, handleImport: watchImport, handleDismiss: watchDismiss } = useWatchFolderListener(vaultOpen);
 
   useActivitiesUpdatedRefresh();
 

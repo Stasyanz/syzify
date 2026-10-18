@@ -7,6 +7,24 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 ## [Unreleased]
 
 ### Fixed
+- Files that reach a watch folder while Syzify is closed, and a Garmin
+  plugged in before it starts, are offered at the next launch (#221) —
+  imported at once with auto-import on, in the "new files found" banner
+  otherwise. The folder watcher and the device monitor only noticed
+  changes made while the app ran, so such files waited for Import Now.
+  A watch-folder file is offered when it changed since the previous launch
+  and the vault does not hold its content: an activity you deleted does
+  not come back, and a file that fails to import is not offered launch
+  after launch. The first launch of this version only sets that starting
+  point. A device's files are checked against the vault alone, as when
+  you plug it in: the watch dates a file by the ride, not by the copy.
+  Files offered at a launch and then dismissed, or left unanswered, are
+  found again by Import Now.
+- A plugged-in Garmin Edge is recognised (#221). Its rides live in
+  `Garmin/Activities`, while the device monitor only looked in a watch's
+  `Garmin/Activity`, so an Edge was picked up only through a watch folder
+  set on it by hand. Plugging a device in now offers only the files the
+  vault does not hold, not every ride it ever recorded.
 - The Power Curve no longer cuts the left edge of the "1,000" label on its
   watts axis (#219). The axis had a fixed width that fit labels up to
   three digits; it is now as wide as its widest label, like the other

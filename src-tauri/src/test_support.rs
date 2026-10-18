@@ -55,6 +55,23 @@ impl Drop for ScratchDir {
     }
 }
 
+/// An unlocked plaintext-vault `AppState` over the given connection, for a
+/// test that needs the state but neither a vault on disk nor an app.
+pub fn app_state_on(conn: rusqlite::Connection) -> crate::state::AppState {
+    use std::sync::{Arc, Mutex};
+    crate::state::AppState {
+        db: Arc::new(Mutex::new(conn)),
+        vault_path: PathBuf::new(),
+        encryption_key: Mutex::new(None),
+        watcher_handle: Mutex::new(None),
+        db_locked: Mutex::new(false),
+        vault_error: Mutex::new(None),
+        services_started: Mutex::new(false),
+        geocoding_flight: crate::state::SingleFlight::default(),
+        vault_flight: crate::state::SingleFlight::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,12 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::crypto;
 use crate::db;
+use crate::import::catch_up;
 use crate::import::pipeline;
 use crate::import::watcher;
 use crate::state::AppState;
@@ -367,7 +366,7 @@ pub fn preview_files(folders: &[String]) -> Vec<(String, Vec<PreviewFile>)> {
                 .map(|path_str| {
                     let path = PathBuf::from(&path_str);
                     let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let hash = fs::read(&path).ok().map(|bytes| hex::encode(Sha256::digest(&bytes)));
+                    let hash = catch_up::content_hash(&path);
                     (path_str, filename, hash)
                 })
                 .collect();
@@ -411,6 +410,56 @@ pub async fn preview_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Resu
         }
     }
     Ok(preview)
+}
+
+/// What arrived while Syzify was closed (#221): files under the watch
+/// folders that changed since the previous catch-up, and files on device
+/// volumes already mounted at launch, that the vault does not hold (see
+/// `import::catch_up`). The frontend asks once the vault is open and offers
+/// the answer the way it offers a watcher event (auto or ask).
+#[tauri::command]
+pub async fn catch_up_watch_files<R: tauri::Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
+    catch_up_files(app, crate::import::volume_monitor::mounted_device_files, catch_up::now_secs()).await
+}
+
+/// `catch_up_watch_files` with the device volumes and the clock passed in,
+/// so a test neither walks the machine's real /Volumes nor waits an hour.
+/// `started` is taken before anything is read: a file landing mid-scan is
+/// the next catch-up's (and the running watcher's) to see.
+async fn catch_up_files<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    device_files: impl FnOnce() -> Vec<String> + Send + 'static,
+    started: i64,
+) -> Result<Vec<String>, String> {
+    let (folders, mark) = {
+        let state = app.state::<AppState>();
+        if state.vault_error.lock().map_err(|e| e.to_string())?.is_some() {
+            return Err("The vault is not open".to_string());
+        }
+        crate::commands::import::ensure_vault_unlocked(&state)?;
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let folders = db::watch_folders::list_paths(&conn).map_err(|e| e.to_string())?;
+        (folders, catch_up::last_catch_up(&conn).map_err(|e| e.to_string())?)
+    };
+    // Read and hash off the runtime and without the DB lock, as a preview
+    // does; a folder that cannot be read is Import Now's to report.
+    let hashed = tokio::task::spawn_blocking(move || {
+        // The vault's first catch-up offers nothing from the watch folders:
+        // everything already there predates it, deleted activities included.
+        let mut hashed = match mark {
+            Some(mark) => catch_up::changed_files(scan_targets(&folders).0, catch_up::since_mark(mark, started)),
+            None => Vec::new(),
+        };
+        hashed.extend(catch_up::changed_files(device_files(), i64::MIN));
+        hashed
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+    let state = app.state::<AppState>();
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let unseen = catch_up::unseen_files(&conn, hashed).map_err(|e| e.to_string())?;
+    catch_up::mark_catch_up(&conn, started).map_err(|e| e.to_string())?;
+    Ok(unseen)
 }
 
 // --- Encryption ---
@@ -1052,6 +1101,7 @@ mod tests {
     use super::*;
     use crate::models::raw_file::RawFile;
     use crate::test_support::ScratchDir;
+    use sha2::{Digest, Sha256};
     use std::sync::{Arc, Mutex};
 
     fn test_state(vault: &Path) -> AppState {
@@ -1131,6 +1181,151 @@ mod tests {
         assert_eq!(result.imported, 0);
         assert_eq!(result.failed.len(), 1);
         assert!(result.failed[0].path.ends_with("ride.fit"), "{}", result.failed[0].path);
+    }
+
+    fn raw_file_with_hash(hash: &str) -> RawFile {
+        RawFile {
+            id: format!("rf-{hash}"),
+            activity_id: None,
+            path_in_vault: format!("raw/{hash}.fit"),
+            original_path: None,
+            format: "fit".into(),
+            hash_sha256: hash.into(),
+            imported_at: String::new(),
+            parse_status: "ok".into(),
+            failure_reason: None,
+        }
+    }
+
+    fn mock_app_with(state: AppState) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        app
+    }
+
+    fn mark(app: &tauri::App<tauri::test::MockRuntime>) -> Option<i64> {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock().unwrap();
+        catch_up::last_catch_up(&conn).unwrap()
+    }
+
+    fn set_mark(app: &tauri::App<tauri::test::MockRuntime>, at: i64) {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock().unwrap();
+        catch_up::mark_catch_up(&conn, at).unwrap();
+    }
+
+    /// The launch catch-up end to end on a mock app (#221):
+    /// - the vault's first catch-up offers nothing from the watch folders and
+    ///   sets the mark; a mounted device is checked against the vault alone;
+    /// - after the mark, a file the vault holds stays quiet, a new one in a
+    ///   watch folder and a new one on a mounted device are offered, and the
+    ///   device's copy of the watch-folder file is not offered twice;
+    /// - a watch-folder file that changed before the mark (less the slack)
+    ///   is not offered again, even though the vault still lacks it (a
+    ///   deleted activity, a file that never parses); a device's file is —
+    ///   its FAT dates a ride by the watch, not by the copy.
+    #[test]
+    fn catch_up_offers_what_arrived_since_the_last_one() {
+        let vault = ScratchDir::new("catch-up");
+        let watched = vault.join("watched");
+        let device = vault.join("GARMIN/Garmin/Activity");
+        fs::create_dir_all(&watched).unwrap();
+        fs::create_dir_all(&device).unwrap();
+        fs::write(watched.join("old.fit"), b"old ride").unwrap();
+        fs::write(watched.join("new.fit"), b"new ride").unwrap();
+        fs::write(device.join("new.fit"), b"new ride").unwrap();
+        fs::write(device.join("edge.fit"), b"edge ride").unwrap();
+        let state = test_state(&vault);
+        {
+            let conn = state.db.lock().unwrap();
+            db::watch_folders::add(&conn, watched.to_str().unwrap()).unwrap();
+            let old = catch_up::content_hash(&watched.join("old.fit")).unwrap();
+            db::raw_files::insert_raw_file(&conn, &raw_file_with_hash(&old)).unwrap();
+        }
+        let app = mock_app_with(state);
+        let device_files = {
+            let device = device.clone();
+            move || {
+                vec![
+                    device.join("new.fit").to_str().unwrap().to_string(),
+                    device.join("edge.fit").to_str().unwrap().to_string(),
+                ]
+            }
+        };
+        let run = |f: &(dyn Fn() -> Vec<String> + Sync), now: i64| {
+            let files = f();
+            let mut offered =
+                tauri::async_runtime::block_on(catch_up_files(app.handle().clone(), move || files, now)).unwrap();
+            offered.sort();
+            offered
+        };
+        let path = |p: &Path| p.to_str().unwrap().to_string();
+        let now = catch_up::now_secs();
+
+        assert_eq!(
+            run(&device_files, now),
+            vec![path(&device.join("edge.fit")), path(&device.join("new.fit"))],
+            "the first catch-up takes nothing from the watch folders"
+        );
+        assert_eq!(mark(&app), Some(now));
+
+        set_mark(&app, 0);
+        let mut expected = vec![path(&device.join("edge.fit")), path(&watched.join("new.fit"))];
+        expected.sort();
+        assert_eq!(run(&device_files, now), expected);
+        assert_eq!(mark(&app), Some(now), "a catch-up moves the mark");
+
+        // A mark from a clock that ran ahead is capped at now.
+        set_mark(&app, now + 86_400);
+        assert_eq!(run(&device_files, now), expected, "a future mark is capped at now");
+
+        // The mark, not this launch's clock, sets the window.
+        set_mark(&app, now - 60);
+        assert_eq!(run(&device_files, now + 86_400), expected, "the window opens at the mark");
+
+        // A day on: the files changed long before the mark.
+        let later = now + 86_400;
+        set_mark(&app, later);
+        assert_eq!(
+            run(&device_files, later),
+            vec![path(&device.join("edge.fit")), path(&device.join("new.fit"))],
+            "only the device is offered again"
+        );
+    }
+
+    /// A locked vault is refused before any folder or device is walked, and
+    /// so is a vault that failed to open (its connection is a placeholder).
+    #[test]
+    fn catch_up_refuses_a_locked_or_failed_vault() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let vault = ScratchDir::new("catch-up-locked");
+        crypto::write_vault_lock(&vault, &lock_with(true, false)).unwrap();
+        let app = mock_app_with(test_state(&vault));
+        let walked = Arc::new(AtomicBool::new(false));
+        let w = walked.clone();
+        let err = tauri::async_runtime::block_on(catch_up_files(
+            app.handle().clone(),
+            move || {
+                w.store(true, Ordering::SeqCst);
+                Vec::new()
+            },
+            catch_up::now_secs(),
+        ))
+        .unwrap_err();
+        assert!(err.contains("locked"), "{err}");
+        assert!(!walked.load(Ordering::SeqCst));
+        assert_eq!(mark(&app), None);
+
+        let vault = ScratchDir::new("catch-up-failed");
+        let state = test_state(&vault);
+        *state.vault_error.lock().unwrap() = Some("migrations failed".into());
+        let app = mock_app_with(state);
+        let err = tauri::async_runtime::block_on(catch_up_files(app.handle().clone(), Vec::new, catch_up::now_secs()))
+            .unwrap_err();
+        assert_eq!(err, "The vault is not open");
     }
 
     /// A preview hashes what it can read and leaves the unreadable marked

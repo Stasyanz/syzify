@@ -38,7 +38,7 @@ pub const ZIP_TIME_BUDGET: Duration = Duration::from_secs(30);
 /// whole (hashing + parsing), so without a bound a mispicked multi-GB file
 /// exhausts RAM before the parser ever rejects it. Real workout files are a
 /// few MB; the largest multi-day FIT logs stay well under this.
-const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Pre-read size gate for [`MAX_IMPORT_BYTES`], split out for testing.
 fn ensure_import_size(size: u64) -> Result<(), String> {
