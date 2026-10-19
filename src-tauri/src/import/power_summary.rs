@@ -243,6 +243,12 @@ mod tests {
         activity(&conn, "stryd", "run", "15", "threshold_power_w = 400", None);
         activity(&conn, "later", "ride", "20", "threshold_power_w = 300", None);
         activity(&conn, "zwift", "virtual_ride", "17", "duration_s = 3600, avg_power_w = 200", Some(200));
+        // A record with no power reading lands in no zone.
+        conn.execute(
+            "INSERT INTO trackpoint (activity_id, t) VALUES ('zwift', '2026-10-17T18:02:00+00:00')",
+            [],
+        )
+        .unwrap();
 
         fill(&conn, "zwift");
         let s = summary(&conn, "zwift");
@@ -424,6 +430,20 @@ mod tests {
         let before = writes();
         lend_ftp(&conn).unwrap();
         assert_eq!(writes(), before, "no running FTP to lend: no write");
+    }
+
+    /// A summary that cannot be written is an error, not a silent no-op.
+    #[test]
+    fn a_failed_summary_write_is_an_error() {
+        let conn = db::test_db();
+        activity(&conn, "zwift", "virtual_ride", "17", "", Some(200));
+        conn.execute_batch(
+            "CREATE TRIGGER refuse_update BEFORE UPDATE ON activity
+             BEGIN SELECT RAISE(ABORT, 'update refused'); END;",
+        )
+        .unwrap();
+        let err = fill_missing(&conn, "zwift", "virtual_ride").unwrap_err();
+        assert!(err.to_string().contains("update refused"), "{err}");
     }
 
     /// The fill is one transaction: a failure in the zone rebuild leaves

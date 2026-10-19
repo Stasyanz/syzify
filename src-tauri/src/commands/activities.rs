@@ -884,6 +884,37 @@ mod tests {
         let lower = set_activity_ftp_core(&state, "act-1", 200.0).unwrap();
         assert!((lower.training_stress_score - 50.0).abs() < 1e-9, "32 × (250/200)²");
         assert!((lower.intensity_factor - 1.0).abs() < 1e-9);
+
+        // No stored TSS to rescale: figured over the stored duration.
+        state.db.lock().unwrap().execute("UPDATE activity SET training_stress_score = NULL WHERE id = 'act-1'", []).unwrap();
+        let fresh = set_activity_ftp_core(&state, "act-1", 200.0).unwrap();
+        assert!((fresh.training_stress_score - 100.0).abs() < 1e-9, "3600 × 200² / (200² × 3600) × 100");
+    }
+
+    /// The detail's FTP hint compares a ride with earlier rides only: a
+    /// run's running-power FTP is no ride's peer (#224).
+    #[test]
+    fn get_activity_detail_hints_with_the_sport_family_only() {
+        use tauri::Manager;
+        let vault = ScratchDir::new("detail_peers");
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(test_state(&vault));
+        app.state::<AppState>()
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO activity (id, start_time, sport_type, threshold_power_w) VALUES
+                   ('road', '2026-10-01T08:00:00+00:00', 'ride', 250),
+                   ('stryd', '2026-10-05T08:00:00+00:00', 'run', 400),
+                   ('zwift', '2026-10-17T18:00:00+00:00', 'virtual_ride', 250);",
+            )
+            .unwrap();
+        let detail = get_activity_detail("zwift".into(), app.state()).unwrap();
+        let ids: Vec<&str> = detail.recent_power.iter().map(|p| p.activity_id.as_str()).collect();
+        assert_eq!(ids, ["road"]);
     }
 
     /// The three writes are one transaction: a failure while the zones are
