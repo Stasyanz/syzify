@@ -205,6 +205,51 @@ fn run_power_curve_backfill(state: &AppState) {
     }
 }
 
+const ZERO_READINGS_FLAG: &str = "zero_readings_cleared_v1";
+const POWER_SUMMARY_FLAG: &str = "power_summary_filled_v1";
+
+/// One-time fill of the power summaries older imports lack (#224). Best
+/// effort like the power-curve backfill: a failure leaves the flag unset
+/// to retry next launch.
+fn run_power_summary_fill(state: &AppState) {
+    if let Err(e) = power_summary_fill(state) {
+        eprintln!("Power-summary fill failed (will retry next launch): {}", e);
+    }
+}
+
+/// First the summary zeros are cleared — an NP of 0 must read as missing
+/// before the fill looks at it — then every activity, oldest first, loses
+/// its records' 0 bpm and gets what `power_summary::fill_missing` gives a
+/// new import. The lock is taken per chunk of activities, never over a
+/// scan of every record, so commands interleave. One activity failing is
+/// logged and skipped: the walk must end, or it reruns every launch.
+fn power_summary_fill(state: &AppState) -> Result<(), String> {
+    const CHUNK: usize = 25;
+    let activities = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        if db::settings::get_setting(&conn, ZERO_READINGS_FLAG).map_err(|e| e.to_string())?.is_none() {
+            db::activities::clear_zero_summaries(&conn).map_err(|e| e.to_string())?;
+            db::settings::set_setting(&conn, ZERO_READINGS_FLAG, "1").map_err(|e| e.to_string())?;
+        }
+        if db::settings::get_setting(&conn, POWER_SUMMARY_FLAG).map_err(|e| e.to_string())?.is_some() {
+            return Ok(());
+        }
+        db::activities::all_by_start(&conn).map_err(|e| e.to_string())?
+    };
+    for chunk in activities.chunks(CHUNK) {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        for (id, sport) in chunk {
+            let filled = db::activities::clear_zero_heart_rates(&conn, id)
+                .and_then(|_| import::power_summary::fill_missing(&conn, id, sport));
+            if let Err(e) = filled {
+                eprintln!("Power-summary fill skipped {}: {}", id, e);
+            }
+        }
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::settings::set_setting(&conn, POWER_SUMMARY_FLAG, "1").map_err(|e| e.to_string())
+}
+
 /// Recompute the monitoring day aggregates (ADR 0002): every launch picks
 /// up the days stored but never aggregated (an import interrupted before
 /// its batch recompute), and once per formula version every day is
@@ -349,6 +394,7 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         // Heavy per-activity work first, with per-chunk locking — the block
         // below holds the lock for its whole run, so it must come after.
         run_power_curve_backfill(&state);
+        run_power_summary_fill(&state);
         import::device_backfill::run(&state);
         import::gear_keys_backfill::run(&state);
         import::exercise_names_backfill::run(&state);
@@ -891,5 +937,118 @@ mod startup_backfill_tests {
             .query_row("SELECT location_name FROM activity WHERE id = 'zw'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(name.as_deref(), Some("Home trainer"));
+    }
+
+    /// A Zwift ride imported before #224: its stored zeros go, its power
+    /// summary is filled from the track with the earlier ride's FTP, once.
+    fn zwift_before_224() -> rusqlite::Connection {
+        let conn = db::test_db();
+        conn.execute_batch(
+            "INSERT INTO activity (id, start_time, sport_type, threshold_power_w)
+               VALUES ('edge', '2026-10-10T08:00:00+00:00', 'ride', 250);
+             INSERT INTO activity (id, start_time, sport_type, duration_s, avg_hr, normalized_power_w)
+               VALUES ('zwift', '2026-10-17T18:00:00+00:00', 'virtual_ride', 120, 0, 0);",
+        )
+        .unwrap();
+        for i in 0..120 {
+            conn.execute(
+                "INSERT INTO trackpoint (activity_id, t, power_w) VALUES ('zwift', ?1, 200)",
+                [format!("2026-10-17T18:{:02}:{:02}+00:00", i / 60, i % 60)],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    fn zwift_summary(state: &AppState) -> (Option<f64>, Option<f64>, Option<f64>) {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT avg_hr, normalized_power_w, threshold_power_w FROM activity WHERE id = 'zwift'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn flag(state: &AppState, name: &str) -> bool {
+        db::settings::get_setting(&state.db.lock().unwrap(), name).unwrap().is_some()
+    }
+
+    #[test]
+    fn startup_fills_old_power_summaries_once() {
+        let state = test_support::app_state_on(zwift_before_224());
+        run_power_summary_fill(&state);
+        let (hr, np, ftp) = zwift_summary(&state);
+        assert_eq!(hr, None, "the stored 0 bpm is gone");
+        assert!((np.unwrap() - 200.0).abs() < 1e-9, "an NP of 0 read as missing, then filled");
+        assert_eq!(ftp, Some(250.0));
+        assert!(flag(&state, ZERO_READINGS_FLAG) && flag(&state, POWER_SUMMARY_FLAG));
+
+        // Once: a gap that opens later is not the startup fill's to close.
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute("UPDATE activity SET avg_hr = 0, normalized_power_w = NULL WHERE id = 'zwift'", [])
+            .unwrap();
+        run_power_summary_fill(&state);
+        assert_eq!(zwift_summary(&state).0, Some(0.0));
+        assert_eq!(zwift_summary(&state).1, None);
+    }
+
+    /// One activity that cannot be filled is rolled back and skipped: the
+    /// rest of the vault is filled and the walk is done.
+    #[test]
+    fn a_failed_activity_is_skipped_and_the_rest_filled() {
+        let conn = zwift_before_224();
+        conn.execute_batch(
+            "INSERT INTO activity (id, start_time, sport_type) VALUES ('zwift2', '2026-10-18T18:00:00+00:00', 'virtual_ride');
+             CREATE TRIGGER refuse_fill BEFORE INSERT ON time_in_zone WHEN NEW.activity_id = 'zwift'
+             BEGIN SELECT RAISE(ABORT, 'fill refused'); END;",
+        )
+        .unwrap();
+        for i in 0..60 {
+            conn.execute(
+                "INSERT INTO trackpoint (activity_id, t, power_w) VALUES ('zwift2', ?1, 180)",
+                [format!("2026-10-18T18:00:{i:02}+00:00")],
+            )
+            .unwrap();
+        }
+        let state = test_support::app_state_on(conn);
+        run_power_summary_fill(&state);
+        let (hr, np, ftp) = zwift_summary(&state);
+        assert_eq!(hr, None, "the zeros went before the fill");
+        assert_eq!((np, ftp), (None, None), "rolled back");
+        let ftp2: Option<f64> = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT threshold_power_w FROM activity WHERE id = 'zwift2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ftp2, Some(250.0), "the next one is filled all the same");
+        assert!(flag(&state, POWER_SUMMARY_FLAG));
+    }
+
+    /// A failure of the run itself leaves both flags unset, to retry next launch.
+    #[test]
+    fn a_failed_power_summary_fill_retries_next_launch() {
+        let state = test_support::app_state_on(zwift_before_224());
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_update BEFORE UPDATE ON activity
+                 BEGIN SELECT RAISE(ABORT, 'update refused'); END;",
+            )
+            .unwrap();
+        run_power_summary_fill(&state);
+        assert!(!flag(&state, ZERO_READINGS_FLAG) && !flag(&state, POWER_SUMMARY_FLAG));
+        assert_eq!(zwift_summary(&state), (Some(0.0), Some(0.0), None));
+
+        state.db.lock().unwrap().execute_batch("DROP TRIGGER refuse_update").unwrap();
+        run_power_summary_fill(&state);
+        assert_eq!(zwift_summary(&state).2, Some(250.0));
+        assert!(flag(&state, ZERO_READINGS_FLAG) && flag(&state, POWER_SUMMARY_FLAG));
     }
 }

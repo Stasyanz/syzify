@@ -592,6 +592,18 @@ pub struct ActivityUpdate {
     pub start_lon: Option<f64>,
 }
 
+/// An activity's power summary and the duration its TSS is figured over —
+/// what the FTP correction reads and what an import fills when the file
+/// left it out (#224).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PowerSummary {
+    pub normalized_power_w: Option<f64>,
+    pub threshold_power_w: Option<f64>,
+    pub intensity_factor: Option<f64>,
+    pub training_stress_score: Option<f64>,
+    pub duration_s: Option<f64>,
+}
+
 /// Filters for querying activities
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ActivityFilters {

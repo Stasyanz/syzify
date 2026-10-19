@@ -116,28 +116,45 @@ pub fn powered_activity_ids(conn: &Connection) -> Result<Vec<String>> {
     rows.collect()
 }
 
+/// An activity's track as elapsed seconds and watts, in stored order —
+/// all a power computation reads.
+pub type PowerTrack = (Vec<Option<f64>>, Vec<Option<i32>>);
+
+/// Whether the activity has a record with positive power — the cheap
+/// probe before a [`power_track`] load, which most imports (walks, runs
+/// without a pod) would make for nothing.
+pub fn has_power(conn: &Connection, id: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM trackpoint WHERE activity_id = ?1 AND power_w > 0)",
+        params![id],
+        |row| row.get(0),
+    )
+}
+
+/// The [`PowerTrack`] of one activity.
+pub fn power_track(conn: &Connection, id: &str) -> Result<PowerTrack> {
+    let mut stmt =
+        conn.prepare("SELECT t, power_w FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map(params![id], |row| {
+        Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i32>>(1)?))
+    })?;
+    let mut t: Vec<Option<f64>> = Vec::new();
+    let mut power: Vec<Option<i32>> = Vec::new();
+    for row in rows {
+        let (ts, p) = row?;
+        t.push(ts.as_deref().and_then(crate::db::trackpoints::parse_time_seconds));
+        power.push(p);
+    }
+    Ok((t, power))
+}
+
 /// Compute + store curves for the given activities. Reads only (t, power_w)
 /// — the full columnar loader computes haversine distances the curve never
 /// uses, and the startup backfill walks the whole powered library.
 pub fn recompute_for(conn: &Connection, ids: &[String]) -> Result<usize> {
     let mut n = 0usize;
     for id in ids {
-        let mut stmt = conn.prepare(
-            "SELECT t, power_w FROM trackpoint WHERE activity_id = ?1 ORDER BY id ASC",
-        )?;
-        let rows = stmt.query_map(params![id], |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, Option<i32>>(1)?,
-            ))
-        })?;
-        let mut t: Vec<Option<f64>> = Vec::new();
-        let mut power: Vec<Option<i32>> = Vec::new();
-        for row in rows {
-            let (ts, p) = row?;
-            t.push(ts.as_deref().and_then(crate::db::trackpoints::parse_time_seconds));
-            power.push(p);
-        }
+        let (t, power) = power_track(conn, id)?;
         let curve = crate::import::power_curve::compute_power_curve(&t, &power);
         if !curve.is_empty() {
             set_power_curve(conn, id, &curve)?;

@@ -52,7 +52,8 @@ pub fn get_activity_detail(
     let gear_id = db::gear::gear_of_activity(&conn, &id).map_err(|e| e.to_string())?;
     let is_multisport = db::multisport_legs::is_multisport(&conn, &id).map_err(|e| e.to_string())?;
     let recent_power = if activity.threshold_power_w.is_some() {
-        db::activities::recent_power_activities(&conn, &id, db::activities::RECENT_POWER_RIDES)
+        let peers = crate::import::power_summary::ftp_peers(&activity.sport_type);
+        db::activities::recent_power_activities(&conn, &id, &peers, db::activities::RECENT_POWER_RIDES)
             .map_err(|e| e.to_string())?
     } else {
         Vec::new()
@@ -578,10 +579,6 @@ pub struct FtpUpdateResult {
     pub training_stress_score: f64,
 }
 
-/// Coggan power zone ceilings as fractions of FTP, Z1..Z6; Z7 is open. The
-/// same ladder the charts fall back to (chartZones.ts COGGAN_FTP_FACTORS).
-pub(crate) const COGGAN_FTP_FACTORS: [f64; 6] = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
-
 #[tauri::command]
 pub fn set_activity_ftp(id: String, ftp_w: f64, state: State<AppState>) -> Result<FtpUpdateResult, String> {
     set_activity_ftp_core(&state, &id, ftp_w)
@@ -605,23 +602,30 @@ pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> R
     if !(ftp_w.is_finite() && (1.0..=2000.0).contains(&ftp_w)) {
         return Err(format!("invalid FTP: {ftp_w}"));
     }
+    use crate::import::power_summary::{intensity_and_stress, recompute_power_zones};
     let ftp_w = ftp_w.round();
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let (np, duration_s): (Option<f64>, Option<f64>) = conn
-        .query_row(
-            "SELECT normalized_power_w, duration_s FROM activity WHERE id = ?1",
-            rusqlite::params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
-    let np = np
+    let stored = db::activities::power_summary(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Activity not found: {id}"))?;
+    let np = stored
+        .normalized_power_w
         .filter(|v| v.is_finite() && *v > 0.0)
         .ok_or("this activity has no normalized power, so IF and TSS cannot be recomputed")?;
-    let duration_s = duration_s
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .ok_or("this activity has no recorded duration, so TSS cannot be recomputed")?;
-    let intensity_factor = np / ftp_w;
-    let training_stress_score = duration_s * np * np / (ftp_w * ftp_w * 3600.0) * 100.0;
+    let positive = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
+    // A stored TSS is rescaled, not recomputed: TSS ∝ 1/FTP², so this keeps
+    // the time it was figured over — the device's timer, or the track's
+    // timer seconds a filled one used (#224) — where the stored duration
+    // of a GPX is elapsed time, coffee stops and all.
+    let training_stress_score = match (positive(stored.threshold_power_w), positive(stored.training_stress_score)) {
+        (Some(old_ftp), Some(tss)) => tss * (old_ftp / ftp_w).powi(2),
+        _ => {
+            let duration_s = positive(stored.duration_s)
+                .ok_or("this activity has no recorded duration, so TSS cannot be recomputed")?;
+            intensity_and_stress(np, ftp_w, Some(duration_s)).1.unwrap_or_default()
+        }
+    };
+    let (intensity_factor, _) = intensity_and_stress(np, ftp_w, None);
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     db::activities::set_power_metrics(&tx, id, ftp_w, intensity_factor, training_stress_score)
         .map_err(|e| e.to_string())?;
@@ -632,61 +636,6 @@ pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> R
         intensity_factor,
         training_stress_score,
     })
-}
-
-/// Rebuild the activity's power time-in-zone rows from its trackpoints on
-/// the Coggan ladder of `ftp_w`, bucketed by zone ceiling; Z7 is open.
-/// Each sample stands for the road up to the next one when that gap is
-/// short (Garmin smart recording spaces samples up to
-/// [`crate::import::power_curve::MAX_HOLD_S`] apart at steady effort) and
-/// for one second when the gap is long — an auto-pause, a dropped
-/// recording. The device tallies zones on timer time and a stop is not on
-/// the timer, so a stop must land in no zone at all: counting it as 0 W
-/// would swell Z1 by the length of every coffee break and push the total
-/// past the timer, and even the power curve's ten-second hold would leak
-/// ten seconds into every stop. No trackpoints with power → the rows are
-/// left alone.
-pub(crate) fn recompute_power_zones(conn: &rusqlite::Connection, id: &str, ftp_w: f64) -> rusqlite::Result<()> {
-    let cols = db::trackpoints::get_trackpoints_columnar(conn, id)?;
-    let mut samples: Vec<(f64, f64)> = cols
-        .t
-        .iter()
-        .zip(cols.power_w.iter())
-        .filter_map(|(t, p)| match (t, p) {
-            (Some(t), Some(p)) if t.is_finite() && *p >= 0 => Some((*t, *p as f64)),
-            _ => None,
-        })
-        .collect();
-    if samples.is_empty() {
-        return Ok(());
-    }
-    samples.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let max_hold = crate::import::power_curve::MAX_HOLD_S as f64;
-    let ceilings: Vec<f64> = COGGAN_FTP_FACTORS.iter().map(|f| (f * ftp_w).round()).collect();
-    let mut seconds = vec![0.0_f64; ceilings.len() + 1];
-    for (k, (t, p)) in samples.iter().enumerate() {
-        let gap = samples.get(k + 1).map(|(next, _)| next - t);
-        let span = match gap {
-            Some(g) if g > 0.0 && g <= max_hold => g,
-            _ => 1.0,
-        };
-        let zone = ceilings.iter().position(|c| *p <= *c).unwrap_or(ceilings.len());
-        seconds[zone] += span;
-    }
-    let rows: Vec<crate::models::time_in_zone::TimeInZone> = seconds
-        .iter()
-        .enumerate()
-        .map(|(i, s)| crate::models::time_in_zone::TimeInZone {
-            id: None,
-            activity_id: id.to_string(),
-            zone_type: "power".to_string(),
-            zone_index: i as i32,
-            time_s: *s,
-            zone_high_boundary: ceilings.get(i).copied(),
-        })
-        .collect();
-    db::time_in_zones::delete_time_in_zones_of_type(conn, id, "power")?;
-    db::time_in_zones::insert_time_in_zones(conn, &rows)
 }
 
 #[tauri::command]
@@ -880,7 +829,8 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!((ftp, iff, tss), (250.0, 0.8, 64.0));
+        assert_eq!((ftp, iff), (250.0, 0.8));
+        assert!((tss - 64.0).abs() < 1e-9, "the stored 100 at FTP 200, rescaled: 100 × (200/250)²");
         let zones = crate::db::time_in_zones::get_time_in_zones(&conn, "act-1").unwrap();
         let hr: Vec<_> = zones.iter().filter(|z| z.zone_type == "hr").collect();
         assert_eq!(hr.len(), 1, "heart-rate rows untouched");
@@ -901,14 +851,39 @@ mod tests {
         let conn = state.db.lock().unwrap();
         let ftp: f64 = conn.query_row("SELECT threshold_power_w FROM activity WHERE id='act-1'", [], |r| r.get(0)).unwrap();
         assert_eq!(ftp, 250.0);
-        // No duration, then no normalized power → refused, and said why.
-        conn.execute("UPDATE activity SET duration_s = NULL WHERE id='act-1'", []).unwrap();
+        // No TSS to rescale and no duration, then no normalized power →
+        // refused, and said why.
+        conn.execute("UPDATE activity SET duration_s = NULL, training_stress_score = NULL WHERE id='act-1'", []).unwrap();
         drop(conn);
         assert!(set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err().contains("no recorded duration"));
         let conn = state.db.lock().unwrap();
         conn.execute("UPDATE activity SET duration_s = 3600, normalized_power_w = NULL WHERE id='act-1'", []).unwrap();
         drop(conn);
         assert!(set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err().contains("no normalized power"));
+    }
+
+    /// A corrected FTP rescales the stored TSS, keeping the time it was
+    /// figured over: a GPX ride's filled TSS counts 30 timer minutes, its
+    /// stored duration is the elapsed hour with the coffee stop, and saving
+    /// the same FTP must leave the TSS as it was.
+    #[test]
+    fn set_activity_ftp_core_keeps_the_time_basis_of_the_stored_tss() {
+        let (_vault, state) = state_with_activity();
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE activity SET normalized_power_w = 200, duration_s = 3600, threshold_power_w = 250,
+                 intensity_factor = 0.8, training_stress_score = 32 WHERE id = 'act-1'",
+                [],
+            )
+            .unwrap();
+        let same = set_activity_ftp_core(&state, "act-1", 250.0).unwrap();
+        assert!((same.training_stress_score - 32.0).abs() < 1e-9, "not the elapsed hour's 64");
+        let lower = set_activity_ftp_core(&state, "act-1", 200.0).unwrap();
+        assert!((lower.training_stress_score - 50.0).abs() < 1e-9, "32 × (250/200)²");
+        assert!((lower.intensity_factor - 1.0).abs() < 1e-9);
     }
 
     /// The three writes are one transaction: a failure while the zones are

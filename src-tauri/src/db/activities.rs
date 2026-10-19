@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 
 use crate::models::activity::{
     Activity, ActivityFilters, ActivityLocation, ActivitySummary, ActivityUpdate, CalDayActivity,
-    DaySummary, DeviceStats, SIMULATED_COURSE_SPORTS,
+    DaySummary, DeviceStats, PowerSummary, SIMULATED_COURSE_SPORTS,
 };
 
 pub fn insert_activity(conn: &Connection, activity: &Activity) -> Result<()> {
@@ -543,6 +543,136 @@ pub fn set_power_metrics(
     Ok(())
 }
 
+/// The activity's power summary, `None` when there is no such activity.
+pub fn power_summary(conn: &Connection, id: &str) -> Result<Option<PowerSummary>> {
+    conn.query_row(
+        "SELECT normalized_power_w, threshold_power_w, intensity_factor, training_stress_score, duration_s
+         FROM activity WHERE id = ?1",
+        params![id],
+        |r| {
+            Ok(PowerSummary {
+                normalized_power_w: r.get(0)?,
+                threshold_power_w: r.get(1)?,
+                intensity_factor: r.get(2)?,
+                training_stress_score: r.get(3)?,
+                duration_s: r.get(4)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// Fill the power summary's empty fields from `with` (#224): only a NULL
+/// or a 0 takes a value, so what the device wrote stays. The duration is
+/// not written — it is read for TSS, not derived.
+pub fn fill_power_summary(conn: &Connection, id: &str, with: &PowerSummary) -> Result<()> {
+    conn.execute(
+        "UPDATE activity SET
+           normalized_power_w = COALESCE(NULLIF(normalized_power_w, 0), ?2),
+           threshold_power_w = COALESCE(NULLIF(threshold_power_w, 0), ?3),
+           intensity_factor = COALESCE(NULLIF(intensity_factor, 0), ?4),
+           training_stress_score = COALESCE(NULLIF(training_stress_score, 0), ?5)
+         WHERE id = ?1",
+        params![
+            id,
+            with.normalized_power_w,
+            with.threshold_power_w,
+            with.intensity_factor,
+            with.training_stress_score
+        ],
+    )?;
+    Ok(())
+}
+
+/// The FTP of the newest top-level activity of one of `sports` that started
+/// before `id` and carried one — what a file without an FTP borrows
+/// (#224). The sports keep a run's threshold off a ride: a running power
+/// FTP is another number altogether.
+pub fn ftp_before(conn: &Connection, id: &str, sports: &[&str]) -> Result<Option<f64>> {
+    if sports.is_empty() {
+        return Ok(None);
+    }
+    let sql = format!(
+        "SELECT threshold_power_w FROM activity
+         WHERE threshold_power_w > 0 AND parent_id IS NULL AND id != ?1
+           AND sport_type IN ({})
+           AND start_time < (SELECT start_time FROM activity WHERE id = ?1)
+         ORDER BY start_time DESC, id DESC LIMIT 1",
+        sport_placeholders(sports.len())
+    );
+    conn.query_row(&sql, id_and_sports(&id, sports).as_slice(), |r| r.get(0)).optional()
+}
+
+/// `?2, ?3, …` for `n` sports bound after the activity id.
+fn sport_placeholders(n: usize) -> String {
+    (0..n).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ")
+}
+
+fn id_and_sports<'a>(id: &'a &str, sports: &'a [&str]) -> Vec<&'a dyn rusqlite::types::ToSql> {
+    let mut values: Vec<&dyn rusqlite::types::ToSql> = vec![id];
+    values.extend(sports.iter().map(|s| s as &dyn rusqlite::types::ToSql));
+    values
+}
+
+/// The summary zeros older imports stored as readings (#224) — an
+/// activity's heart rate, cadence, power, NP or FTP of 0 and a lap's or a
+/// leg's heart rate of 0 all mean the sensor was not there; the parser now
+/// reads them as missing, this clears what came in before. A lap's power
+/// and cadence keep their zeros (a descent). The small tables only: the
+/// records go per activity, [`clear_zero_heart_rates`]. Returns the rows
+/// touched.
+pub fn clear_zero_summaries(conn: &Connection) -> Result<usize> {
+    let mut n = 0;
+    for (table, columns) in [
+        (
+            "activity",
+            &[
+                "avg_hr", "max_hr", "min_hr", "avg_cadence", "avg_power_w", "max_power_w",
+                "normalized_power_w", "threshold_power_w",
+            ][..],
+        ),
+        ("lap", &["avg_hr", "max_hr"][..]),
+        ("multisport_leg", &["avg_hr", "max_hr"][..]),
+    ] {
+        let sets: Vec<String> = columns.iter().map(|c| format!("{c} = NULLIF({c}, 0)")).collect();
+        let any_zero: Vec<String> = columns.iter().map(|c| format!("{c} = 0")).collect();
+        n += conn.execute(
+            &format!("UPDATE {table} SET {} WHERE {}", sets.join(", "), any_zero.join(" OR ")),
+            [],
+        )?;
+    }
+    Ok(n)
+}
+
+/// A record's heart rate of 0 is no reading (#224): cleared one activity
+/// at a time, through the activity index, so the startup fill never holds
+/// the lock over a scan of every record in the vault.
+pub fn clear_zero_heart_rates(conn: &Connection, activity_id: &str) -> Result<usize> {
+    conn.execute(
+        "UPDATE trackpoint SET hr = NULL WHERE activity_id = ?1 AND hr = 0",
+        params![activity_id],
+    )
+}
+
+/// Every activity with its sport, oldest first — the startup fill's walk.
+pub fn all_by_start(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare("SELECT id, sport_type FROM activity ORDER BY start_time ASC, id ASC")?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
+/// Activities with an NP and no FTP, oldest first — what a batch's end
+/// offers to lend an FTP to (#224). The activity table alone.
+pub fn ftp_gaps(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, sport_type FROM activity
+         WHERE (threshold_power_w IS NULL OR threshold_power_w = 0) AND normalized_power_w > 0
+         ORDER BY start_time ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
 /// An earlier activity with an FTP — what a ride's FTP is compared against
 /// (#139): its FTP, device and date.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -567,15 +697,27 @@ pub const RECENT_POWER_RIDES: usize = 3;
 /// multisport activity are excluded by `parent_id IS NULL`; containers
 /// carry no power metrics today, so they fall out through
 /// `threshold_power_w IS NOT NULL` — should they ever aggregate power,
-/// this query would start seeing them.
-pub fn recent_power_activities(conn: &Connection, id: &str, limit: usize) -> Result<Vec<PreviousPower>> {
-    let mut stmt = conn.prepare(
+/// this query would start seeing them. Only `sports` count: a run's
+/// running-power FTP says nothing about a ride's (#224).
+pub fn recent_power_activities(
+    conn: &Connection,
+    id: &str,
+    sports: &[&str],
+    limit: usize,
+) -> Result<Vec<PreviousPower>> {
+    if sports.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
         "SELECT id, start_time, threshold_power_w, source_device FROM activity
          WHERE threshold_power_w IS NOT NULL AND parent_id IS NULL AND id != ?1
+           AND sport_type IN ({})
            AND start_time < (SELECT start_time FROM activity WHERE id = ?1)
-         ORDER BY start_time DESC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![id, limit as i64], |r| {
+         ORDER BY start_time DESC, id DESC LIMIT {limit}",
+        sport_placeholders(sports.len())
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(id_and_sports(&id, sports).as_slice(), |r| {
         Ok(PreviousPower {
             activity_id: r.get(0)?,
             start_time: r.get(1)?,
@@ -1249,13 +1391,148 @@ mod tests {
         // A leg of a merged triathlon carries an FTP but is not a ride of its own.
         let mut leg = sample_activity("leg"); leg.start_time = "2026-09-11T08:00:00+00:00".into(); leg.threshold_power_w = Some(199.0); leg.parent_id = Some("tri".into());
         let mut tri = sample_activity("tri"); tri.start_time = "2026-09-11T07:00:00+00:00".into(); tri.threshold_power_w = None;
-        for x in [&a0, &a1, &a, &b, &c, &d, &tri, &leg] { insert_activity(&conn, x).unwrap(); }
-        let recent = recent_power_activities(&conn, "c", 3).unwrap();
+        // A ride's FTP is no run's: the hint compares within the sports asked for.
+        let mut ride = sample_activity("ride"); ride.start_time = "2026-09-15T08:00:00+00:00".into(); ride.threshold_power_w = Some(254.0); ride.sport_type = "ride".into();
+        for x in [&a0, &a1, &a, &b, &c, &d, &tri, &leg, &ride] { insert_activity(&conn, x).unwrap(); }
+        let recent = recent_power_activities(&conn, "c", &["run"], 3).unwrap();
         let ids: Vec<&str> = recent.iter().map(|r| r.activity_id.as_str()).collect();
-        assert_eq!(ids, ["a", "a1", "a0"], "b has no FTP, d is later, the leg is a leg; newest first, capped at 3");
+        assert_eq!(ids, ["a", "a1", "a0"], "b has no FTP, d is later, the leg is a leg, the ride a ride; newest first, capped at 3");
         assert_eq!(recent[0].threshold_power_w, 238.0);
         assert_eq!(recent[0].source_device.as_deref(), Some("fenix 7"));
-        assert!(recent_power_activities(&conn, "a0", 3).unwrap().is_empty(), "nothing earlier");
+        let with_rides = recent_power_activities(&conn, "c", &["run", "ride"], 3).unwrap();
+        assert_eq!(with_rides[0].activity_id, "ride");
+        assert!(recent_power_activities(&conn, "a0", &["run"], 3).unwrap().is_empty(), "nothing earlier");
+        assert!(recent_power_activities(&conn, "c", &[], 3).unwrap().is_empty(), "no sports, no peers");
+    }
+
+    /// The FTP a file without one borrows (#224): the newest earlier
+    /// top-level activity of the given sports with a positive FTP.
+    #[test]
+    fn ftp_before_is_the_newest_earlier_one_of_the_sports() {
+        let conn = db::test_db();
+        let at = |id: &str, sport: &str, day: u32, ftp: Option<f64>| {
+            let mut a = sample_activity(id);
+            a.start_time = format!("2026-10-{day:02}T08:00:00+00:00");
+            a.sport_type = sport.into();
+            a.threshold_power_w = ftp;
+            a
+        };
+        let mut leg = at("leg", "ride", 14, Some(199.0));
+        leg.parent_id = Some("tri".into());
+        for x in [
+            at("old", "ride", 1, Some(238.0)),
+            at("trainer", "indoor_ride", 10, Some(250.0)),
+            at("zero", "ride", 12, Some(0.0)),
+            at("tri", "triathlon", 13, None),
+            leg,
+            at("stryd", "run", 15, Some(400.0)),
+            at("zwift", "virtual_ride", 17, None),
+            at("later", "ride", 20, Some(300.0)),
+        ] {
+            insert_activity(&conn, &x).unwrap();
+        }
+        let rides = &["ride", "indoor_ride", "virtual_ride"][..];
+        assert_eq!(ftp_before(&conn, "zwift", rides).unwrap(), Some(250.0), "not the run, the leg, a zero or a later ride");
+        assert_eq!(ftp_before(&conn, "zwift", &["run"]).unwrap(), Some(400.0));
+        assert_eq!(ftp_before(&conn, "old", rides).unwrap(), None, "nothing earlier");
+        assert_eq!(ftp_before(&conn, "zwift", &[]).unwrap(), None);
+        assert_eq!(ftp_before(&conn, "nowhere", rides).unwrap(), None);
+    }
+
+    /// The startup walk is every activity oldest first; a batch's end lends
+    /// an FTP only where there is an NP and no FTP (a 0 counts as none).
+    #[test]
+    fn all_by_start_and_ftp_gaps_list_the_fill_work() {
+        let conn = db::test_db();
+        let at = |id: &str, day: u32, np: Option<f64>, ftp: Option<f64>| {
+            let mut a = sample_activity(id);
+            a.start_time = format!("2026-10-{day:02}T08:00:00+00:00");
+            a.sport_type = "ride".into();
+            a.normalized_power_w = np;
+            a.threshold_power_w = ftp;
+            a
+        };
+        for x in [
+            at("no-ftp", 17, Some(180.0), None),
+            at("whole", 16, Some(180.0), Some(250.0)),
+            at("zero-ftp", 15, Some(180.0), Some(0.0)),
+            at("no-np", 14, None, None),
+        ] {
+            insert_activity(&conn, &x).unwrap();
+        }
+        let ids = |rows: Vec<(String, String)>| rows.into_iter().map(|(id, sport)| format!("{id}:{sport}")).collect::<Vec<_>>();
+        assert_eq!(ids(all_by_start(&conn).unwrap()), ["no-np:ride", "zero-ftp:ride", "whole:ride", "no-ftp:ride"]);
+        assert_eq!(ids(ftp_gaps(&conn).unwrap()), ["zero-ftp:ride", "no-ftp:ride"]);
+    }
+
+    /// A record's 0 bpm goes, one activity at a time; its 0 W stays.
+    #[test]
+    fn clear_zero_heart_rates_touches_one_activity_and_heart_rate_only() {
+        let conn = db::test_db();
+        insert_activity(&conn, &sample_activity("zwift")).unwrap();
+        insert_activity(&conn, &sample_activity("other")).unwrap();
+        conn.execute_batch(
+            "INSERT INTO trackpoint (activity_id, hr, power_w) VALUES ('zwift', 0, 0), ('zwift', 120, 0), ('other', 0, 0);",
+        )
+        .unwrap();
+        assert_eq!(clear_zero_heart_rates(&conn, "zwift").unwrap(), 1);
+        let records: Vec<(String, Option<i32>, Option<i32>)> = conn
+            .prepare("SELECT activity_id, hr, power_w FROM trackpoint ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(
+            records,
+            vec![
+                ("zwift".into(), None, Some(0)),
+                ("zwift".into(), Some(120), Some(0)),
+                ("other".into(), Some(0), Some(0)),
+            ],
+            "coasting at 0 W is a reading; another activity waits its turn"
+        );
+    }
+
+    /// Zeros stored as summary readings go to NULL; real readings and a
+    /// lap's 0 rpm / 0 W stay — a lap spent coasting is a real lap.
+    #[test]
+    fn clear_zero_summaries_nulls_the_zeros_and_nothing_else() {
+        let conn = db::test_db();
+        let mut a = sample_activity("zwift");
+        a.avg_hr = Some(0.0);
+        a.max_hr = Some(0.0);
+        a.avg_power_w = Some(153.0);
+        a.normalized_power_w = Some(0.0);
+        insert_activity(&conn, &a).unwrap();
+        insert_activity(&conn, &sample_activity("garmin")).unwrap();
+        conn.execute_batch(
+            "INSERT INTO lap (activity_id, lap_number, avg_hr, max_cadence, avg_power_w) VALUES ('zwift', 1, 0, 0, 0);
+             INSERT INTO multisport_leg (activity_id, leg_number, sport_type, avg_hr) VALUES ('zwift', 1, 'ride', 0);
+             INSERT INTO trackpoint (activity_id, hr, power_w) VALUES ('zwift', 0, 0);",
+        )
+        .unwrap();
+
+        assert_eq!(clear_zero_summaries(&conn).unwrap(), 3, "the activity, the lap, the leg");
+        let row: (Option<f64>, Option<f64>, Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT avg_hr, max_hr, avg_power_w, normalized_power_w FROM activity WHERE id = 'zwift'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (None, None, Some(153.0), None));
+        let lap: (Option<f64>, Option<f64>, Option<f64>) = conn
+            .query_row("SELECT avg_hr, max_cadence, avg_power_w FROM lap", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!(lap, (None, Some(0.0), Some(0.0)), "the lap's heart rate only");
+        let leg: Option<f64> = conn.query_row("SELECT avg_hr FROM multisport_leg", [], |r| r.get(0)).unwrap();
+        assert_eq!(leg, None);
+        let record_hr: Option<i32> = conn.query_row("SELECT hr FROM trackpoint", [], |r| r.get(0)).unwrap();
+        assert_eq!(record_hr, Some(0), "records go per activity, in clear_zero_heart_rates");
+        let garmin_hr: Option<f64> = conn.query_row("SELECT avg_hr FROM activity WHERE id = 'garmin'", [], |r| r.get(0)).unwrap();
+        assert_eq!(garmin_hr, Some(150.0));
+        assert_eq!(clear_zero_summaries(&conn).unwrap(), 0, "idempotent");
     }
 
     fn sample_activity(id: &str) -> Activity {

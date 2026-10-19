@@ -119,9 +119,9 @@ pub(crate) async fn import_paths<R: tauri::Runtime>(
         result.record(path_str, outcome, &mut batch);
     }
 
-    // One recompute per touched day for the whole batch (a folder drop of
-    // 185 Monitor files touches each day a few times).
-    if !batch.days.is_empty() {
+    // The batch's end, once: one recompute per touched day (a folder drop
+    // of 185 Monitor files touches each day a few times), FTPs lent.
+    if !batch.is_empty() {
         let app_clone = app.clone();
         let finished = tokio::task::spawn_blocking(move || {
             let state = app_clone.state::<AppState>();

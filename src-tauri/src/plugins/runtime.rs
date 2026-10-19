@@ -219,9 +219,10 @@ struct Finished {
     gear_writes: usize,
 }
 
-/// Close the invocation behind `ud`: recompute the Monitor days its
-/// imports touched — once for all of them, a wellness sync lands 30 days
-/// in 30 calls — and read the counters. A failed recompute is logged; no
+/// Close the invocation behind `ud`: finish its import batch — lend FTPs
+/// to the activities a sync fetched newest first (#224) and recompute the
+/// Monitor days its imports touched, once for all of them (a wellness sync
+/// lands 30 days in 30 calls) — and read the counters. A failed recompute is logged; no
 /// caller is left to report it to, and the boot-time safety net
 /// (`run_monitoring_recompute` over days with `computed_at IS NULL`) picks
 /// the days up. A poisoned context (a panicking host call) still yields
@@ -237,7 +238,7 @@ fn finish_invocation(ud: &UserData<PluginCtx>) -> Finished {
     let mut ctx = ctx.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let batch = std::mem::take(&mut ctx.monitoring);
     let mut monitoring_days = 0;
-    if !batch.days.is_empty() {
+    if !batch.is_empty() {
         let mut result = ImportResult::default();
         let recomputed = ctx
             .db
@@ -1147,6 +1148,73 @@ mod tests {
         assert_eq!(computed(&state), 2);
         // Finishing again has nothing left to do.
         assert_eq!(super::finish_invocation(&ud).monitoring_days, 0);
+    }
+
+    /// A sync fetches the newest ride first: the ride with power and no FTP
+    /// comes in before the older ride that has one, and the invocation's
+    /// end lends it that FTP (#224).
+    #[test]
+    fn finish_invocation_lends_ftps_to_the_rides_a_sync_fetched() {
+        use crate::models::plugin::Permission;
+        use crate::plugins::host::{self, PluginCtx};
+        use crate::state::AppState;
+        use std::sync::{Arc, Mutex};
+
+        let vault = crate::test_support::ScratchDir::new("finish_ftp");
+        let state = Arc::new(AppState {
+            db: Arc::new(Mutex::new(crate::db::test_db())),
+            vault_path: vault.to_path_buf(),
+            encryption_key: Mutex::new(None),
+            watcher_handle: Mutex::new(None),
+            db_locked: Mutex::new(false),
+            vault_error: Mutex::new(None),
+            services_started: Mutex::new(false),
+            geocoding_flight: crate::state::SingleFlight::default(),
+            vault_flight: crate::state::SingleFlight::default(),
+        });
+        let mut ctx = PluginCtx::new(state.db.clone(), "com.test", vec![Permission::ImportFiles]);
+        ctx.vault = Some(state.clone());
+
+        let points: String = (0..120)
+            .map(|i| {
+                format!(
+                    "<Trackpoint><Time>2026-10-17T18:{:02}:{:02}Z</Time><Extensions><TPX><Watts>200</Watts></TPX></Extensions></Trackpoint>",
+                    i / 60,
+                    i % 60
+                )
+            })
+            .collect();
+        let tcx = format!(
+            r#"<?xml version="1.0"?><TrainingCenterDatabase><Activities><Activity Sport="Biking"><Id>2026-10-17T18:00:00Z</Id><Lap StartTime="2026-10-17T18:00:00Z"><TotalTimeSeconds>120</TotalTimeSeconds><Track>{points}</Track></Lap></Activity></Activities></TrainingCenterDatabase>"#
+        );
+        let r = host::import_file(&mut ctx, "zwift.tcx", tcx.as_bytes()).unwrap();
+        assert_eq!(r.imported, 1, "{:?}", r.failed);
+        ctx.imported_activities += r.imported;
+
+        let ftp_of_the_ride = || -> Option<f64> {
+            state
+                .db
+                .lock()
+                .unwrap()
+                .query_row("SELECT threshold_power_w FROM activity WHERE start_time LIKE '2026-10-17%'", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(ftp_of_the_ride(), None, "nothing earlier to borrow from yet");
+        // The older ride the sync fetches next.
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO activity (id, start_time, sport_type, threshold_power_w)
+                 VALUES ('edge', '2026-10-10T08:00:00+00:00', 'ride', 250)",
+                [],
+            )
+            .unwrap();
+
+        let done = super::finish_invocation(&host::user_data(ctx));
+        assert_eq!(done.activities, 1);
+        assert_eq!(ftp_of_the_ride(), Some(250.0));
     }
 
     /// A recompute that fails is logged, not lost with the counters — and

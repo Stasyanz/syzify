@@ -208,7 +208,8 @@ pub fn parse_tcx_bytes(bytes: &[u8], activity_id: &str) -> Result<ParsedActivity
                             }
                         }
                         "Value" if in_hr => {
-                            current_tp.hr = text.parse().ok();
+                            // 0 bpm is no reading (#224).
+                            current_tp.hr = text.parse().ok().filter(|v| *v > 0);
                         }
                         "RunCadence" | "ns3:RunCadence" => {
                             current_tp.cadence = text.parse().ok();
@@ -395,6 +396,20 @@ mod tests {
         assert_eq!(sm.total_elapsed_time_s, Some(1800.0));
         assert!(sm.avg_hr.unwrap() > 140.0);
         assert_eq!(sm.max_hr, Some(150.0));
+    }
+
+    /// A 0 bpm sample is no reading (#224): it stays off the record and
+    /// out of the average.
+    #[test]
+    fn parse_tcx_reads_a_zero_heart_rate_as_none() {
+        let scratch = crate::test_support::ScratchDir::new("tcx-zero");
+        let tmp = scratch.join("zero.tcx");
+        let xml = sample_tcx().replacen("<Value>140</Value>", "<Value>0</Value>", 1);
+        assert_ne!(xml, sample_tcx(), "the sample carries a 140 bpm sample to zero");
+        std::fs::write(&tmp, xml).unwrap();
+        let result = parse_tcx(tmp.to_str().unwrap(), "zero-tcx").unwrap();
+        assert_eq!(result.trackpoints[0].hr, None);
+        assert_eq!(result.session_metrics.unwrap().avg_hr, Some(150.0));
     }
 
     #[test]

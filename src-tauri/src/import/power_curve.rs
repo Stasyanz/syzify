@@ -77,6 +77,49 @@ pub fn compute_power_curve(
 /// duplicate second keeps the later row, and timestamps more than a day from
 /// the median are discarded as corrupt instead of stretching the grid.
 pub(crate) fn resample_1s(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<f64> {
+    let mut last: Option<(usize, f64)> = None;
+    on_1s_grid(t, power_w)
+        .iter()
+        .enumerate()
+        .map(|(i, slot)| match slot {
+            Some(v) => {
+                last = Some((i, *v));
+                *v
+            }
+            None => match last {
+                Some((j, v)) if i - j <= MAX_HOLD_S => v,
+                _ => 0.0,
+            },
+        })
+        .collect()
+}
+
+/// The 1 Hz series on timer time, for a metric that leaves a pause out
+/// rather than counting it as 0 W: samples up to [`MAX_HOLD_S`] apart are
+/// held across the gap, farther apart it is `None` from end to end — no
+/// held seconds leak into the pause. The same line the power zones draw
+/// (`recompute_power_zones`), so a filled TSS and the zones count one
+/// timer.
+pub(crate) fn resample_1s_gapped(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<Option<f64>> {
+    let slots = on_1s_grid(t, power_w);
+    let mut series = slots.clone();
+    let mut last: Option<(usize, f64)> = None;
+    for (i, slot) in slots.iter().enumerate() {
+        if let Some(v) = slot {
+            if let Some((j, held)) = last {
+                if i - j <= MAX_HOLD_S {
+                    series[j + 1..i].fill(Some(held));
+                }
+            }
+            last = Some((i, *v));
+        }
+    }
+    series
+}
+
+/// The samples placed on a 1 Hz elapsed grid, `None` where a second has
+/// none; empty when no sample has both a time and a power.
+fn on_1s_grid(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<Option<f64>> {
     // Samples that can land on a time grid: timestamp + power value. An
     // explicit 0 W is a real sample (coasting) and must reset the hold.
     let mut samples: Vec<(f64, f64)> = t
@@ -113,25 +156,34 @@ pub(crate) fn resample_1s(t: &[Option<f64>], power_w: &[Option<i32>]) -> Vec<f64
             slots[idx] = Some(*p);
         }
     }
+    slots
+}
 
-    let mut series = vec![0.0f64; dur];
-    let mut last: Option<(usize, f64)> = None;
-    for (i, slot) in slots.iter().enumerate() {
-        match slot {
-            Some(v) => {
-                series[i] = *v;
-                last = Some((i, *v));
-            }
-            None => {
-                if let Some((j, v)) = last {
-                    if i - j <= MAX_HOLD_S {
-                        series[i] = v;
-                    }
-                }
-            }
-        }
+/// Rolling window of normalized power, seconds — Coggan's definition.
+const NP_WINDOW_S: usize = 30;
+
+/// Normalized power from the track, for a file whose device wrote none
+/// (#224 — Zwift writes average power only): the 30 s rolling mean of the
+/// 1 Hz series, raised to the fourth power, averaged, fourth root. On
+/// timer time like the device's own: a pause's seconds are left out, not
+/// counted as 0 W, while a real 0 W sample (coasting) stays in. Returns
+/// the NP with the timer seconds it was worked out over — the duration a
+/// TSS from it must use. `None` when there is less than one window of
+/// samples or no positive power.
+pub fn normalized_power(t: &[Option<f64>], power_w: &[Option<i32>]) -> Option<(f64, f64)> {
+    let series: Vec<f64> = resample_1s_gapped(t, power_w).into_iter().flatten().collect();
+    if series.len() < NP_WINDOW_S {
+        return None;
     }
-    series
+    let mut window_sum: f64 = series[..NP_WINDOW_S].iter().sum();
+    let mut fourth_sum = (window_sum / NP_WINDOW_S as f64).powi(4);
+    for i in NP_WINDOW_S..series.len() {
+        window_sum += series[i] - series[i - NP_WINDOW_S];
+        fourth_sum += (window_sum / NP_WINDOW_S as f64).powi(4);
+    }
+    let windows = (series.len() - NP_WINDOW_S + 1) as f64;
+    let np = (fourth_sum / windows).powf(0.25);
+    (np.is_finite() && np > 0.0).then_some((np, series.len() as f64))
 }
 
 #[cfg(test)]
@@ -262,5 +314,72 @@ mod tests {
         t[5] = None;
         let curve = compute_power_curve(&t, &vec![Some(100); 30]);
         assert!(!curve.is_empty());
+    }
+
+    /// The textbook computation, window by window, to check the rolling one.
+    fn np_by_the_book(series: &[f64]) -> f64 {
+        let means: Vec<f64> = series.windows(NP_WINDOW_S).map(|w| w.iter().sum::<f64>() / w.len() as f64).collect();
+        (means.iter().map(|m| m.powi(4)).sum::<f64>() / means.len() as f64).powf(0.25)
+    }
+
+    #[test]
+    fn normalized_power_of_a_steady_ride_is_its_power() {
+        let (np, _) = normalized_power(&t_range(600), &vec![Some(250); 600]).unwrap();
+        assert!((np - 250.0).abs() < 1e-9);
+    }
+
+    /// Intervals weigh more than their average: NP sits above it, at the
+    /// value of the window-by-window definition.
+    #[test]
+    fn normalized_power_weighs_intervals_by_the_book() {
+        let series: Vec<f64> = (0..600).map(|i| if (i / 60) % 2 == 0 { 300.0 } else { 100.0 }).collect();
+        let power: Vec<Option<i32>> = series.iter().map(|p| Some(*p as i32)).collect();
+        let (np, _) = normalized_power(&t_range(600), &power).unwrap();
+        assert!(np > 200.0, "NP {np} above the 200 W average");
+        assert!((np - np_by_the_book(&series)).abs() < 1e-6);
+    }
+
+    /// A pause is off the timer and leaves NP alone; coasting at 0 W is on
+    /// it and pulls NP down.
+    #[test]
+    fn normalized_power_skips_a_pause_but_counts_coasting() {
+        let mut t = t_range(60);
+        t.extend((0..60).map(|i| Some(1_000_000.0 + 660.0 + i as f64)));
+        let (np, timer_s) = normalized_power(&t, &vec![Some(300); 120]).unwrap();
+        assert!((np - 300.0).abs() < 1e-9, "the 600 s pause is not 0 W");
+        assert_eq!(timer_s, 120.0, "two minutes on the timer, not twelve elapsed");
+
+        let mut coasting = vec![Some(300); 60];
+        coasting.extend(vec![Some(0); 60]);
+        assert!(normalized_power(&t_range(120), &coasting).unwrap().0 < 300.0);
+    }
+
+    /// Smart recording's few missing seconds are held on the timer; a pause
+    /// is off it end to end — while the curve's series still holds into the
+    /// pause and zero-fills the rest, as it always has.
+    #[test]
+    fn the_timer_series_holds_short_gaps_and_drops_long_ones() {
+        let at = |s: &[f64]| s.iter().map(|x| Some(1_000_000.0 + x)).collect::<Vec<_>>();
+        let w = |n: usize| vec![Some(200); n];
+        // Samples 10 s apart (0 → 10): held. 11 s apart (10 → 21): a pause.
+        let t = at(&[0.0, 10.0, 21.0]);
+        let gapped = resample_1s_gapped(&t, &w(3));
+        assert_eq!(gapped.iter().flatten().count(), 12, "0..=10 held, 21 itself; 11..21 off the timer");
+        assert!(gapped[11..21].iter().all(Option::is_none));
+
+        let curve = resample_1s(&t, &w(3));
+        assert_eq!(curve.len(), 22);
+        assert_eq!(&curve[11..21], &[200.0; 10], "held ten seconds into the pause");
+        assert_eq!(curve[21], 200.0);
+        let far = at(&[0.0, 12.0]);
+        assert_eq!(resample_1s(&far, &w(2))[11], 0.0, "and zero-filled past them");
+    }
+
+    #[test]
+    fn normalized_power_needs_one_full_window_of_positive_power() {
+        assert!(normalized_power(&t_range(29), &vec![Some(250); 29]).is_none());
+        assert!(normalized_power(&t_range(30), &vec![Some(250); 30]).is_some());
+        assert!(normalized_power(&t_range(60), &vec![Some(0); 60]).is_none());
+        assert!(normalized_power(&t_range(60), &vec![None; 60]).is_none());
     }
 }

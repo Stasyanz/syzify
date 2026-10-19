@@ -15,8 +15,23 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   (Watopia lies in the Pacific), so there are no map tiles under it and no
   destination point to pick on it, and it still gets no place name, no
   segments and no Library map pin.
+- An activity whose file carries power but no normalized power or FTP — a
+  Zwift ride, a GPX with power — gets them (#224). Normalized power is
+  worked out from the recorded power, pauses left out; the FTP is the one
+  of your newest earlier activity of the same kind that had one (a trainer
+  ride takes a road ride's, never a run's running-power FTP). IF, TSS and
+  the power zones follow, so the power chart is colored by zone and the
+  FTP can be corrected in Edit Activity, as on a Garmin ride. Whatever the
+  device wrote stays as recorded. Activities already in the vault are
+  filled once, at the first launch of this version.
 
 ### Fixed
+- A heart rate, cadence or power of 0 in a file's summary no longer shows
+  as a reading (#224): Zwift writes an average heart rate of 0 when no
+  strap is paired, which showed as "0 bpm". A zero now means no reading
+  for any heart rate, and for the activity's cadence and power; a lap or
+  a record at 0 W or 0 rpm is still a lap spent coasting. Activities
+  already in the vault are cleaned up too.
 - Files that reach a watch folder while Syzify is closed, and a Garmin
   plugged in before it starts, are offered at the next launch (#221) —
   imported at once with auto-import on, in the "new files found" banner

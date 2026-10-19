@@ -604,7 +604,7 @@ pub fn parse_fit_records(
                             tp.speed_mps = field_to_f64(field);
                         }
                         "heart_rate" => {
-                            tp.hr = field_to_f64(field).map(|v| v as i32);
+                            tp.hr = reading(field).map(|v| v as i32);
                         }
                         "cadence" => {
                             tp.cadence = field_to_f64(field).map(|v| v as i32);
@@ -710,19 +710,19 @@ pub fn parse_fit_records(
                             }
                         }
                         "avg_heart_rate" => {
-                            sm.avg_hr = field_to_f64(field);
+                            sm.avg_hr = reading(field);
                         }
                         "max_heart_rate" => {
-                            sm.max_hr = field_to_f64(field);
+                            sm.max_hr = reading(field);
                         }
                         "avg_running_cadence" | "avg_cadence" => {
                             if sm.avg_cadence.is_none() {
-                                sm.avg_cadence = field_to_f64(field);
+                                sm.avg_cadence = reading(field);
                             }
                         }
                         "max_running_cadence" | "max_cadence" => {
                             if sm.max_cadence.is_none() {
-                                sm.max_cadence = field_to_f64(field);
+                                sm.max_cadence = reading(field);
                             }
                         }
                         "total_calories" => {
@@ -735,19 +735,19 @@ pub fn parse_fit_records(
                             sm.max_temperature_c = field_to_f64(field);
                         }
                         "avg_power" => {
-                            sm.avg_power_w = field_to_f64(field);
+                            sm.avg_power_w = reading(field);
                         }
                         "max_power" => {
-                            sm.max_power_w = field_to_f64(field);
+                            sm.max_power_w = reading(field);
                         }
                         "normalized_power" => {
-                            sm.normalized_power_w = field_to_f64(field);
+                            sm.normalized_power_w = reading(field);
                         }
                         "total_work" => {
                             sm.total_work_kj = field_to_f64(field).map(|v| v / 1000.0);
                         }
                         "threshold_power" => {
-                            sm.threshold_power_w = field_to_f64(field);
+                            sm.threshold_power_w = reading(field);
                         }
                         "training_stress_score" => {
                             sm.training_stress_score = field_to_f64(field);
@@ -780,7 +780,7 @@ pub fn parse_fit_records(
                             sm.total_strides = field_to_f64(field).map(|v| v as i64);
                         }
                         "min_heart_rate" => {
-                            sm.min_hr = field_to_f64(field);
+                            sm.min_hr = reading(field);
                         }
                         "total_moving_time" => {
                             sm.moving_time_s = field_to_f64(field);
@@ -939,10 +939,10 @@ pub fn parse_fit_records(
                             }
                         }
                         "avg_heart_rate" => {
-                            lap.avg_hr = field_to_f64(field);
+                            lap.avg_hr = reading(field);
                         }
                         "max_heart_rate" => {
-                            lap.max_hr = field_to_f64(field);
+                            lap.max_hr = reading(field);
                         }
                         "avg_running_cadence" | "avg_cadence" => {
                             if lap.avg_cadence.is_none() {
@@ -1300,6 +1300,16 @@ fn field_to_f64(field: &fitparser::FitDataField) -> Option<f64> {
         fitparser::Value::Float64(v) => Some(*v),
         _ => None,
     }
+}
+
+/// A reading where 0 means none (#224): Zwift writes an average heart rate
+/// of 0 when no strap was paired. A pulse is never 0, so every heart rate
+/// goes through here; so do the session's cadence and power and its NP and
+/// FTP — a whole ride at 0 says the sensor was not there. A lap's or a
+/// record's cadence and power do not: a lap down a descent and a second of
+/// coasting are 0 for real.
+fn reading(field: &fitparser::FitDataField) -> Option<f64> {
+    field_to_f64(field).filter(|v| *v > 0.0)
 }
 
 fn field_to_f64_vec(field: &fitparser::FitDataField) -> Vec<f64> {
@@ -1905,6 +1915,93 @@ mod tests {
         assert_eq!(result[0], 120.0);
         assert_eq!(result[1], 140.0);
         assert_eq!(result[2], 160.0);
+    }
+
+    fn typed_msg(kind: MesgNum, fields: &[(&str, fitparser::Value)]) -> fitparser::FitDataRecord {
+        let mut msg = fitparser::FitDataRecord::new(kind);
+        for (i, (name, val)) in fields.iter().enumerate() {
+            msg.push(fitparser::FitDataField::new((*name).to_string(), i as u8, val.clone(), String::new()));
+        }
+        msg
+    }
+
+    /// Through the parser (#224): a Zwift session without a strap or a
+    /// cadence sensor reads as no heart rate, cadence or power summary;
+    /// a lap keeps its 0 W and 0 rpm but not its 0 bpm; a record keeps
+    /// its coasting 0 W and 0 rpm but not its 0 bpm.
+    #[test]
+    fn zero_readings_through_the_parser() {
+        use fitparser::Value::{UInt16, UInt8};
+        let session_fields = |v8: u8, v16: u16| {
+            vec![
+                ("avg_heart_rate", UInt8(v8)),
+                ("max_heart_rate", UInt8(v8)),
+                ("min_heart_rate", UInt8(v8)),
+                ("avg_cadence", UInt8(v8)),
+                ("max_cadence", UInt8(v8)),
+                ("avg_power", UInt16(v16)),
+                ("max_power", UInt16(v16)),
+                ("normalized_power", UInt16(v16)),
+                ("threshold_power", UInt16(v16)),
+            ]
+        };
+        let lap = typed_msg(
+            MesgNum::Lap,
+            &[
+                ("avg_heart_rate", UInt8(0)),
+                ("max_heart_rate", UInt8(0)),
+                ("avg_cadence", UInt8(0)),
+                ("max_cadence", UInt8(0)),
+                ("avg_power", UInt16(0)),
+                ("max_power", UInt16(0)),
+                ("normalized_power", UInt16(0)),
+            ],
+        );
+        let record = typed_msg(MesgNum::Record, &[("heart_rate", UInt8(0)), ("cadence", UInt8(0)), ("power", UInt16(0))]);
+
+        let zwift = parse_fit_records(&[typed_msg(MesgNum::Session, &session_fields(0, 0)), lap, record], "z").unwrap();
+        let s = zwift.session_metrics.unwrap();
+        assert_eq!(
+            [s.avg_hr, s.max_hr, s.min_hr, s.avg_cadence, s.max_cadence, s.avg_power_w, s.max_power_w, s.normalized_power_w, s.threshold_power_w],
+            [None; 9]
+        );
+        let l = &zwift.laps[0];
+        assert_eq!((l.avg_hr, l.max_hr), (None, None));
+        assert_eq!(
+            [l.avg_cadence, l.max_cadence, l.avg_power_w, l.max_power_w, l.normalized_power_w],
+            [Some(0.0); 5],
+            "a lap at 0 W and 0 rpm is a reading"
+        );
+        let tp = &zwift.trackpoints[0];
+        assert_eq!((tp.hr, tp.cadence, tp.power_w), (None, Some(0), Some(0)));
+
+        let garmin = parse_fit_records(
+            &[
+                typed_msg(MesgNum::Session, &session_fields(142, 254)),
+                typed_msg(MesgNum::Record, &[("heart_rate", UInt8(142))]),
+            ],
+            "g",
+        )
+        .unwrap();
+        let s = garmin.session_metrics.unwrap();
+        assert_eq!(
+            [s.avg_hr, s.max_hr, s.min_hr, s.avg_cadence, s.max_cadence],
+            [Some(142.0); 5]
+        );
+        assert_eq!(
+            [s.avg_power_w, s.max_power_w, s.normalized_power_w, s.threshold_power_w],
+            [Some(254.0); 4]
+        );
+        assert_eq!(garmin.trackpoints[0].hr, Some(142));
+    }
+
+    #[test]
+    fn a_zero_reading_is_no_reading() {
+        use fitparser::{FitDataField, Value};
+        let field = |v: Value| FitDataField::new("avg_heart_rate".to_string(), 16, v, "bpm".to_string());
+        assert_eq!(reading(&field(Value::UInt8(0))), None, "Zwift without a strap");
+        assert_eq!(reading(&field(Value::UInt8(142))), Some(142.0));
+        assert_eq!(reading(&field(Value::String("x".into()))), None);
     }
 
     #[test]

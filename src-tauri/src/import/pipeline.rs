@@ -82,7 +82,10 @@ impl ImportResult {
         batch: &mut MonitoringBatch,
     ) {
         match outcome {
-            Ok(ImportOutcome::Imported) => self.imported += 1,
+            Ok(ImportOutcome::Imported) => {
+                self.imported += 1;
+                batch.activities = true;
+            }
             Ok(ImportOutcome::Skipped) => self.skipped += 1,
             Ok(ImportOutcome::Monitoring { days }) => {
                 self.monitoring_files += 1;
@@ -93,17 +96,31 @@ impl ImportResult {
     }
 }
 
-/// The local days a batch of Monitor files touched — recomputed together
-/// by [`MonitoringBatch::finish`].
+/// What a batch leaves for its end, done once by [`MonitoringBatch::finish`]
+/// on every way in — a drop, a watch folder, a plugin's sync: the local
+/// days its Monitor files touched, and whether activities came in.
 #[derive(Debug, Default)]
 pub struct MonitoringBatch {
     pub days: std::collections::BTreeSet<i64>,
+    pub activities: bool,
 }
 
 impl MonitoringBatch {
-    /// Recompute the touched days' aggregates and fill the result's
-    /// monitoring counts.
+    /// Whether [`MonitoringBatch::finish`] has anything to do.
+    pub fn is_empty(&self) -> bool {
+        self.days.is_empty() && !self.activities
+    }
+
+    /// Lend an FTP to the activities that came in without one (#224 — an
+    /// older ride later in the batch lends to the newer ones; non-fatal,
+    /// the files are in), then recompute the touched days' aggregates and
+    /// fill the result's monitoring counts.
     pub fn finish(self, conn: &Connection, result: &mut ImportResult) -> Result<(), String> {
+        if self.activities {
+            if let Err(e) = crate::import::power_summary::lend_ftp(conn) {
+                eprintln!("Could not lend FTPs at the end of the import: {e}");
+            }
+        }
         if self.days.is_empty() {
             return Ok(());
         }
@@ -837,7 +854,8 @@ pub fn import_bytes(
         max_speed_mps: sm.as_ref().and_then(|s| s.max_speed_mps).or(metrics.max_speed_mps),
         avg_hr: sm.as_ref().and_then(|s| s.avg_hr).or(metrics.avg_hr),
         max_hr: sm.as_ref().and_then(|s| s.max_hr).or(metrics.max_hr),
-        avg_cadence: sm.as_ref().and_then(|s| s.avg_cadence).or(metrics.avg_cadence),
+        // A cadence that averages to 0 over the records is no sensor (#224).
+        avg_cadence: sm.as_ref().and_then(|s| s.avg_cadence).or(metrics.avg_cadence.filter(|c| *c > 0.0)),
         calories: sm.as_ref().and_then(|s| s.total_calories),
         avg_temperature_c: sm.as_ref().and_then(|s| s.avg_temperature_c),
         max_temperature_c: sm.as_ref().and_then(|s| s.max_temperature_c),
@@ -946,10 +964,8 @@ pub fn import_bytes(
         db::exercise_sets::insert_exercise_sets(conn, &parsed.sets).map_err(|e| e.to_string())?;
     }
 
-    // 9e. Insert time in zones if present
-    if !parsed.time_in_zones.is_empty() {
-        db::time_in_zones::insert_time_in_zones(conn, &parsed.time_in_zones).map_err(|e| e.to_string())?;
-    }
+    // 9e. Time in zones if present, then the power summary the file left out.
+    store_zones_then_fill(conn, &activity_id, sport.as_str(), &parsed.time_in_zones)?;
 
     // 9f. Insert HRV samples if present
     if !parsed.hrv_samples.is_empty() {
@@ -973,6 +989,23 @@ pub fn import_bytes(
     Ok(ImportOutcome::Imported)
 }
 
+/// The file's own time in zones, then the power summary it left out
+/// (#224) — in this order: the fill builds power zones only when the file
+/// counted none, so it must see the file's rows or it counts them twice.
+/// The fill is non-fatal like the rest of the analysis.
+fn store_zones_then_fill(
+    conn: &Connection,
+    activity_id: &str,
+    sport: &str,
+    zones: &[crate::models::time_in_zone::TimeInZone],
+) -> Result<(), String> {
+    if !zones.is_empty() {
+        db::time_in_zones::insert_time_in_zones(conn, zones).map_err(|e| e.to_string())?;
+    }
+    let _ = crate::import::power_summary::fill_missing(conn, activity_id, sport);
+    Ok(())
+}
+
 /// Post-insert track analysis: running best-effort splits and the mean-max
 /// power curve, from the STORED track (cumulative distance / parsed elapsed
 /// seconds must match what the rest of the app reads). Deliberately
@@ -987,13 +1020,7 @@ pub(crate) fn analyze_stored_track(
     let wants_best_efforts = crate::db::best_efforts::RUNNING_SPORTS.contains(&sport);
     // Cheap stored-side probe before the full columnar load (which computes
     // haversine distances) — most imports are neither runs nor powered.
-    let has_power: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM trackpoint WHERE activity_id = ?1 AND power_w > 0)",
-            rusqlite::params![activity_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
+    let has_power = db::power_curve::has_power(conn, activity_id).unwrap_or(false);
     if !wants_best_efforts && !has_power {
         return;
     }
@@ -1213,7 +1240,7 @@ fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoint]) -> Com
     // HR
     let hrs: Vec<f64> = trackpoints
         .iter()
-        .filter_map(|tp| tp.hr.map(|v| v as f64))
+        .filter_map(|tp| tp.hr.filter(|v| *v > 0).map(|v| v as f64))
         .collect();
     let avg_hr = if !hrs.is_empty() {
         Some(hrs.iter().sum::<f64>() / hrs.len() as f64)
@@ -1501,6 +1528,62 @@ mod tests {
             .is_empty());
     }
 
+    /// A powered import whose file left the summary out gets it filled on
+    /// the way in (#224) — and when the file counted its own power zones,
+    /// those stay the only ones: the fill runs after they are stored.
+    #[test]
+    fn store_zones_then_fill_keeps_the_file_zones_and_fills_the_summary() {
+        let conn = crate::db::test_db();
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, threshold_power_w)
+             VALUES ('edge', '2026-10-10T08:00:00+00:00', 'ride', 250)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, duration_s)
+             VALUES ('zwift', '2026-10-17T18:00:00+00:00', 'virtual_ride', 120)",
+            [],
+        )
+        .unwrap();
+        for i in 0..120 {
+            conn.execute(
+                "INSERT INTO trackpoint (activity_id, t, power_w) VALUES ('zwift', ?1, 200)",
+                [format!("2026-10-17T18:{:02}:{:02}+00:00", i / 60, i % 60)],
+            )
+            .unwrap();
+        }
+        let file_zones: Vec<crate::models::time_in_zone::TimeInZone> = (0..7)
+            .map(|i| crate::models::time_in_zone::TimeInZone {
+                id: None,
+                activity_id: "zwift".into(),
+                zone_type: "power".into(),
+                zone_index: i,
+                time_s: if i == 2 { 120.0 } else { 0.0 },
+                zone_high_boundary: None,
+            })
+            .collect();
+        store_zones_then_fill(&conn, "zwift", "virtual_ride", &file_zones).unwrap();
+        let s = crate::db::activities::power_summary(&conn, "zwift").unwrap().unwrap();
+        assert!((s.normalized_power_w.unwrap() - 200.0).abs() < 1e-9);
+        assert_eq!(s.threshold_power_w, Some(250.0));
+        let power_rows = crate::db::time_in_zones::get_time_in_zones(&conn, "zwift")
+            .unwrap()
+            .into_iter()
+            .filter(|z| z.zone_type == "power")
+            .count();
+        assert_eq!(power_rows, 7, "the file's seven, not seven more from the borrowed FTP");
+
+        // A file without zones gets them built from the borrowed FTP.
+        conn.execute("UPDATE activity SET normalized_power_w = NULL, threshold_power_w = NULL WHERE id = 'zwift'", [])
+            .unwrap();
+        crate::db::time_in_zones::delete_time_in_zones_of_type(&conn, "zwift", "power").unwrap();
+        store_zones_then_fill(&conn, "zwift", "virtual_ride", &[]).unwrap();
+        let built = crate::db::time_in_zones::get_time_in_zones(&conn, "zwift").unwrap();
+        assert_eq!(built.len(), 7);
+        assert!(built.iter().all(|z| z.zone_high_boundary.is_some() || z.zone_index == 6));
+    }
+
     /// A content-duplicate import (same workout from a second source, so a
     /// different hash) stores its raw file LINKED to the matched activity.
     /// An unlinked (NULL) row would survive delete_activity forever: GPS
@@ -1615,6 +1698,18 @@ mod tests {
         assert!((m.avg_hr.unwrap() - 145.0).abs() < 0.01);
         assert_eq!(m.max_hr, Some(150.0));
         assert!((m.max_speed_mps.unwrap() - 3.2).abs() < 0.01);
+    }
+
+    /// A record's 0 bpm is no reading (#224): it neither drags the average
+    /// down nor stands for a heart rate when it is all there is.
+    #[test]
+    fn compute_metrics_skips_a_zero_heart_rate() {
+        let tps = vec![
+            make_tp("a", Some("2025-06-01T08:00:00+00:00"), None, None, None, None, Some(0)),
+            make_tp("a", Some("2025-06-01T08:00:10+00:00"), None, None, None, None, Some(150)),
+        ];
+        assert_eq!(compute_metrics(&tps).avg_hr, Some(150.0));
+        assert_eq!(compute_metrics(&tps[..1]).avg_hr, None);
     }
 
     /// A paused ride: timer time (4h18m) must win over elapsed (6h38m) — the
@@ -1997,6 +2092,47 @@ mod tests {
             result.monitoring_range,
             Some(("2026-09-04".to_string(), "2026-09-05".to_string()))
         );
+    }
+
+    /// A batch's end lends FTPs once an activity came in (#224): a sync
+    /// fetches the newest ride first, and the older ride that should lend
+    /// to it arrives later in the same batch. Nothing came in, nothing to do.
+    #[test]
+    fn a_batch_with_activities_lends_ftps_at_its_end() {
+        let conn = crate::db::test_db();
+        conn.execute_batch(
+            "INSERT INTO activity (id, start_time, sport_type, normalized_power_w)
+               VALUES ('zwift', '2026-10-17T18:00:00+00:00', 'virtual_ride', 200);
+             INSERT INTO activity (id, start_time, sport_type, threshold_power_w)
+               VALUES ('edge', '2026-10-10T08:00:00+00:00', 'ride', 250);",
+        )
+        .unwrap();
+        let ftp = || -> Option<f64> {
+            conn.query_row("SELECT threshold_power_w FROM activity WHERE id = 'zwift'", [], |r| r.get(0)).unwrap()
+        };
+        let mut result = ImportResult::default();
+
+        let mut batch = MonitoringBatch::default();
+        result.record("skipped.fit", Ok(ImportOutcome::Skipped), &mut batch);
+        assert!(batch.is_empty());
+        batch.finish(&conn, &mut result).unwrap();
+        assert_eq!(ftp(), None, "no activity came in");
+
+        let mut batch = MonitoringBatch::default();
+        result.record("edge.fit", Ok(ImportOutcome::Imported), &mut batch);
+        assert!(!batch.is_empty());
+        batch.finish(&conn, &mut result).unwrap();
+        assert_eq!(ftp(), Some(250.0));
+        assert_eq!(result.monitoring_days, 0, "no Monitor day touched");
+    }
+
+    /// Lending is no reason to fail an import whose files are in.
+    #[test]
+    fn a_failed_lend_does_not_fail_the_batch() {
+        let conn = crate::db::test_db();
+        conn.execute_batch("PRAGMA foreign_keys = OFF; ALTER TABLE activity RENAME TO activity_gone;").unwrap();
+        let batch = MonitoringBatch { activities: true, ..Default::default() };
+        assert!(batch.finish(&conn, &mut ImportResult::default()).is_ok());
     }
 
     #[test]

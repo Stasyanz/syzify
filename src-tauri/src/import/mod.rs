@@ -8,6 +8,7 @@ pub mod gear_keys_backfill;
 pub mod geocoding;
 pub mod pipeline;
 pub mod power_curve;
+pub mod power_summary;
 pub mod runkeeper;
 pub mod runkeeper_csv;
 pub mod segment_matching;
