@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-19
+
 ### Added
 - A virtual ride or run shows its course (#222): the track a simulator
   such as Zwift records is drawn on a blank canvas in place of the map,
