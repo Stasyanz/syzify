@@ -616,7 +616,7 @@ pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> R
     // A stored TSS is rescaled, not recomputed: TSS ∝ 1/FTP², so this keeps
     // the time it was figured over — the device's timer, or the track's
     // timer seconds a filled one used (#224) — where the stored duration
-    // of a GPX is elapsed time, coffee stops and all.
+    // of a file with no session timer is the track's span, stops and all.
     let training_stress_score = match (positive(stored.threshold_power_w), positive(stored.training_stress_score)) {
         (Some(old_ftp), Some(tss)) => tss * (old_ftp / ftp_w).powi(2),
         _ => {
@@ -863,8 +863,9 @@ mod tests {
     }
 
     /// A corrected FTP rescales the stored TSS, keeping the time it was
-    /// figured over: a GPX ride's filled TSS counts 30 timer minutes, its
-    /// stored duration is the elapsed hour with the coffee stop, and saving
+    /// figured over: a filled TSS counts 30 timer minutes, the stored
+    /// duration of a file with no session timer is the hour the track
+    /// spans, coffee stop included, and saving
     /// the same FTP must leave the TSS as it was.
     #[test]
     fn set_activity_ftp_core_keeps_the_time_basis_of_the_stored_tss() {

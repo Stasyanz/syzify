@@ -18,7 +18,7 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   destination point to pick on it, and it still gets no place name, no
   segments and no Library map pin.
 - An activity whose file carries power but no normalized power or FTP — a
-  Zwift ride, a GPX with power — gets them (#224). Normalized power is
+  Zwift ride, a TCX with power — gets them (#224). Normalized power is
   worked out from the recorded power, pauses left out; the FTP is the one
   of your newest earlier activity of the same kind that had one (a trainer
   ride takes a road ride's, never a run's running-power FTP). IF, TSS and

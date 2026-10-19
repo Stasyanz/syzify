@@ -1,6 +1,6 @@
 //! The power summary a device leaves out (#224). A Garmin writes NP, FTP,
 //! IF and TSS into the session; a simulator such as Zwift writes average
-//! power only, a GPX with power writes nothing. What the file carried
+//! power only, a TCX with power writes nothing. What the file carried
 //! stays as recorded — this only fills the gaps: NP from the track, an FTP
 //! borrowed from the rider's newest earlier ride that had one, and IF, TSS
 //! and the power zones that follow from the two.
@@ -37,8 +37,9 @@ pub(crate) fn intensity_and_stress(np_w: f64, ftp_w: f64, duration_s: Option<f64
 /// (and zeros) are written, so a device's own numbers are never replaced.
 ///
 /// - NP from the stored track when the file has none; a TSS then counts
-///   the same timer seconds the NP was worked out over, so a GPX's coffee
-///   stops do not swell it. With the device's NP, its stored duration.
+///   the same timer seconds the NP was worked out over, so the stops of a
+///   file with no session timer — its stored duration is the track's span —
+///   do not swell it. With the device's NP, its stored duration.
 /// - The FTP of the newest earlier activity of the same family
 ///   (`SportType::family` — a trainer ride borrows from a road ride, never
 ///   from a run with running power; a sport with no family from its own
