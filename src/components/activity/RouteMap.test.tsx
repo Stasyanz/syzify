@@ -382,6 +382,17 @@ describe("a simulated course (#190, #222)", () => {
     expect(map.options.maxBounds).toBeUndefined();
   });
 
+  /** An animated fit starts on the next frame: the hold's pan in between
+   * left the course 80 px off center (measured in Chrome). */
+  it("fits the course at once, before the view is held; a real map keeps its animated fit", () => {
+    const fit = vi.spyOn(L.Map.prototype, "fitBounds");
+    mount({ sport: "virtual_ride" });
+    expect(fit.mock.calls.at(-1)![1]).toMatchObject({ animate: false });
+    cleanup();
+    mount();
+    expect(fit.mock.calls.at(-1)![1]?.animate).toBeUndefined();
+  });
+
   it("fits a course that never moved to a finite zoom", () => {
     // A ride on a trainer with the simulator paused: every point the same.
     const still = { ...track, lat: [55.7, 55.7, 55.7], lon: [37.6, 37.6, 37.6] };

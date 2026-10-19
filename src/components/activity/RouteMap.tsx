@@ -114,14 +114,18 @@ const stopHere = (e: L.LeafletEvent) => {
 };
 const flagEvents: L.LeafletEventHandlerFnMap = { click: stopHere, contextmenu: stopHere };
 
-function FitBounds({ positions }: { positions: L.LatLngExpression[] }) {
+/** `animate: false` lands the view at once — what KeepCourseInView needs:
+ * Leaflet starts an animated zoom on the NEXT frame, so a setMaxBounds in
+ * the same tick still sees the initial view, pans it into the box, and
+ * the pan running into the zoom left the course 80 px off center. */
+function FitBounds({ positions, animate }: { positions: L.LatLngExpression[]; animate?: boolean }) {
   const map = useMap();
   useEffect(() => {
     if (positions.length > 0) {
       const bounds = L.latLngBounds(positions);
-      map.fitBounds(bounds, { padding: [30, 30] });
+      map.fitBounds(bounds, { padding: [30, 30], animate });
     }
-  }, [map, positions]);
+  }, [map, positions, animate]);
   return null;
 }
 
@@ -618,7 +622,7 @@ function RouteMapCanvas({
             </div>
           </PopupAt>
         )}
-        <FitBounds positions={positions} />
+        <FitBounds positions={positions} animate={simulated ? false : undefined} />
         {simulated && <KeepCourseInView positions={positions} />}
         <InvalidateSize isFullscreen={isFullscreen} height={height} />
       </MapContainer>
