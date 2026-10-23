@@ -1,0 +1,33 @@
+import type { Messages } from "./types";
+
+export const it: Messages = {
+  "settings.general.theme": "Tema",
+  "settings.general.themeHint": "Chiaro caldo, scuro caldo o come il sistema",
+  "settings.general.themeLight": "Chiaro",
+  "settings.general.themeDark": "Scuro",
+  "settings.general.themeSystem": "Come il sistema",
+  "settings.general.language": "Lingua",
+  "settings.general.languageHint": "La lingua dell'interfaccia",
+  "settings.general.languageSystem": "Come il sistema",
+  "settings.general.units": "Unità di misura",
+  "settings.general.unitsHint": "Distanza, passo e quota",
+  "settings.general.unitsMetric": "Metrico · km",
+  "settings.general.unitsImperial": "Imperiale · mi",
+  "settings.general.pageSize": "Attività per pagina",
+  "settings.general.pageSizeHint": "Quante attività l'elenco carica alla volta",
+  "settings.general.geocoding": "Nomi automatici dei luoghi",
+  "settings.general.geocodingHint":
+    "Cerca il nome della città di ogni attività importata tramite nominatim.openstreetmap.org: le coordinate di partenza dell'attività vengono inviate a quel servizio di OpenStreetMap. Se disattivato, non viene inviato nulla; la ricerca di un luogo per nome durante la modifica di un'attività usa lo stesso servizio.",
+  "settings.general.import": "Importa attività",
+  "settings.general.importHint": "Trascina file GPX/FIT/TCX in un punto qualsiasi dell'app per importarli",
+  "settings.general.sourceImport": "Importazione da {name}",
+  "settings.general.sourceImportButton": "Importa",
+  "settings.general.sourceImported": "{name}: importate {imported}, saltate {skipped}",
+  "settings.general.sourceImportedFailed": "{name}: importate {imported}, saltate {skipped}, non riuscite {failed}",
+  "settings.general.sourceImportFailed": "Importazione da {name} non riuscita: {error}",
+  "settings.general.tileCache": "Cache della mappa",
+  "settings.general.tileCacheHint": "Tile della mappa su disco: {size}",
+  "settings.general.clearCache": "Svuota cache",
+  "settings.general.clearingCache": "Svuotamento…",
+  "settings.general.cacheCleared": "Cache della mappa svuotata",
+};

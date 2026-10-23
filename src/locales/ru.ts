@@ -1,0 +1,33 @@
+import type { Messages } from "./types";
+
+export const ru: Messages = {
+  "settings.general.theme": "Тема",
+  "settings.general.themeHint": "Тёплая светлая, тёплая тёмная или как в системе",
+  "settings.general.themeLight": "Светлая",
+  "settings.general.themeDark": "Тёмная",
+  "settings.general.themeSystem": "Как в системе",
+  "settings.general.language": "Язык",
+  "settings.general.languageHint": "Язык интерфейса",
+  "settings.general.languageSystem": "Как в системе",
+  "settings.general.units": "Единицы измерения",
+  "settings.general.unitsHint": "Расстояние, темп и высота",
+  "settings.general.unitsMetric": "Метрические · км",
+  "settings.general.unitsImperial": "Имперские · мили",
+  "settings.general.pageSize": "Тренировок на странице",
+  "settings.general.pageSizeHint": "Сколько тренировок загружается в список за раз",
+  "settings.general.geocoding": "Автоматические названия мест",
+  "settings.general.geocodingHint":
+    "Определять город каждой импортированной тренировки через nominatim.openstreetmap.org — этому сервису OpenStreetMap отправляются координаты старта. Если выключено, ничего не отправляется; поиск места по названию при редактировании тренировки идёт через тот же сервис.",
+  "settings.general.import": "Импорт тренировок",
+  "settings.general.importHint": "Перетащите файлы GPX/FIT/TCX в любое место приложения",
+  "settings.general.sourceImport": "Импорт из {name}",
+  "settings.general.sourceImportButton": "Импортировать",
+  "settings.general.sourceImported": "{name}: импортировано {imported}, пропущено {skipped}",
+  "settings.general.sourceImportedFailed": "{name}: импортировано {imported}, пропущено {skipped}, не удалось {failed}",
+  "settings.general.sourceImportFailed": "Импорт из {name} не удался: {error}",
+  "settings.general.tileCache": "Кэш карты",
+  "settings.general.tileCacheHint": "Тайлы карты на диске: {size}",
+  "settings.general.clearCache": "Очистить кэш",
+  "settings.general.clearingCache": "Очистка…",
+  "settings.general.cacheCleared": "Кэш карты очищен",
+};

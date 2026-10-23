@@ -54,7 +54,7 @@ export function Logo({ size = 22, wordmark = true, className }: LogoProps) {
               ourselves — CSS can't color part of a glyph. aria-hidden keeps
               screen readers on the clean label above instead of "Syzıfy".
               Offsets tuned against Archivo 800's real dot on the harness. */}
-          <span aria-hidden="true">
+          <span aria-hidden="true" translate="no">
             Syz
             <span style={{ position: "relative", display: "inline-block" }}>
               {"ı"}

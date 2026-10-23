@@ -55,6 +55,20 @@ pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
 - **Data fetching:** React Query (`useQuery`/`useMutation`) everywhere.
 - **UI state:** Zustand stores (`src/stores/`). No data-fetching in stores.
 - **Types:** `src/lib/types.ts` mirrors the Rust models, snake_case, `| null`.
+- **Interface text (#237):** every string the user reads comes from the
+  dictionaries in `src/locales/` — `en.ts` is the source, keyed
+  `area.screen.thing`; `ru.ts` and `it.ts` are typed by it, so a key missing
+  from either fails `tsc`. A component calls `const t = useT()` (it
+  re-renders on a language change); the module-level `t` is for code outside
+  React, and `i18n.scan.test.ts` keeps it out of `.tsx`. `{name}` fills a
+  placeholder, a plural message is an object of `Intl.PluralRules` forms
+  picked by a numeric `count`. Text that is a name and reads the same in
+  every language (a device model, the wordmark) is marked `translate="no"`
+  on its element or `i18n-ignore` on its line — never a word. The scan
+  test's `NOT_YET_TRANSLATED` counts what is left per file: translating
+  lowers a count, and a new English string in JSX, a shown label or a toast
+  fails the suite. Tables of names and strings a function returns are out
+  of its sight — `TRACKED_BY_HAND` lists those files.
 
 ### Boundary naming
 

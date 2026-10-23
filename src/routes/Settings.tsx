@@ -21,6 +21,8 @@ import { useToastStore } from "../stores/toastStore";
 import { useFeedbackStore } from "../stores/feedbackStore";
 import { useThemeStore, type ThemeMode } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
+import { LANGUAGES, LANGUAGE_NAMES, useLanguageStore, useT, type LanguagePref } from "../lib/i18n";
+import type { MessageKey } from "../locales/types";
 import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
 import { LegalModal, type LegalDoc } from "../components/settings/LegalModal";
@@ -41,9 +43,14 @@ import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
 import { errorText } from "../lib/errors";
 import { unencryptedParts } from "../lib/encryptionScopes";
 
-const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
+const THEME_MODES = [
+  ["light", "settings.general.themeLight"],
+  ["dark", "settings.general.themeDark"],
+  ["system", "settings.general.themeSystem"],
+] as const satisfies readonly (readonly [ThemeMode, MessageKey])[];
 
 export function SettingsPage() {
+  const t = useT();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const updateToast = useToastStore((s) => s.updateToast);
@@ -52,6 +59,8 @@ export function SettingsPage() {
   const setThemeMode = useThemeStore((s) => s.setMode);
   const unitsMode = useUnitsStore((s) => s.mode);
   const setUnitsMode = useUnitsStore((s) => s.setMode);
+  const languagePref = useLanguageStore((s) => s.pref);
+  const setLanguagePref = useLanguageStore((s) => s.setPref);
 
   // The open tab lives in the URL (`?tab=vault`): a plugin page links back
   // to Plugins, and a reload keeps the section. General has no param.
@@ -174,7 +183,7 @@ export function SettingsPage() {
     try {
       await api.clearTileCache();
       refetchCache();
-      addToast("success", "Tile cache cleared");
+      addToast("success", t("settings.general.cacheCleared"));
     } finally {
       setClearing(false);
     }
@@ -272,14 +281,15 @@ export function SettingsPage() {
     try {
       const r = await api.runImportDatasource(ds.id, path);
       invalidateActivityData(queryClient);
+      const counts = { name: ds.name, imported: r.imported, skipped: r.skipped };
       addToast(
         "success",
-        `${ds.name} — imported ${r.imported}, skipped ${r.skipped}${
-          r.failed.length ? `, failed ${r.failed.length}` : ""
-        }`
+        r.failed.length
+          ? t("settings.general.sourceImportedFailed", { ...counts, failed: r.failed.length })
+          : t("settings.general.sourceImported", counts),
       );
     } catch (e) {
-      addToast("error", `${ds.name} import failed: ${errorText(e)}`);
+      addToast("error", t("settings.general.sourceImportFailed", { name: ds.name, error: errorText(e) }));
     }
   }
 
@@ -349,20 +359,20 @@ export function SettingsPage() {
           aria-label="Settings sections"
           onKeyDown={onTabKeyDown}
         >
-          {SETTINGS_TABS.map((t) => (
+          {SETTINGS_TABS.map((def) => (
             <button
-              key={t.id}
-              id={`settings-tab-${t.id}`}
+              key={def.id}
+              id={`settings-tab-${def.id}`}
               role="tab"
-              aria-selected={tab === t.id}
+              aria-selected={tab === def.id}
               // Only the open panel exists in the DOM; a dangling id is worse
               // than none.
-              aria-controls={tab === t.id ? `settings-panel-${t.id}` : undefined}
-              tabIndex={tab === t.id ? 0 : -1}
-              className={tab === t.id ? "on" : ""}
-              onClick={() => selectTab(t.id)}
+              aria-controls={tab === def.id ? `settings-panel-${def.id}` : undefined}
+              tabIndex={tab === def.id ? 0 : -1}
+              className={tab === def.id ? "on" : ""}
+              onClick={() => selectTab(def.id)}
             >
-              {t.label}
+              {def.label}
             </button>
           ))}
         </div>
@@ -376,50 +386,64 @@ export function SettingsPage() {
           >
             <div className="set-row">
               <div>
-                <div className="sl">Theme</div>
-                <div className="sd">Warm light, warm dark, or follow the system</div>
+                <div className="sl">{t("settings.general.theme")}</div>
+                <div className="sd">{t("settings.general.themeHint")}</div>
               </div>
               <div className="seg">
-                {THEME_MODES.map((m) => (
+                {THEME_MODES.map(([m, label]) => (
                   <button
                     key={m}
                     onClick={() => setThemeMode(m)}
-                    className={`capitalize${themeMode === m ? " on" : ""}`}
+                    className={themeMode === m ? "on" : ""}
                   >
-                    {m}
+                    {t(label)}
                   </button>
                 ))}
               </div>
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">Units</div>
-                <div className="sd">Distance, pace and elevation</div>
+                <div className="sl">{t("settings.general.language")}</div>
+                <div className="sd">{t("settings.general.languageHint")}</div>
+              </div>
+              <Select
+                ariaLabel={t("settings.general.language")}
+                className="w-40"
+                value={languagePref}
+                onChange={(v) => setLanguagePref(v as LanguagePref)}
+                options={[
+                  { value: "system", label: t("settings.general.languageSystem") },
+                  ...LANGUAGES.map((l) => ({ value: l, label: LANGUAGE_NAMES[l] })),
+                ]}
+              />
+            </div>
+            <div className="set-row">
+              <div>
+                <div className="sl">{t("settings.general.units")}</div>
+                <div className="sd">{t("settings.general.unitsHint")}</div>
               </div>
               <div className="seg">
                 <button
                   onClick={() => setUnitsMode("metric")}
                   className={unitsMode === "metric" ? "on" : ""}
                 >
-                  Metric · km
+                  {t("settings.general.unitsMetric")}
                 </button>
                 <button
                   onClick={() => setUnitsMode("imperial")}
                   className={unitsMode === "imperial" ? "on" : ""}
                 >
-                  Imperial · mi
+                  {t("settings.general.unitsImperial")}
                 </button>
               </div>
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">Activities per page</div>
-                <div className="sd">
-                  Number of activities loaded at once in the list view
-                </div>
+                <div className="sl">{t("settings.general.pageSize")}</div>
+                <div className="sd">{t("settings.general.pageSizeHint")}</div>
               </div>
               <Select
-                ariaLabel="Activities per page"
+                ariaLabel={t("settings.general.pageSize")}
                 className="w-24"
                 value={pageSize ?? "20"}
                 onChange={handlePageSizeChange}
@@ -433,33 +457,25 @@ export function SettingsPage() {
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">Automatic location names</div>
-                <div className="sd">
-                  Look up a city name for each imported activity via
-                  nominatim.openstreetmap.org — the activity's start coordinates
-                  are sent to that OpenStreetMap service. When off, nothing is
-                  sent; searching a location by name when editing an activity
-                  uses the same service.
-                </div>
+                <div className="sl">{t("settings.general.geocoding")}</div>
+                <div className="sd">{t("settings.general.geocodingHint")}</div>
               </div>
               <Toggle
                 on={geocodingEnabled}
                 onToggle={handleGeocodingToggle}
-                ariaLabel="Automatic location names"
+                ariaLabel={t("settings.general.geocoding")}
               />
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">Import Activities</div>
-                <div className="sd">
-                  Drop GPX/FIT/TCX files anywhere in the app to import
-                </div>
+                <div className="sl">{t("settings.general.import")}</div>
+                <div className="sd">{t("settings.general.importHint")}</div>
               </div>
             </div>
             {importSources.map((ds) => (
               <div key={ds.id} className="set-row">
                 <div>
-                  <div className="sl">{ds.name} import</div>
+                  <div className="sl">{t("settings.general.sourceImport", { name: ds.name })}</div>
                   <div className="sd">
                     {ds.description} · .{ds.extensions.join(" .")}
                   </div>
@@ -469,15 +485,15 @@ export function SettingsPage() {
                   className="btn ghost"
                 >
                   <Upload size={15} />
-                  Import
+                  {t("settings.general.sourceImportButton")}
                 </button>
               </div>
             ))}
             <div className="set-row">
               <div>
-                <div className="sl">Map tile cache</div>
+                <div className="sl">{t("settings.general.tileCache")}</div>
                 <div className="sd">
-                  Cached map tiles on disk: {cacheInfo?.size_display ?? "…"}
+                  {t("settings.general.tileCacheHint", { size: cacheInfo?.size_display ?? "…" })}
                 </div>
               </div>
               <button
@@ -486,7 +502,7 @@ export function SettingsPage() {
                 className="btn ghost"
               >
                 <Trash2 size={15} />
-                {clearing ? "Clearing…" : "Clear Cache"}
+                {clearing ? t("settings.general.clearingCache") : t("settings.general.clearCache")}
               </button>
             </div>
           </section>

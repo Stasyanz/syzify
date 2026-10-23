@@ -49,6 +49,7 @@ import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { useThemeStore } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
+import { useLanguageStore } from "../lib/i18n";
 import { useFeedbackStore } from "../stores/feedbackStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -120,6 +121,7 @@ describe("SettingsPage tabs", () => {
     expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false"]);
     expect(rows()).toEqual([
       "Theme",
+      "Language",
       "Units",
       "Activities per page",
       "Automatic location names",
@@ -146,6 +148,7 @@ describe("SettingsPage tabs", () => {
     await waitFor(() => expect(screen.getByText("Runkeeper import")).toBeTruthy());
     expect(rows()).toEqual([
       "Theme",
+      "Language",
       "Units",
       "Activities per page",
       "Automatic location names",
@@ -358,12 +361,17 @@ describe("SettingsPage tabs", () => {
     vi.mocked(api.setSetting).mockResolvedValue(undefined);
     vi.mocked(api.startGeocoding).mockResolvedValue(undefined);
     renderAt("/settings");
-    fireEvent.click(screen.getByRole("button", { name: "dark" }));
-    expect(useThemeStore.getState().mode).toBe("dark");
-    fireEvent.click(screen.getByRole("button", { name: "Imperial · mi" }));
-    expect(useUnitsStore.getState().mode).toBe("imperial");
-    useThemeStore.getState().setMode("system");
-    useUnitsStore.getState().setMode("metric");
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+      expect(useThemeStore.getState().mode).toBe("dark");
+      fireEvent.click(screen.getByRole("button", { name: "Imperial · mi" }));
+      expect(useUnitsStore.getState().mode).toBe("imperial");
+      fireEvent.click(screen.getByRole("button", { name: "Metric · km" }));
+      expect(useUnitsStore.getState().mode).toBe("metric");
+    } finally {
+      useThemeStore.getState().setMode("system");
+      useUnitsStore.getState().setMode("metric");
+    }
     // Off → on: stored, re-read, and existing activities get named now.
     fireEvent.click(screen.getByLabelText("Automatic location names"));
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith("geocoding_enabled", "true"));
@@ -390,6 +398,61 @@ describe("SettingsPage tabs", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Clear Cache/ }));
     await waitFor(() => expect(api.clearTileCache).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Tile cache cleared"));
+  });
+
+  it("switches the interface language from General, and General speaks it at once (#231)", async () => {
+    renderAt("/settings");
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Language" }));
+      // Each language is named in its own words, whatever the current one.
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "System", "English", "Русский", "Italiano",
+      ]);
+      fireEvent.click(screen.getByRole("option", { name: "Русский" }));
+      expect(useLanguageStore.getState().pref).toBe("ru");
+      expect(document.documentElement.lang).toBe("ru");
+      expect(rows()).toEqual([
+        "Тема",
+        "Язык",
+        "Единицы измерения",
+        "Тренировок на странице",
+        "Автоматические названия мест",
+        "Импорт тренировок",
+        "Кэш карты",
+      ]);
+      await waitFor(() => expect(screen.getByText("Тайлы карты на диске: 2 KB")).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: "Язык" }));
+      fireEvent.click(screen.getByRole("option", { name: "Italiano" }));
+      expect(screen.getByRole("button", { name: "Scuro" })).toBeTruthy();
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  it("reports a data source import that failed outright or for some files", async () => {
+    vi.mocked(api.getImportDatasources).mockResolvedValue([
+      { id: "runkeeper", name: "Runkeeper", description: "Runkeeper export", extensions: ["zip"] },
+    ]);
+    vi.mocked(open).mockResolvedValue("/x/export.zip");
+    vi.mocked(api.runImportDatasource)
+      .mockResolvedValueOnce({ imported: 1, skipped: 0, failed: ["a.gpx", "b.gpx"] } as never)
+      .mockRejectedValueOnce("archive is damaged");
+    renderAt("/settings");
+    const importBtn = await screen.findByRole("button", { name: /^Import$/ });
+    fireEvent.click(importBtn);
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith(
+        "success",
+        "Runkeeper — imported 1, skipped 0, failed 2",
+      ),
+    );
+    fireEvent.click(importBtn);
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith(
+        "error",
+        "Runkeeper import failed: archive is damaged",
+      ),
+    );
   });
 
   it("validates the encryption password dialog and lets it be cancelled", async () => {
