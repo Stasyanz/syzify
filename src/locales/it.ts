@@ -137,8 +137,6 @@ export const it: Messages = {
   "nav.settings": "Impostazioni",
   "app.loading": "Caricamento",
   "app.vaultError.title": "Impossibile aprire l'archivio",
-  "app.vaultError.tooNew":
-    "Questo archivio è stato usato l'ultima volta da una versione più recente di Syzify. Aggiorna l'app per aprirlo.",
   "app.vaultError.protected":
     "L'archivio è in una cartella protetta. Concedi a Syzify {access} in Impostazioni di Sistema → Privacy e sicurezza, poi riapri — oppure riporta l'archivio in una posizione non protetta.",
   "app.vaultError.protectedAccess": "Accesso completo al disco",
@@ -938,5 +936,13 @@ export const it: Messages = {
   "error.vault.noVaultFound": "Nessun archivio trovato in \"{path}\"",
   "error.vault.alreadyHoldsVault": "\"{path}\" contiene già un archivio — usa «Apri un altro archivio…» per aprirlo",
   "error.vault.insideVault": "\"{path}\" è dentro l'archivio in \"{vault}\" — scegli una cartella fuori da esso",
+  "error.vault.tooNew":
+    "Questo archivio è stato usato l'ultima volta da una versione più recente di Syzify (formato dati {vault}, questa app legge fino al formato {app}). Aggiorna l'app per aprirlo.",
+  "error.vault.nested": "Archivio non creato in \"{path}\": questa cartella è dentro l'archivio in \"{vault}\"",
+  "error.vault.createFolderFailed": "Impossibile creare la cartella vault/{folder}: {detail}",
+  "error.vault.dbOpenFailed": "Impossibile aprire il database: {detail}",
+  "error.vault.walFailed": "Impossibile attivare il journal WAL: {detail}",
+  "error.vault.migrateFailed": "Impossibile eseguire le migrazioni del database: {detail}",
+  "error.vault.restartRequired": "L'archivio è stato ripristinato da un backup — l'app deve riavviarsi per riaprirlo.",
   "error.watch.noDirectory": "La cartella non esiste: {path}",
 };

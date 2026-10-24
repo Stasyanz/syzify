@@ -143,7 +143,8 @@ pub fn resolve_new_vault_root(dest: &Path) -> Result<PathBuf, CommandError> {
 /// vault that appeared above the marker's path later. A root whose vault.db
 /// can't even be stat'ed is left alone — the open that follows reports the
 /// real error (missing Full Disk Access, a gone volume) in its own words.
-pub fn ensure_not_nested(root: &Path) -> Result<(), String> {
+/// The refusal is the vault error screen's reason at boot (#244).
+pub fn ensure_not_nested(root: &Path) -> Result<(), CommandError> {
     match fs::metadata(root.join("vault.db")) {
         Ok(_) => return Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -153,11 +154,15 @@ pub fn ensure_not_nested(root: &Path) -> Result<(), String> {
         return Ok(());
     };
     match enclosing_vault(parent)? {
-        Some(outer) => Err(format!(
-            "Refusing to create a vault at \"{}\": it is inside the vault at \"{}\"",
-            root.display(),
-            outer.display()
-        )),
+        Some(outer) => {
+            let (path, vault) = (root.display().to_string(), outer.display().to_string());
+            Err(CommandError::coded(
+                "vault.nested",
+                format!("Refusing to create a vault at \"{path}\": it is inside the vault at \"{vault}\""),
+            )
+            .param("path", path)
+            .param("vault", vault))
+        }
         None => Ok(()),
     }
 }
@@ -629,8 +634,21 @@ mod tests {
         make_vault(&vault);
 
         assert!(ensure_not_nested(&vault).is_ok());
-        let err = ensure_not_nested(&vault.join("Syzify")).unwrap_err();
-        assert!(err.contains("inside the vault at"), "{err}");
+        let inner = vault.join("Syzify");
+        let err = ensure_not_nested(&inner).unwrap_err();
+        assert_eq!(
+            err,
+            CommandError::coded(
+                "vault.nested",
+                format!(
+                    "Refusing to create a vault at \"{}\": it is inside the vault at \"{}\"",
+                    inner.display(),
+                    vault.display()
+                ),
+            )
+            .param("path", inner.display().to_string())
+            .param("vault", vault.display().to_string())
+        );
         assert!(ensure_not_nested(&tmp.join("fresh")).is_ok());
     }
 

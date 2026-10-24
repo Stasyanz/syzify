@@ -3,7 +3,8 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { errorText } from "../lib/errors";
 
 vi.mock("../lib/tauri", () => ({
   api: {
@@ -19,6 +20,7 @@ vi.mock("../lib/tauri", () => ({
     runImportDatasource: vi.fn(),
     backupVault: vi.fn(),
     restoreVault: vi.fn(),
+    getVaultError: vi.fn(),
     restartApp: vi.fn(async () => {}),
   },
 }));
@@ -752,6 +754,46 @@ describe("SettingsPage tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith(level, text));
     await waitFor(() => expect(api.restartApp).toHaveBeenCalled(), { timeout: 2000 });
+  });
+
+  /** Past a restore's point of no return the backend demands a restart
+   * through the vault error: Settings has it read again, so a failed
+   * restart lands on the vault error screen, said in the language (#244). */
+  it("has the restart-required vault error read again after a restore", async () => {
+    vi.mocked(open).mockResolvedValue("/tmp/backup.zip");
+    vi.mocked(api.restoreVault).mockResolvedValue({ restored: true, error: null, preserved_at: null });
+    vi.mocked(api.getVaultError).mockResolvedValueOnce(null).mockResolvedValue(
+      commandError(
+        "vault.restartRequired",
+        "The vault was restored from a backup — the app must restart to reopen it.",
+      ),
+    );
+    function VaultErrorProbe() {
+      const { data } = useQuery({ queryKey: ["vaultError"], queryFn: () => api.getVaultError() });
+      return <div data-testid="vault-error">{data === undefined ? "" : data ? errorText(data) : "none"}</div>;
+    }
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter initialEntries={["/settings?tab=vault"]}>
+            <SettingsPage />
+            <VaultErrorProbe />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("vault-error").textContent).toBe("none"));
+      fireEvent.click(screen.getByRole("button", { name: "Восстановить" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("vault-error").textContent).toBe(
+          "Хранилище восстановлено из резервной копии — приложение нужно перезапустить, чтобы открыть его снова.",
+        ),
+      );
+      await waitFor(() => expect(api.restartApp).toHaveBeenCalled(), { timeout: 2000 });
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("falls back to a toast when encryption could not be turned off after the user left the tab", async () => {

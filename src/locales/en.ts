@@ -154,7 +154,6 @@ export const en = {
   // The app around the screens: boot, the vault error, drops, watch folders.
   "app.loading": "Loading",
   "app.vaultError.title": "Can't open your vault",
-  "app.vaultError.tooNew": "This vault was last used by a newer version of Syzify. Update the app to open it.",
   // {access} is the bold name of the macOS setting, "protectedAccess".
   "app.vaultError.protected":
     "The vault is in a protected folder. Grant Syzify {access} in System Settings → Privacy & Security, then reopen — or move the vault back to an unprotected location.",
@@ -1061,5 +1060,20 @@ export const en = {
   "error.vault.alreadyHoldsVault": "\"{path}\" already holds a vault — use \"Open another vault…\" to open it",
   // {vault} is the folder of the vault that encloses {path}.
   "error.vault.insideVault": "\"{path}\" is inside the vault at \"{vault}\" — pick a folder outside it",
+  // Why the vault would not open at boot: the vault error screen's reason
+  // (#244). {vault} and {app} are schema versions, whole numbers: the
+  // vault's and the newest this app knows.
+  "error.vault.tooNew":
+    "This vault was last used by a newer version of Syzify (data format {vault}, this app reads up to {app}). Update the app to open it.",
+  // {path} is the vault folder the app was pointed at, {vault} the vault that encloses it.
+  "error.vault.nested": "Refusing to create a vault at \"{path}\": it is inside the vault at \"{vault}\"",
+  // {folder} is a folder of the vault: "raw", "tiles", "photos", "plugins".
+  "error.vault.createFolderFailed": "Failed to create vault/{folder}: {detail}",
+  "error.vault.dbOpenFailed": "Failed to open database: {detail}",
+  "error.vault.walFailed": "Failed to enable WAL: {detail}",
+  "error.vault.migrateFailed": "Failed to run migrations: {detail}",
+  // A restore is past its point of no return; the screen's "Reopen"
+  // ("app.vaultError.reopen") restarts the app.
+  "error.vault.restartRequired": "The vault was restored from a backup — the app must restart to reopen it.",
   "error.watch.noDirectory": "Directory does not exist: {path}",
 } as const;

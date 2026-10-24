@@ -45,8 +45,10 @@ pub struct AppState {
     /// Set when the vault couldn't be opened at boot (e.g. it lives in a
     /// macOS-protected folder and the app lacks Full Disk Access). `db` holds
     /// an in-memory placeholder; the frontend shows a recoverable error screen
-    /// instead of the app crashing at startup.
-    pub vault_error: Mutex<Option<String>>,
+    /// instead of the app crashing at startup. A `CommandError` (#244), so
+    /// the screen says the reason in the interface language; a restore sets
+    /// it too, past its point of no return.
+    pub vault_error: Mutex<Option<crate::error::CommandError>>,
     /// Guards one-time startup of the DB-dependent background services. They
     /// start at boot for a plaintext vault, or after `unlock_vault` for an
     /// encrypted one — never before the key is loaded, and never twice.

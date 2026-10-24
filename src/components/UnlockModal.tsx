@@ -3,6 +3,8 @@ import { Lock, Loader2 } from "lucide-react";
 import { api } from "../lib/tauri";
 import { Logo } from "./brand/Logo";
 import { errorText } from "../lib/errors";
+import { isVaultTooNew } from "../lib/vaultError";
+import { UpdateCheck } from "./settings/UpdateCheck";
 import { useT } from "../lib/i18n";
 
 interface Props {
@@ -13,7 +15,9 @@ export function UnlockModal({ onUnlocked }: Props) {
   // Above the keyed AppShell: useT re-renders it on a language change.
   const t = useT();
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // What the unlock rejected with, kept whole: a too-new vault is told by
+  // its code (#244).
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
   async function handleUnlock() {
@@ -24,7 +28,7 @@ export function UnlockModal({ onUnlocked }: Props) {
       await api.unlockVault(password);
       onUnlocked();
     } catch (e) {
-      setError(errorText(e));
+      setError(e);
     } finally {
       setBusy(false);
     }
@@ -55,9 +59,13 @@ export function UnlockModal({ onUnlocked }: Props) {
             autoFocus
             className="w-full text-sm border border-border rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
           />
-          {error && (
-            <p className="text-xs text-red-500 text-center">{error}</p>
+          {error != null && (
+            <p className="text-xs text-red-500 text-center">{errorText(error)}</p>
           )}
+          {/* The right password on a vault a newer build migrated: only
+              updating the app opens it, so the updater is right here, as
+              on the vault error screen. */}
+          {isVaultTooNew(error) && <UpdateCheck centered />}
           <button
             onClick={handleUnlock}
             disabled={busy || !password}

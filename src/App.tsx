@@ -20,7 +20,10 @@ import { FeedbackModal } from "./components/feedback/FeedbackModal";
 import { AppShell } from "./components/layout/AppShell";
 import { UpdateCheck } from "./components/settings/UpdateCheck";
 import { settingsPath } from "./lib/settingsTabs";
+import { homeDir } from "@tauri-apps/api/path";
 import { errorText } from "./lib/errors";
+import type { CommandError } from "./lib/types";
+import { inProtectedFolder, isAccessRefusal, isVaultTooNew } from "./lib/vaultError";
 import { formatNumber, useLanguageStore, useRichT, useT } from "./lib/i18n";
 import "./App.css";
 
@@ -33,28 +36,29 @@ const queryClient = new QueryClient({
   },
 });
 
-/** A newer build has migrated this vault past what this binary knows — the
- * only real fix is updating the app, so the error screen must offer it. */
-export function isVaultTooNew(message: string): boolean {
-  return message.includes("DatabaseTooFarAhead");
-}
-
 /**
  * Shown when the vault can't be opened at boot — most often because it lives
  * in a macOS-protected folder (Documents/Desktop/Downloads) and the app lacks
  * Full Disk Access. Recoverable: grant access (or move the vault back) and
- * reopen. Replaces the previous hard crash at startup.
- * The DatabaseTooFarAhead case gets a tailored path: the raw migration error
- * means "this app is older than the vault", which no amount of reopening can
- * fix — so the screen says that in words and offers the updater inline
- * (both update commands are vault-independent).
+ * reopen. Replaces the previous hard crash at startup. The reason is a
+ * `CommandError`, said in the interface language through `errorText`.
+ * A too-new vault gets a tailored path: this app is older than the vault,
+ * which no amount of reopening can fix — so the screen offers the updater
+ * inline (both update commands are vault-independent).
  */
-export function VaultErrorScreen({ message }: { message: string }) {
+export function VaultErrorScreen({ error }: { error: CommandError }) {
   // Above the keyed AppShell: useT re-renders this screen on a language change.
   const t = useT();
   const rt = useRichT();
-  const tooNew = isVaultTooNew(message);
-  const protectedFolder = !tooNew && /Documents|Desktop|Downloads/.test(message);
+  const tooNew = isVaultTooNew(error);
+  // The Full Disk Access hint: an access refusal on a vault that lies in a
+  // folder macOS guards — decided by the vault's path, not the error's text.
+  const accessRefusal = isAccessRefusal(error);
+  const { data: protectedFolder = false } = useQuery({
+    queryKey: ["vaultInProtectedFolder"],
+    queryFn: async () => inProtectedFolder(await api.getVaultPath(), await homeDir()),
+    enabled: accessRefusal,
+  });
   const [switchError, setSwitchError] = useState<string | null>(null);
 
   // Point the app at another vault (or an empty folder for a fresh one)
@@ -78,15 +82,9 @@ export function VaultErrorScreen({ message }: { message: string }) {
     <div className="h-screen flex items-center justify-center bg-bg p-8">
       <div className="max-w-md text-center space-y-4">
         <h1 className="text-xl font-bold text-ink">{t("app.vaultError.title")}</h1>
-        {tooNew ? (
-          <>
-            <p className="text-sm text-muted">{t("app.vaultError.tooNew")}</p>
-            <UpdateCheck centered />
-          </>
-        ) : (
-          <p className="text-sm text-muted">{message}</p>
-        )}
-        {protectedFolder && (
+        <p className="text-sm text-muted">{errorText(error)}</p>
+        {tooNew && <UpdateCheck centered />}
+        {accessRefusal && protectedFolder && (
           <p className="text-sm text-muted">
             {rt("app.vaultError.protected", { access: <strong>{t("app.vaultError.protectedAccess")}</strong> })}
           </p>
@@ -177,7 +175,7 @@ function AppContent() {
   }
 
   if (vaultError) {
-    return <VaultErrorScreen message={vaultError} />;
+    return <VaultErrorScreen error={vaultError} />;
   }
 
   if (encStatus?.locked) {

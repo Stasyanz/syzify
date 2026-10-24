@@ -310,7 +310,7 @@ export function SettingsPage() {
           t("settings.vault.restarting"),
         ];
         addToast(partial ? "warning" : "success", sentences.filter(Boolean).join(" "));
-        // The backend set vault_error ("restart required") the moment the live
+        // The backend set vault_error (`vault.restartRequired`) the moment the live
         // DB became a placeholder. Refetch it so that if the restart below
         // fails (fire-and-forget, flaky in tauri dev), the blocking
         // VaultErrorScreen replaces the UI instead of the app looking healthy

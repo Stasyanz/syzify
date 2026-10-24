@@ -59,7 +59,12 @@ command's tail) and is shown as it is. Where it may live:
 Plugins keep reading strings: the Host SDK converts at its boundary
 (`String::from(command_error)` is the English message). A DTO field the
 user reads (`RestoreOutcome.error`) carries a `CommandError` too and goes
-through `errorText`. A screen that words one refusal its own way compares
+through `errorText`; so does the reason the vault would not open at boot
+(`AppState.vault_error`, returned by `get_vault_error`, #244) — `init_vault`
+and the restore's restart demand code it; the vault error screen and the
+unlock prompt tell a too-new vault by `vault.tooNew` (`lib/vaultError.ts`),
+and the Full Disk Access hint goes by the vault's path, never the text. A
+screen that words one refusal its own way compares
 `errorCode(e)` with the code, never the text.
 
 ### Monitoring & recovery (ADR 0002)

@@ -27,31 +27,54 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 use tauri::Manager;
+use error::CommandError;
 use state::AppState;
 use maps::tile_cache;
 
-fn ensure_vault_dirs(vault_path: &Path) -> Result<(), String> {
+fn ensure_vault_dirs(vault_path: &Path) -> Result<(), CommandError> {
     // NOTE: no subdirectories under raw/ — encrypt_all_raw_files walks it
     // non-recursively, so a nested file would silently stay plaintext.
     for sub in ["raw", "tiles", "photos", "plugins"] {
-        fs::create_dir_all(vault_path.join(sub))
-            .map_err(|e| format!("Failed to create vault/{}: {}", sub, e))?;
+        fs::create_dir_all(vault_path.join(sub)).map_err(|e| {
+            CommandError::coded("vault.createFolderFailed", format!("Failed to create vault/{}: {}", sub, e))
+                .param("folder", sub)
+                .param("detail", e.to_string())
+        })?;
     }
     Ok(())
 }
 
 /// WAL + migrations on an already-open connection. Kept cheap so it can run in
 /// the synchronous boot path; heavy data backfills run separately off-thread
-/// (see `run_startup_backfills`).
-fn configure_and_migrate(conn: &mut Connection) -> Result<(), String> {
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| format!("Failed to enable WAL: {}", e))?;
+/// (see `run_startup_backfills`). Its refusals are what the vault error
+/// screen says at boot (#244), so they are coded; the library's words
+/// stay in `{detail}`.
+fn configure_and_migrate(conn: &mut Connection) -> Result<(), CommandError> {
+    conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| {
+        CommandError::coded("vault.walFailed", format!("Failed to enable WAL: {}", e)).param("detail", e.to_string())
+    })?;
+    // Uncoded: a connection that just took the WAL pragma takes this one —
+    // a guard, not a reason anyone meets.
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
 
-    db::migrations::run_migrations(conn)
-        .map_err(|e| format!("Failed to run migrations: {}", e))?;
-    Ok(())
+    match db::migrations::run_migrations(conn) {
+        Ok(()) => Ok(()),
+        Err(db::migrations::MigrateError::TooNew { vault, app }) => Err(CommandError::coded(
+            "vault.tooNew",
+            format!(
+                "This vault was last used by a newer version of Syzify (data format {}, this app reads up to {}). Update the app to open it.",
+                vault, app
+            ),
+        )
+        .param("vault", vault)
+        .param("app", app)),
+        Err(db::migrations::MigrateError::Failed(e)) => Err(CommandError::coded(
+            "vault.migrateFailed",
+            format!("Failed to run migrations: {}", e),
+        )
+        .param("detail", e.to_string())),
+    }
 }
 
 /// One-time data backfills, each guarded by a settings flag so it runs once.
@@ -310,14 +333,30 @@ fn run_monitoring_recompute(state: &AppState) {
 
 /// Open the plaintext vault database (database scope off). A root without a
 /// vault.db becomes a fresh vault here — unless it sits inside another vault
-/// (a marker from an older build could still point there).
-pub(crate) fn init_vault(vault_path: &Path) -> Result<Connection, String> {
+/// (a marker from an older build could still point there). At boot its
+/// error is the vault error screen's reason, so it stays a `CommandError`.
+pub(crate) fn init_vault(vault_path: &Path) -> Result<Connection, CommandError> {
     vault::ensure_not_nested(vault_path)?;
     ensure_vault_dirs(vault_path)?;
-    let mut conn = Connection::open(vault_path.join("vault.db"))
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+    let mut conn = Connection::open(vault_path.join("vault.db")).map_err(|e| {
+        CommandError::coded("vault.dbOpenFailed", format!("Failed to open database: {}", e)).param("detail", e.to_string())
+    })?;
     configure_and_migrate(&mut conn)?;
     Ok(conn)
+}
+
+/// The connection the app boots on, and why the vault would not open when it
+/// did not — what `get_vault_error` hands the vault error screen. An
+/// encrypted database waits for unlock on an in-memory placeholder; so does
+/// a vault that failed to open, until it is reopened.
+fn open_at_boot(vault_path: &Path, db_encrypted: bool) -> rusqlite::Result<(Connection, Option<CommandError>)> {
+    if db_encrypted {
+        return Ok((Connection::open_in_memory()?, None));
+    }
+    match init_vault(vault_path) {
+        Ok(conn) => Ok((conn, None)),
+        Err(e) => Ok((Connection::open_in_memory()?, Some(e))),
+    }
 }
 
 /// Open the SQLCipher-encrypted vault database with `key` (database scope on).
@@ -325,7 +364,7 @@ pub(crate) fn init_vault(vault_path: &Path) -> Result<Connection, String> {
 pub(crate) fn init_vault_encrypted(
     vault_path: &Path,
     key: &[u8; 32],
-) -> Result<Connection, String> {
+) -> Result<Connection, CommandError> {
     ensure_vault_dirs(vault_path)?;
     let mut conn = db::dbcrypt::open_with_key(&vault_path.join("vault.db"), key)?;
     configure_and_migrate(&mut conn)?;
@@ -566,20 +605,8 @@ pub fn run() {
             // in a macOS-protected folder (Documents/Desktop/Downloads) fails
             // to open until Full Disk Access is granted — record the error and
             // let the frontend show a recoverable screen rather than panicking.
-            let mut vault_error: Option<String> = None;
-            let conn = if db_encrypted {
-                Connection::open_in_memory()
-                    .map_err(|e| format!("Failed to open placeholder db: {}", e))?
-            } else {
-                match init_vault(&vault_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        vault_error = Some(e);
-                        Connection::open_in_memory()
-                            .map_err(|e| format!("Failed to open placeholder db: {}", e))?
-                    }
-                }
-            };
+            let (conn, vault_error) = open_at_boot(&vault_path, db_encrypted)
+                .map_err(|e| format!("Failed to open placeholder db: {}", e))?;
 
             // Serve now only for a fully-open, unencrypted vault. Encrypted
             // vaults (any scope) start services after unlock; errored ones
@@ -1051,5 +1078,123 @@ mod startup_backfill_tests {
         run_power_summary_fill(&state);
         assert_eq!(zwift_summary(&state).2, Some(250.0));
         assert!(flag(&state, ZERO_READINGS_FLAG) && flag(&state, POWER_SUMMARY_FLAG));
+    }
+}
+
+/// Why the vault would not open at boot (#244): each reason the app words
+/// itself is coded, with the library's words in `{detail}`, so the vault
+/// error screen says it in the interface language.
+#[cfg(test)]
+mod vault_boot_tests {
+    use super::*;
+    use test_support::ScratchDir;
+
+    fn boot_error(vault: &Path) -> CommandError {
+        let (_, error) = open_at_boot(vault, false).unwrap();
+        error.expect("the vault opened")
+    }
+
+    #[test]
+    fn a_good_vault_opens_and_an_encrypted_one_waits_for_unlock() {
+        let dir = ScratchDir::new("boot_ok");
+        let (conn, error) = open_at_boot(&dir, false).unwrap();
+        assert!(error.is_none());
+        assert!(conn.path().is_some_and(|p| p.ends_with("vault.db")));
+        // Encrypted: nothing is opened from disk, nothing is wrong.
+        let other = ScratchDir::new("boot_encrypted");
+        let (conn, error) = open_at_boot(&other, true).unwrap();
+        assert!(error.is_none());
+        assert!(conn.path().is_none_or(|p| p.is_empty()));
+        assert!(!other.join("vault.db").exists());
+    }
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    /// At the last migration a vault opens as it is; one past it, it is a
+    /// vault a newer build migrated, said with both versions.
+    #[test]
+    fn a_vault_newer_than_the_app_says_both_versions() {
+        let dir = ScratchDir::new("boot_too_new");
+        let latest = user_version(&init_vault(&dir).unwrap());
+        let (conn, error) = open_at_boot(&dir, false).unwrap();
+        assert!(error.is_none());
+        assert_eq!(user_version(&conn), latest);
+        conn.pragma_update(None, "user_version", latest + 1).unwrap();
+        drop(conn);
+
+        let err = boot_error(&dir);
+        assert_eq!(
+            err,
+            CommandError::coded(
+                "vault.tooNew",
+                format!(
+                    "This vault was last used by a newer version of Syzify (data format {}, this app reads up to {}). Update the app to open it.",
+                    latest + 1,
+                    latest
+                ),
+            )
+            .param("vault", latest + 1)
+            .param("app", latest)
+        );
+    }
+
+    #[test]
+    fn a_vault_inside_another_is_not_created() {
+        let dir = ScratchDir::new("boot_nested");
+        init_vault(&dir).unwrap();
+        let inner = dir.join("Syzify");
+        let err = boot_error(&inner);
+        assert_eq!(err.code, Some("vault.nested"));
+        assert_eq!(err.params["path"], inner.display().to_string());
+        assert_eq!(err.params["vault"], dir.display().to_string());
+        assert!(!inner.exists());
+    }
+
+    #[test]
+    fn a_vault_folder_that_cannot_be_made_names_it() {
+        let dir = ScratchDir::new("boot_dirs");
+        // A file where the vault should be: no folder can go under it.
+        let root = dir.join("not-a-folder");
+        fs::write(&root, b"x").unwrap();
+        let err = boot_error(&root);
+        assert_eq!(err.code, Some("vault.createFolderFailed"));
+        assert_eq!(err.params["folder"], "raw");
+        let detail = err.params["detail"].as_str().unwrap().to_string();
+        assert_eq!(err.message, format!("Failed to create vault/raw: {detail}"));
+    }
+
+    #[test]
+    fn a_database_that_will_not_open_keeps_the_library_words() {
+        let dir = ScratchDir::new("boot_db_dir");
+        fs::create_dir_all(dir.join("vault.db")).unwrap();
+        let err = boot_error(&dir);
+        assert_eq!(err.code, Some("vault.dbOpenFailed"));
+        let detail = err.params["detail"].as_str().unwrap().to_string();
+        assert!(!detail.is_empty());
+        assert_eq!(err.message, format!("Failed to open database: {detail}"));
+    }
+
+    #[test]
+    fn a_file_that_is_no_database_fails_at_wal() {
+        let dir = ScratchDir::new("boot_garbage");
+        fs::write(dir.join("vault.db"), vec![b'x'; 4096]).unwrap();
+        let err = boot_error(&dir);
+        assert_eq!(err.code, Some("vault.walFailed"));
+        let detail = err.params["detail"].as_str().unwrap().to_string();
+        assert!(detail.contains("not a database"), "{detail}");
+        assert_eq!(err.message, format!("Failed to enable WAL: {detail}"));
+    }
+
+    #[test]
+    fn a_migration_that_fails_keeps_the_library_words() {
+        let dir = ScratchDir::new("boot_migrate");
+        Connection::open(dir.join("vault.db")).unwrap().execute_batch("CREATE TABLE trackpoint (x INTEGER);").unwrap();
+        let err = boot_error(&dir);
+        assert_eq!(err.code, Some("vault.migrateFailed"));
+        let detail = err.params["detail"].as_str().unwrap().to_string();
+        assert!(detail.contains("activity_id"), "{detail}");
+        assert_eq!(err.message, format!("Failed to run migrations: {detail}"));
     }
 }

@@ -7,6 +7,8 @@ import { useLanguageStore } from "../lib/i18n";
 import { commandError } from "../test/commandError";
 
 vi.mock("../lib/tauri", () => ({ api: { unlockVault: vi.fn() } }));
+// The updater has its own tests and its own IPC; here only whether it shows.
+vi.mock("./settings/UpdateCheck", () => ({ UpdateCheck: () => <div>UPDATE CHECK</div> }));
 
 afterEach(cleanup);
 
@@ -49,6 +51,40 @@ describe("UnlockModal", () => {
     } finally {
       act(() => useLanguageStore.getState().setPref("system"));
     }
+  });
+
+  /** The right password on a vault a newer build migrated (#244): the
+   * reason in the language, and the updater, the one way out. */
+  it("offers the updater when the vault is too new, in Russian", async () => {
+    vi.mocked(api.unlockVault).mockRejectedValue(
+      commandError(
+        "vault.tooNew",
+        "This vault was last used by a newer version of Syzify (data format 40, this app reads up to 34). Update the app to open it.",
+        { vault: 40, app: 34 },
+      ),
+    );
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      render(<UnlockModal onUnlocked={vi.fn()} />);
+      expect(screen.queryByText("UPDATE CHECK")).toBeNull();
+      fireEvent.change(screen.getByPlaceholderText("Пароль"), { target: { value: "secret" } });
+      fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+      await screen.findByText(
+        "Это хранилище последней открывала более новая версия Syzify (формат данных 40, это приложение читает до 34). Обновите приложение, чтобы открыть его.",
+      );
+      screen.getByText("UPDATE CHECK");
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  it("offers no updater for a wrong password", async () => {
+    vi.mocked(api.unlockVault).mockRejectedValue(commandError("vault.wrongPassword", "Wrong password"));
+    render(<UnlockModal onUnlocked={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "nope" } });
+    fireEvent.click(screen.getByRole("button", { name: /Unlock/ }));
+    await screen.findByText("Wrong password");
+    expect(screen.queryByText("UPDATE CHECK")).toBeNull();
   });
 
   it("unlocks and says nothing", async () => {

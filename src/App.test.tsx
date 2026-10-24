@@ -3,11 +3,13 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { act, render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { RenderResult } from "@testing-library/react";
 import { commandError } from "./test/commandError";
+import type { CommandError } from "./lib/types";
 
 vi.mock("./lib/tauri", () => ({
   api: {
     getEncryptionStatus: vi.fn(),
     getVaultError: vi.fn().mockResolvedValue(null),
+    getVaultPath: vi.fn().mockResolvedValue("/Users/me/Syzify"),
     switchVault: vi.fn().mockResolvedValue(""),
     restartApp: vi.fn().mockResolvedValue(undefined),
     checkForUpdates: vi.fn(),
@@ -18,6 +20,10 @@ vi.mock("./lib/tauri", () => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/path", () => ({
+  homeDir: vi.fn().mockResolvedValue("/Users/me"),
 }));
 
 // What the drop hook and the watch listener report; a test sets it and
@@ -54,7 +60,8 @@ afterEach(cleanup);
 // tests — re-import the module fresh (mocks survive vi.resetModules).
 async function bootApp(
   status: Promise<unknown>,
-  vaultError: string | null = null,
+  vaultError: CommandError | null = null,
+  vaultPath = "/Users/me/Syzify",
 ): Promise<RenderResult> {
   vi.resetModules();
   const { api } = await import("./lib/tauri");
@@ -62,9 +69,29 @@ async function bootApp(
     status as ReturnType<typeof api.getEncryptionStatus>,
   );
   vi.mocked(api.getVaultError).mockResolvedValue(vaultError);
+  vi.mocked(api.getVaultPath).mockClear().mockResolvedValue(vaultPath);
   const { default: App } = await import("./App");
   return render(<App />);
 }
+
+/** What `get_vault_error` says of a vault a newer build migrated (#244). */
+const TOO_NEW = commandError(
+  "vault.tooNew",
+  "This vault was last used by a newer version of Syzify (data format 40, this app reads up to 34). Update the app to open it.",
+  { vault: 40, app: 34 },
+);
+/** A database the app could not open, the library's words as the detail. */
+const DB_DETAIL = "unable to open database file: /Users/me/Documents/Syzify/vault.db";
+const DB_OPEN_FAILED = commandError("vault.dbOpenFailed", `Failed to open database: ${DB_DETAIL}`, {
+  detail: DB_DETAIL,
+});
+const BOOM = commandError(null, "boom");
+/** What a missing Full Disk Access looks like at boot: the first folder the
+ * app makes is refused, and the refusal names no path. */
+const NO_ACCESS = commandError("vault.createFolderFailed", "Failed to create vault/raw: Operation not permitted (os error 1)", {
+  folder: "raw",
+  detail: "Operation not permitted (os error 1)",
+});
 
 const UNLOCKED = Promise.resolve({
   enabled: false,
@@ -114,7 +141,7 @@ describe("App boot", { timeout: 20_000 }, () => {
 
     cleanup();
     watchVaultOpen.length = 0;
-    await bootApp(UNLOCKED, "Failed to run migrations: DatabaseTooFarAhead");
+    await bootApp(UNLOCKED, TOO_NEW);
     await screen.findByText("Can't open your vault");
     expect(watchVaultOpen).not.toContain(true);
   });
@@ -216,13 +243,17 @@ describe("App boot", { timeout: 20_000 }, () => {
   });
 
   it("writes the vault error screen and the splash's name in the interface language", async () => {
-    await bootApp(UNLOCKED, "Permission denied: /Users/me/Documents/Syzify");
+    await bootApp(UNLOCKED, NO_ACCESS, "/Users/me/Documents/Syzify");
     await screen.findByText("Can't open your vault");
+    screen.getByText("Failed to create vault/raw: Operation not permitted (os error 1)");
     const { useLanguageStore } = await import("./lib/i18n");
     try {
       act(() => useLanguageStore.getState().setPref("ru"));
       screen.getByText("Не удаётся открыть хранилище");
-      screen.getByText("Полный доступ к диску");
+      // The reason in Russian, the system's words kept as they are.
+      screen.getByText("Не удалось создать папку vault/raw: Operation not permitted (os error 1)");
+      // The vault lies in ~/Documents: the hint, though the error names no path.
+      await screen.findByText("Полный доступ к диску");
       expect(screen.getByText("Полный доступ к диску").parentElement!.textContent).toBe(
         "Хранилище лежит в защищённой папке. Дайте Syzify Полный доступ к диску в Системных настройках → Конфиденциальность и безопасность и откройте снова — или верните хранилище в незащищённое место.",
       );
@@ -247,12 +278,33 @@ describe("App boot", { timeout: 20_000 }, () => {
     }
 
     cleanup();
-    await bootApp(UNLOCKED, "Failed to run migrations: DatabaseTooFarAhead");
+    await bootApp(UNLOCKED, DB_OPEN_FAILED);
+    await screen.findByText("Can't open your vault");
+    const db = await import("./lib/i18n");
+    try {
+      act(() => db.useLanguageStore.getState().setPref("ru"));
+      // The reason in Russian, the library's words kept as they are.
+      screen.getByText(`Не удалось открыть базу данных: ${DB_DETAIL}`);
+    } finally {
+      act(() => db.useLanguageStore.getState().setPref("system"));
+    }
+
+    cleanup();
+    await bootApp(UNLOCKED, TOO_NEW);
     await screen.findByText("Can't open your vault");
     const again = await import("./lib/i18n");
     try {
+      act(() => again.useLanguageStore.getState().setPref("ru"));
+      screen.getByText(
+        "Это хранилище последней открывала более новая версия Syzify (формат данных 40, это приложение читает до 34). Обновите приложение, чтобы открыть его.",
+      );
+      // A too-new vault is no protected folder, and reopening it is no fix.
+      expect(screen.queryByText("Полный доступ к диску")).toBeNull();
+      expect(screen.getByText("Открыть снова").className).toContain("ghost");
       act(() => again.useLanguageStore.getState().setPref("it"));
-      screen.getByText(/una versione più recente di Syzify/);
+      screen.getByText(
+        "Questo archivio è stato usato l'ultima volta da una versione più recente di Syzify (formato dati 40, questa app legge fino al formato 34). Aggiorna l'app per aprirlo.",
+      );
     } finally {
       act(() => again.useLanguageStore.getState().setPref("system"));
     }
@@ -269,7 +321,7 @@ describe("App boot", { timeout: 20_000 }, () => {
   });
 
   it("vault error screen switches to a picked vault and restarts", async () => {
-    await bootApp(UNLOCKED, "Failed to run migrations: DatabaseTooFarAhead");
+    await bootApp(UNLOCKED, TOO_NEW);
     await screen.findByText("Can't open your vault");
 
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -283,15 +335,28 @@ describe("App boot", { timeout: 20_000 }, () => {
     await waitFor(() => expect(api.restartApp).toHaveBeenCalled());
   });
 
-  it("a too-new vault offers the updater instead of the raw migration error", async () => {
-    const raw =
-      "Failed to run migrations: rusqlite_migrate error: MigrationDefinition(DatabaseTooFarAhead)";
-    await bootApp(UNLOCKED, raw);
+  /** The Full Disk Access hint goes by the vault's path, not the error's
+   * text (#244): a path that merely says "Documents" or "Desktop" gets no
+   * hint, nor does a refusal that is not about access. */
+  it.each([
+    ["an access refusal outside the guarded folders", NO_ACCESS, "/Volumes/Desktop Backup/Syzify"],
+    ["a text naming Documents on a vault outside them", DB_OPEN_FAILED, "/Users/me/Syzify"],
+    ["a refusal that is not about access", TOO_NEW, "/Users/me/Documents/Syzify"],
+  ])("gives no Full Disk Access hint for %s", async (_case, error, vaultPath) => {
+    await bootApp(UNLOCKED, error, vaultPath);
+    await screen.findByText("Can't open your vault");
+    const { api } = await import("./lib/tauri");
+    if (error !== TOO_NEW) await waitFor(() => expect(api.getVaultPath).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Full Disk Access")).toBeNull();
+  });
+
+  it("a too-new vault offers the updater", async () => {
+    await bootApp(UNLOCKED, TOO_NEW);
     await screen.findByText("Can't open your vault");
 
-    // Human copy replaces the raw error; the update check is right there.
-    screen.getByText(/last used by a newer version/);
-    expect(screen.queryByText(raw)).toBeNull();
+    // The reason, versions and all; the update check is right there.
+    screen.getByText(TOO_NEW.message);
     const { api } = await import("./lib/tauri");
     vi.mocked(api.checkForUpdates).mockResolvedValue({
       update_available: true,
@@ -307,15 +372,15 @@ describe("App boot", { timeout: 20_000 }, () => {
     screen.getByText("Reopen");
   });
 
-  it("other vault errors keep the raw message and no updater", async () => {
-    await bootApp(UNLOCKED, "boom");
+  it("an uncoded vault error says its message, with no updater", async () => {
+    await bootApp(UNLOCKED, BOOM);
     await screen.findByText("Can't open your vault");
     screen.getByText("boom");
     expect(screen.queryByText("Check for updates")).toBeNull();
   });
 
   it("create-new passes expect_existing=false; cancelling picks nothing", async () => {
-    await bootApp(UNLOCKED, "boom");
+    await bootApp(UNLOCKED, BOOM);
     await screen.findByText("Can't open your vault");
     const { open } = await import("@tauri-apps/plugin-dialog");
     const { api } = await import("./lib/tauri");
@@ -335,7 +400,7 @@ describe("App boot", { timeout: 20_000 }, () => {
   });
 
   it("shows the switch error and does not restart when switching fails", async () => {
-    await bootApp(UNLOCKED, "boom");
+    await bootApp(UNLOCKED, BOOM);
     await screen.findByText("Can't open your vault");
     const { open } = await import("@tauri-apps/plugin-dialog");
     const { api } = await import("./lib/tauri");
@@ -354,7 +419,7 @@ describe("App boot", { timeout: 20_000 }, () => {
   });
 
   it("shows the switch error and does not restart when switching fails — an Error reads the same, without an Error: prefix (#182)", async () => {
-    await bootApp(UNLOCKED, "boom");
+    await bootApp(UNLOCKED, BOOM);
     await screen.findByText("Can't open your vault");
     const { open } = await import("@tauri-apps/plugin-dialog");
     const { api } = await import("./lib/tauri");

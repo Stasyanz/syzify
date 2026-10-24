@@ -137,8 +137,6 @@ export const ru: Messages = {
   "nav.settings": "Настройки",
   "app.loading": "Загрузка",
   "app.vaultError.title": "Не удаётся открыть хранилище",
-  "app.vaultError.tooNew":
-    "Это хранилище последней открывала более новая версия Syzify. Обновите приложение, чтобы открыть его.",
   "app.vaultError.protected":
     "Хранилище лежит в защищённой папке. Дайте Syzify {access} в Системных настройках → Конфиденциальность и безопасность и откройте снова — или верните хранилище в незащищённое место.",
   "app.vaultError.protectedAccess": "Полный доступ к диску",
@@ -1032,5 +1030,14 @@ export const ru: Messages = {
   "error.vault.noVaultFound": "В «{path}» нет хранилища",
   "error.vault.alreadyHoldsVault": "В «{path}» уже есть хранилище — откройте его кнопкой «Открыть другое хранилище…»",
   "error.vault.insideVault": "«{path}» находится внутри хранилища «{vault}» — выберите папку вне его",
+  "error.vault.tooNew":
+    "Это хранилище последней открывала более новая версия Syzify (формат данных {vault}, это приложение читает до {app}). Обновите приложение, чтобы открыть его.",
+  "error.vault.nested": "Хранилище не создано в «{path}»: эта папка находится внутри хранилища «{vault}»",
+  "error.vault.createFolderFailed": "Не удалось создать папку vault/{folder}: {detail}",
+  "error.vault.dbOpenFailed": "Не удалось открыть базу данных: {detail}",
+  "error.vault.walFailed": "Не удалось включить журнал WAL: {detail}",
+  "error.vault.migrateFailed": "Не удалось выполнить миграции базы данных: {detail}",
+  "error.vault.restartRequired":
+    "Хранилище восстановлено из резервной копии — приложение нужно перезапустить, чтобы открыть его снова.",
   "error.watch.noDirectory": "Папка не существует: {path}",
 };

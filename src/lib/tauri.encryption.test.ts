@@ -24,6 +24,15 @@ describe("encryption api wrappers", () => {
     expect(api.enableEncryption).toHaveLength(1);
   });
 
+  // #244: why the vault would not open — locked or not — comes back coded,
+  // as the backend wrote it, for the vault error screen's errorText.
+  it("the vault's boot error comes back as the backend's CommandError", async () => {
+    const tooNew = { code: "vault.tooNew", params: { vault: 40, app: 34 }, message: "newer" };
+    mocked.mockResolvedValueOnce(tooNew);
+    expect(await api.getVaultError()).toEqual(tooNew);
+    expect(mocked).toHaveBeenCalledWith("get_vault_error");
+  });
+
   it("unlocking and disabling carry only the password", async () => {
     await api.unlockVault("pw");
     expect(mocked).toHaveBeenCalledWith("unlock_vault", { password: "pw" });

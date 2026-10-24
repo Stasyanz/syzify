@@ -151,8 +151,9 @@ pub fn get_vault_path(state: State<AppState>) -> Result<String, CommandError> {
 
 /// A boot-time vault error (e.g. the vault sits in a macOS-protected folder
 /// and the app lacks Full Disk Access), or None when the vault opened fine.
+/// Coded like a rejection (#244): the screen says it through `errorText`.
 #[tauri::command]
-pub fn get_vault_error(state: State<AppState>) -> Result<Option<String>, CommandError> {
+pub fn get_vault_error(state: State<AppState>) -> Result<Option<CommandError>, CommandError> {
     Ok(state.vault_error.lock().map_err(|e| e.to_string())?.clone())
 }
 
@@ -208,21 +209,7 @@ pub async fn relocate_vault<R: tauri::Runtime>(
             let _ = app.emit("vault:relocate:progress", RelocateProgress { processed, total });
         };
 
-        // Reopen keyed when that vault's database scope is encrypted; plain
-        // otherwise. vault.lock lives inside the vault, so read it at `root`.
-        let reopen = |root: &Path| -> Result<rusqlite::Connection, String> {
-            let db_encrypted = crypto::read_vault_lock(root)
-                .ok()
-                .flatten()
-                .map(|l| l.scopes.database)
-                .unwrap_or(false);
-            if db_encrypted {
-                let key = key.ok_or("Vault is locked")?;
-                crate::init_vault_encrypted(root, &key)
-            } else {
-                crate::init_vault(root)
-            }
-        };
+        let reopen = |root: &Path| reopen_vault(root, key);
 
         match vault::relocate(&src, Path::new(&dest_path), &config_dir, &progress) {
             Ok(target) => {
@@ -242,6 +229,21 @@ pub async fn relocate_vault<R: tauri::Runtime>(
     })
     .await
     .map_err(|e| format!("Relocate task failed: {}", e))?
+}
+
+/// The vault's connection after a move, at `root`: keyed when that vault's
+/// database scope is encrypted, plain otherwise. vault.lock lives inside the
+/// vault, so it is read at `root`. A refusal stays coded (a vault too new
+/// for this app reads as such in the toast).
+fn reopen_vault(root: &Path, key: Option<[u8; 32]>) -> Result<rusqlite::Connection, CommandError> {
+    let db_encrypted = crypto::read_vault_lock(root).ok().flatten().is_some_and(|l| l.scopes.database);
+    if db_encrypted {
+        // Uncoded: relocate runs on an open vault, which holds its key.
+        let key = key.ok_or("Vault is locked")?;
+        crate::init_vault_encrypted(root, &key)
+    } else {
+        crate::init_vault(root)
+    }
 }
 
 /// Point the app at a different vault root WITHOUT moving any data: write the
@@ -1438,6 +1440,13 @@ mod tests {
 
         assert_eq!(get_vault_path(app.state()).unwrap(), vault.to_string_lossy());
         assert_eq!(get_vault_error(app.state()).unwrap(), None);
+        // The reason comes back coded, params and all (#244).
+        fs::write(vault.join("vault.db"), b"").unwrap();
+        let nested = vault::ensure_not_nested(&vault.join("raw/inner")).unwrap_err();
+        assert_eq!(nested.code, Some("vault.nested"));
+        *app.state::<AppState>().vault_error.lock().unwrap() = Some(nested.clone());
+        assert_eq!(get_vault_error(app.state()).unwrap(), Some(nested));
+        *app.state::<AppState>().vault_error.lock().unwrap() = None;
         assert!(get_detected_devices(app.state()).unwrap().is_empty());
         let status = get_encryption_status(app.state()).unwrap();
         assert!(!status.enabled && !status.locked);
@@ -1973,6 +1982,73 @@ mod tests {
         let none = crypto::EncryptionScopes { activities: false, database: false, photos: false };
         let err = enable_encryption_core("pw", none, &state).unwrap_err();
         assert_eq!(err, CommandError::coded("encryption.noScope", "Select at least one thing to encrypt"));
+    }
+
+    fn user_version(conn: &rusqlite::Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    const DATABASE_ONLY: crypto::EncryptionScopes =
+        crypto::EncryptionScopes { activities: false, database: true, photos: false };
+
+    /// A move reopens the vault it lands on as that vault is: plain, keyed,
+    /// refused without its key, and refused in coded words when a newer
+    /// build migrated it (#244).
+    #[test]
+    fn reopen_vault_opens_each_vault_as_it_is() {
+        let plain = ScratchDir::new("reopen_plain");
+        let conn = reopen_vault(&plain, None).unwrap();
+        let latest = user_version(&conn);
+        assert!(latest > 0);
+        conn.pragma_update(None, "user_version", latest + 1).unwrap();
+        drop(conn);
+        let err = reopen_vault(&plain, None).unwrap_err();
+        assert_eq!(err.code, Some("vault.tooNew"));
+        assert_eq!(err.params["vault"], latest + 1);
+        assert_eq!(err.params["app"], latest);
+
+        let keyed = ScratchDir::new("reopen_keyed");
+        let state = test_state_with(&keyed, crate::init_vault(&keyed).unwrap());
+        enable_encryption_core("pw", DATABASE_ONLY, &state).unwrap();
+        let key = state.encryption_key.lock().unwrap().unwrap();
+        // Let go of the keyed connection, as relocate does before the move.
+        *state.db.lock().unwrap() = rusqlite::Connection::open_in_memory().unwrap();
+        let conn = reopen_vault(&keyed, Some(key)).unwrap();
+        assert_eq!(user_version(&conn), latest);
+        drop(conn);
+        assert_eq!(reopen_vault(&keyed, None).unwrap_err(), CommandError::from("Vault is locked"));
+    }
+
+    /// A keyed vault a newer build migrated: its open is refused in coded
+    /// words, and unlock leaves the session as locked as it found it — no
+    /// key held, the placeholder still in place (#244).
+    #[test]
+    fn unlock_refuses_a_too_new_keyed_vault_and_stays_locked() {
+        let vault = ScratchDir::new("unlock_too_new");
+        let state = test_state_with(&vault, crate::init_vault(&vault).unwrap());
+        enable_encryption_core("pw", DATABASE_ONLY, &state).unwrap();
+        let key = state.encryption_key.lock().unwrap().unwrap();
+        let latest = {
+            let conn = state.db.lock().unwrap();
+            let v = user_version(&conn);
+            conn.pragma_update(None, "user_version", v + 1).unwrap();
+            v
+        };
+        // The locked reboot: a placeholder connection, no key in memory.
+        *state.db.lock().unwrap() = rusqlite::Connection::open_in_memory().unwrap();
+        *state.db_locked.lock().unwrap() = true;
+        *state.encryption_key.lock().unwrap() = None;
+
+        let err = crate::init_vault_encrypted(&vault, &key).unwrap_err();
+        assert_eq!(err.code, Some("vault.tooNew"));
+        assert_eq!(err.params["vault"], latest + 1);
+        assert_eq!(err.params["app"], latest);
+
+        let err = unlock_vault_core("pw", &state).unwrap_err();
+        assert_eq!(err.code, Some("vault.tooNew"));
+        assert!(*state.db_locked.lock().unwrap());
+        assert!(state.encryption_key.lock().unwrap().is_none());
+        assert!(state.db.lock().unwrap().path().is_none_or(|p| p.is_empty()), "the placeholder was swapped out");
     }
 
     /// Enable makes the key available through encryption_key_for the moment the

@@ -277,10 +277,10 @@ pub(crate) fn restore_vault_core(
     // writes can't silently vanish into the placeholder. A successful restart
     // discards this with the process.
     if let Ok(mut ve) = state.vault_error.lock() {
-        *ve = Some(
-            "The vault was restored from a backup — the app must restart to reopen it."
-                .to_string(),
-        );
+        *ve = Some(CommandError::coded(
+            "vault.restartRequired",
+            "The vault was restored from a backup — the app must restart to reopen it.",
+        ));
     }
 
     // Move the current vault aside so extraction lands on a clean slate
@@ -515,8 +515,14 @@ mod tests {
         assert!(outcome.error.is_none());
         assert!(outcome.preserved_at.is_some(), "current vault must be quarantined");
 
-        // Restart demanded, restored files in place.
-        assert!(state.vault_error.lock().unwrap().is_some());
+        // Restart demanded in coded words, restored files in place.
+        assert_eq!(
+            *state.vault_error.lock().unwrap(),
+            Some(CommandError::coded(
+                "vault.restartRequired",
+                "The vault was restored from a backup — the app must restart to reopen it.",
+            ))
+        );
         assert_eq!(fs::read(vault.join("vault.db")).unwrap(), b"backup db");
     }
 

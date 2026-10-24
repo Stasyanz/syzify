@@ -194,9 +194,10 @@ export const api = {
   getVaultPath: () =>
     invoke<string>("get_vault_path"),
 
-  /** A boot-time vault error (protected folder / no access), or null. */
+  /** A boot-time vault error (protected folder / no access, a vault too
+   * new), or null: coded like a rejection (#244), said through `errorText`. */
   getVaultError: () =>
-    invoke<string | null>("get_vault_error"),
+    invoke<CommandError | null>("get_vault_error"),
 
   /** Move the vault to a new folder; resolves to the new root. */
   relocateVault: (destPath: string) =>

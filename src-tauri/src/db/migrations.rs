@@ -48,8 +48,34 @@ fn migrations_count() -> usize {
     migration_list().len()
 }
 
-pub fn run_migrations(conn: &mut Connection) -> Result<(), rusqlite_migration::Error> {
+/// Why a vault's schema was not brought up to date.
+#[derive(Debug)]
+pub enum MigrateError {
+    /// A newer build migrated the vault past this build's last migration:
+    /// `vault` is its schema version, `app` the latest this build knows.
+    /// Nothing this build does can open it — the app needs updating.
+    TooNew { vault: i64, app: i64 },
+    /// The migration itself failed: the library's own error.
+    Failed(rusqlite_migration::Error),
+}
+
+impl From<rusqlite_migration::Error> for MigrateError {
+    fn from(e: rusqlite_migration::Error) -> Self {
+        MigrateError::Failed(e)
+    }
+}
+
+pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrateError> {
     let migrations = Migrations::new(migration_list());
+
+    // A vault past the last migration: told apart before migrating, with
+    // both versions, so the app says "update" instead of the library's
+    // DatabaseTooFarAhead.
+    let latest = migrations_count() as i64;
+    let version = user_version(conn)?;
+    if version > latest {
+        return Err(MigrateError::TooNew { vault: version, app: latest });
+    }
 
     // Recovery net: a fully-migrated database can lose its user_version stamp
     // (e.g. an older SQLCipher encrypt that didn't carry it across). Such a DB
@@ -66,17 +92,17 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), rusqlite_migration::E
             })?;
     }
 
-    migrations.to_latest(conn)
+    Ok(migrations.to_latest(conn)?)
+}
+
+/// The vault's schema version (`PRAGMA user_version`).
+fn user_version(conn: &Connection) -> Result<i64, rusqlite_migration::Error> {
+    conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(|e| rusqlite_migration::Error::RusqliteError { query: "PRAGMA user_version".into(), err: e })
 }
 
 fn needs_version_recovery(conn: &Connection) -> Result<bool, rusqlite_migration::Error> {
-    let map_err = |e| rusqlite_migration::Error::RusqliteError {
-        query: "version recovery probe".into(),
-        err: e,
-    };
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .map_err(map_err)?;
+    let version = user_version(conn)?;
     if version != 0 {
         return Ok(false);
     }
@@ -155,5 +181,49 @@ mod tests {
     fn empty_db_is_not_treated_as_recovery() {
         let conn = Connection::open_in_memory().unwrap();
         assert!(!needs_version_recovery(&conn).unwrap());
+    }
+
+    /// One past the last migration is a vault a newer build migrated: refused
+    /// before anything runs, with its version and this build's, the schema
+    /// left as it was.
+    #[test]
+    fn a_vault_past_the_last_migration_is_too_new() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let latest = migrations_count() as i64;
+        conn.pragma_update(None, "user_version", latest + 1).unwrap();
+        let Err(MigrateError::TooNew { vault, app }) = run_migrations(&mut conn) else { panic!("not too new") };
+        assert_eq!((vault, app), (latest + 1, latest));
+        let tables: i64 = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0)).unwrap();
+        assert_eq!(tables, 0);
+        assert_eq!(user_version(&conn).unwrap(), latest + 1);
+    }
+
+    /// Exactly at the last migration is up to date: nothing runs, nothing
+    /// is refused, the version stays.
+    #[test]
+    fn a_vault_at_the_last_migration_is_up_to_date() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        let latest = migrations_count() as i64;
+        assert_eq!(user_version(&conn).unwrap(), latest);
+        run_migrations(&mut conn).unwrap();
+        assert_eq!(user_version(&conn).unwrap(), latest);
+    }
+
+    /// What the library says is passed on: a file that is no database, a
+    /// schema a migration trips over.
+    #[test]
+    fn a_failed_migration_carries_the_library_error() {
+        let dir = crate::test_support::ScratchDir::new("migrations_garbage");
+        let path = dir.join("vault.db");
+        std::fs::write(&path, vec![b'x'; 4096]).unwrap();
+        let mut garbage = Connection::open(&path).unwrap();
+        let Err(MigrateError::Failed(e)) = run_migrations(&mut garbage) else { panic!("a garbage file migrated") };
+        assert!(e.to_string().contains("PRAGMA user_version"), "{e}");
+
+        let mut clash = Connection::open_in_memory().unwrap();
+        clash.execute_batch("CREATE TABLE trackpoint (x INTEGER);").unwrap();
+        let Err(MigrateError::Failed(e)) = run_migrations(&mut clash) else { panic!("a clashing schema migrated") };
+        assert!(e.to_string().contains("activity_id"), "{e}");
     }
 }
