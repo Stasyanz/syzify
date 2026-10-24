@@ -10,6 +10,7 @@ import { toDistance, distanceUnit, toElevation, elevationUnit, unitLabel, useUni
 import { sportLabel, type DaySummary, type RecoveryNight } from "../../lib/types";
 import { buildMonthGrid, monthSports, monthTitle, weekdayNames } from "../../lib/calendar";
 import { formatNumber, useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import { useInvalidateOnNewDay, useMonthView, useToday } from "../../hooks/useToday";
 import { bandLabel, BAND_TOKEN, formatDelta } from "../../lib/recovery";
 
@@ -153,7 +154,7 @@ export function MiniCalendar() {
                               <SportGlyph sport={a.sport_type} size={14} />
                             </span>
                             <span className="cal-pop-t">
-                              {a.title ?? sportLabel(a.sport_type)}
+                              {displayTitle(a.title, t) ?? sportLabel(a.sport_type, a.sport_type, t)}
                             </span>
                             <span className="cal-pop-m">
                               {a.distance_m != null

@@ -74,6 +74,25 @@ describe("PersonalRecords in the interface language (#232)", () => {
     getByTextIn(renderRecords([]).container, "Рекордов пока нет");
   });
 
+  it("names a record's activity by its generated title in the language, else by its date (#240)", () => {
+    const titled: SportRecords = {
+      ...strength,
+      records: {
+        ...strength.records,
+        longest_duration: { ...rec(5000), title: null },
+        heaviest_set: { ...rec(22.5), title: "Evening Strength" },
+      },
+    };
+    useLanguageStore.getState().setPref("ru");
+    expect(values(renderRecords([titled]).container)).toEqual([
+      "22,5 кг · Вечерняя силовая тренировка",
+      "1 ч 23 мин · 2026-09-05",
+    ]);
+    cleanup();
+    useLanguageStore.getState().setPref("it");
+    expect(values(renderRecords([titled]).container)[0]).toBe("22,5 kg · Allenamento di forza serale");
+  });
+
   it("writes a distance best's time and pace in Italian", () => {
     useLanguageStore.getState().setPref("it");
     expect(values(renderRecords([run]).container)).toEqual(["50 min · 5:00 /km"]);

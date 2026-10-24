@@ -8,7 +8,7 @@ import L from "leaflet";
 import type { ActivityLocation } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { MapContainer, useMap } from "../map/leaflet";
-import { ActivitiesMap, FitBounds, ViewTracker, lastMapView } from "./ActivitiesMap";
+import { ActivitiesMap, ActivityPopupRow, FitBounds, ViewTracker, lastMapView } from "./ActivitiesMap";
 import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
@@ -134,6 +134,19 @@ describe("ActivitiesMap in the interface language (#233)", () => {
     expect(container.querySelectorAll(".leaflet-control-zoom")).toHaveLength(1);
     expect(container.querySelector(".leaflet-control-zoom-in")!.getAttribute("title")).toBe("Приблизить");
     expect(container.querySelector(".leaflet-control-zoom-out")!.getAttribute("title")).toBe("Отдалить");
+  });
+
+  it("names a popup row by its generated title in Russian, else by its own or its sport (#240)", () => {
+    useLanguageStore.getState().setPref("ru");
+    const name = (over: Partial<ActivityLocation>) => {
+      const { container } = render(<ActivityPopupRow loc={{ ...loc, ...over }} onOpen={() => {}} />);
+      const text = container.querySelector(".cal-pop-t")!.textContent;
+      cleanup();
+      return text;
+    };
+    expect(name({ title: "Evening Run" })).toBe("Вечерний забег");
+    expect(name({ title: "Morning run" })).toBe("Morning run");
+    expect(name({ title: null, sport_type: "walk" })).toBe("Ходьба");
   });
 });
 

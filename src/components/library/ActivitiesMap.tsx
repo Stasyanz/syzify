@@ -22,6 +22,7 @@ import { sportLabel, type ActivityLocation } from "../../lib/types";
 import { formatDistance, formatDuration } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { formatNumber, useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import {
   clusterLocations,
   clusterSpreadMeters,
@@ -121,21 +122,22 @@ export function ViewTracker({
 }
 
 /** Popup row shared by single markers and cluster lists. */
-function ActivityPopupRow({
+export function ActivityPopupRow({
   loc,
   onOpen,
 }: {
   loc: ActivityLocation;
   onOpen: (id: string) => void;
 }) {
+  const t = useT();
   const color = getSportColor(loc.sport_type);
-  const label = sportLabel(loc.sport_type);
+  const label = sportLabel(loc.sport_type, loc.sport_type, t);
   return (
     <button className="cal-pop-row" onClick={() => onOpen(loc.id)}>
       <span className="cal-pop-ic" style={{ background: color }}>
         <SportGlyph sport={loc.sport_type} size={14} />
       </span>
-      <span className="cal-pop-t">{loc.title ?? label}</span>
+      <span className="cal-pop-t">{displayTitle(loc.title, t) ?? label}</span>
       <span className="cal-pop-m">
         {loc.distance_m != null
           ? formatDistance(loc.distance_m)

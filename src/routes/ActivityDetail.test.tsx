@@ -36,12 +36,20 @@ vi.mock("../components/activity/PhotoGallery", () => ({ PhotoGallery: () => null
 vi.mock("../components/activity/ShareModal", () => ({ ShareModal: () => null }));
 vi.mock("../components/activity/SummaryPanel", () => ({ SummaryPanel: () => null }));
 vi.mock("../components/plugins/PluginContributions", () => ({ PluginContributions: () => null }));
-// The title editor is reduced to one button that saves a new title.
-vi.mock("../components/activity/InlineTitle", () => ({
-  InlineTitle: ({ title, onSave }: { title: string; onSave: (t: string) => void }) => (
-    <button data-title={title} onClick={() => onSave("Renamed")}>rename</button>
-  ),
-}));
+// The title editor is reduced to one button that saves a new title — or,
+// with `titleEditor.real`, is the real one.
+const titleEditor = vi.hoisted(() => ({ real: false }));
+vi.mock("../components/activity/InlineTitle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/activity/InlineTitle")>();
+  return {
+    InlineTitle: ({ title, onSave }: { title: string; onSave: (t: string) => void }) =>
+      titleEditor.real ? (
+        <actual.InlineTitle title={title} onSave={onSave} />
+      ) : (
+        <button data-title={title} onClick={() => onSave("Renamed")}>rename</button>
+      ),
+  };
+});
 
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
@@ -71,7 +79,7 @@ const leg = (over: Partial<MultisportLeg>): MultisportLeg =>
 function detail(over: Partial<ActivityDetail> = {}): ActivityDetail {
   const activity = {
     id: "tri", start_time: "2026-07-15T18:00:00+03:00", timezone_offset: 180, sport_type: "triathlon",
-    title: "Evening Triathlon", notes: null, distance_m: 30000, duration_s: 5400, elev_gain_m: 100,
+    title: "Triathlon", notes: null, distance_m: 30000, duration_s: 5400, elev_gain_m: 100,
     elev_loss_m: 100, avg_speed_mps: 5.5, max_speed_mps: 12, avg_hr: 150, max_hr: 180, avg_cadence: null,
     calories: null, location_name: null, start_lat: null, start_lon: null, source_device: null,
     parent_id: null, gear_id: null, threshold_power_w: null, profile_name: null,
@@ -206,6 +214,75 @@ describe("ActivityDetailPage in Russian (#234)", () => {
     );
     renderPage();
     await screen.findByText("Мультиспорт");
+  });
+
+  it("heads the page and the leg's link with a generated title in Russian, a typed one as it is (#240)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    // The merged event, by the title the merge gives it.
+    vi.mocked(api.getActivityDetail).mockResolvedValue(detail());
+    renderPage();
+    expect((await screen.findByText("rename")).getAttribute("data-title")).toBe("Триатлон");
+    cleanup();
+
+    // A FIT triathlon, by its part of the day.
+    vi.mocked(api.getActivityDetail).mockResolvedValue(
+      detail({ activity: { ...detail().activity, title: "Morning Triathlon" } }),
+    );
+    renderPage();
+    expect((await screen.findByText("rename")).getAttribute("data-title")).toBe("Утренний триатлон");
+    cleanup();
+
+    vi.mocked(api.getActivityDetail).mockResolvedValue(
+      detail({ activity: { ...detail().activity, title: "Morning Run 2" } }),
+    );
+    renderPage();
+    expect((await screen.findByText("rename")).getAttribute("data-title")).toBe("Morning Run 2");
+    cleanup();
+
+    const legOf = single({ id: "leg", sport_type: "swim", parent_id: "event", title: "Night Swim" } as Partial<Activity>);
+    vi.mocked(api.getActivityDetail).mockImplementation(async (id: string) =>
+      id === "event" ? detail({ activity: { ...detail().activity, id: "event" } }) : legOf,
+    );
+    renderPage();
+    await screen.findByText("Триатлон");
+    expect(screen.getByText("rename").getAttribute("data-title")).toBe("Ночной заплыв");
+  });
+
+  it("edits a generated title from its Russian text and writes it only when changed (#240)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    titleEditor.real = true;
+    try {
+      vi.mocked(api.updateActivity).mockReset().mockResolvedValue(undefined as never);
+      vi.mocked(api.getActivityDetail).mockResolvedValue(
+        detail({ activity: { ...detail().activity, title: "Evening Triathlon" } }),
+      );
+      renderPage();
+      const heading = await screen.findByRole("heading", { level: 1 });
+      expect(heading.textContent).toBe("Вечерний триатлон");
+
+      // Enter on the untouched text: the stored English stays.
+      fireEvent.click(heading);
+      let input = screen.getByLabelText("Название тренировки") as HTMLInputElement;
+      expect(input.value).toBe("Вечерний триатлон");
+      fireEvent.keyDown(input, { key: "Enter" });
+      // Blur on it: nothing either.
+      fireEvent.click(screen.getByRole("heading", { level: 1 }));
+      input = screen.getByLabelText("Название тренировки") as HTMLInputElement;
+      fireEvent.blur(input);
+      expect(api.updateActivity).not.toHaveBeenCalled();
+
+      // An edit is written as typed.
+      fireEvent.click(screen.getByRole("heading", { level: 1 }));
+      input = screen.getByLabelText("Название тренировки") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Вечерний триатлон в Аланье" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() =>
+        expect(api.updateActivity).toHaveBeenCalledWith("tri", { title: "Вечерний триатлон в Аланье" }),
+      );
+      expect(api.updateActivity).toHaveBeenCalledTimes(1);
+    } finally {
+      titleEditor.real = false;
+    }
   });
 });
 

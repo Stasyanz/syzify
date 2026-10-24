@@ -139,6 +139,7 @@ describe("MiniCalendar in the interface language (#233)", () => {
       titled.activities = [
         { ...titled.activities[0], title: "Утро" },
         { ...titled.activities[0], id: "b", title: null, sport_type: "kitesurf" },
+        { ...titled.activities[0], id: "c", title: "Night Ride", sport_type: "ride" },
       ];
       vi.mocked(api.getCalendarData).mockResolvedValue([titled]);
       vi.mocked(api.getRecoveryNights).mockResolvedValue([
@@ -155,8 +156,11 @@ describe("MiniCalendar in the interface language (#233)", () => {
       expect(pop.textContent).toContain("Можно интервалы");
       expect(pop.textContent).toContain("Ночной пульс 53 · база 51 (+2)");
       expect(pop.textContent).toContain("Ночной стресс 13 · Нагрузка вчера 22 TSS, CTL 48");
-      // A workout by its title, one without by its sport — an unknown one as it came.
-      expect(Array.from(pop.querySelectorAll(".cal-pop-t"), (el) => el.textContent)).toEqual(["Утро", "kitesurf"]);
+      // A workout by its title, one without by its sport — an unknown one as
+      // it came — and a generated title in the language (#240).
+      expect(Array.from(pop.querySelectorAll(".cal-pop-t"), (el) => el.textContent)).toEqual([
+        "Утро", "kitesurf", "Ночной заезд",
+      ]);
       expect(rest.textContent).toContain("Нет данных о стрессе · нет истории тренировок");
       expect(rest.textContent).toContain("Ночной пульс заметно выше базового");
       // The legend names the month's sports.

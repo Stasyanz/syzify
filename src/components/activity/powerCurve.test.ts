@@ -87,6 +87,10 @@ describe("in the interface language (#232)", () => {
     expect(tooltipText(60, 339, env(60, 346), "me")).toBe("1 мин · 339 Вт — рекорд 346 Вт (Sapadere)");
     expect(tooltipText(300, 280, env(300, 280, "me"), "me")).toBe("5 мин · 280 Вт — лучшее за всё время");
     expect(tooltipText(60, null, env(60, 346, "other", null), "me")).toBe("1 мин — рекорд 346 Вт (30 авг.)");
+    // A generated title in the language (#240).
+    expect(tooltipText(60, null, env(60, 346, "other", "Morning Ride"), "me")).toBe(
+      "1 мин — рекорд 346 Вт (Утренний заезд)",
+    );
   });
 
   it("labels the windows and the tooltip in Italian", () => {

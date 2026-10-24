@@ -350,10 +350,10 @@ describe("transparent block background — canvas and preview stay WYSIWYG", () 
 });
 
 describe("title block visibility", () => {
-  function renderWithTitle(showTitle: boolean) {
+  function renderWithTitle(showTitle: boolean, of: Activity = activity) {
     return render(
       <DraggableShareBlocks
-        activity={activity}
+        activity={of}
         trackpoints={trackpoints}
         fields={[]}
         theme="dark"
@@ -398,6 +398,30 @@ describe("title block visibility", () => {
       expect(renderWithTitle(true).container.textContent).toContain(meta);
     } finally {
       useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("titles the image with a generated title in the language, a typed one as it is, alike on canvas and preview (#240)", () => {
+    const draw = (of: Activity) => {
+      const { ctx, calls } = makeFakeCtx();
+      const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 20 };
+      drawTitleBlock(d, { x: 0, y: 0 }, of);
+      return calls.texts[1];
+    };
+    const generated = { ...activity, title: "Morning Run" } as Activity;
+    const typed = { ...activity, title: "morning run" } as Activity;
+    for (const [lang, text] of [["ru", "Утренний забег"], ["it", "Corsa mattutina"], ["en", "Morning Run"]] as const) {
+      useLanguageStore.getState().setPref(lang);
+      try {
+        expect(draw(generated)).toBe(text);
+        expect(renderWithTitle(true, generated).container.textContent).toContain(text);
+        cleanup();
+        expect(draw(typed)).toBe("morning run");
+        expect(renderWithTitle(true, typed).container.textContent).toContain("morning run");
+        cleanup();
+      } finally {
+        useLanguageStore.getState().setPref("system");
+      }
     }
   });
 });

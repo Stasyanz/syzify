@@ -3,9 +3,13 @@ import { MAX_TITLE_LENGTH } from "../../lib/types";
 import { useT } from "../../lib/i18n";
 
 interface Props {
-  /** Current display title (custom title or the sport-based fallback). */
+  /** Current display title: the stored one as `displayTitle` shows it (a
+   * generated one in the interface language, #240), or the sport-based
+   * fallback. Editing starts from it. */
   title: string;
-  /** Called with the trimmed new title; not called when unchanged/empty. */
+  /** Called with the trimmed new title; not called when empty or unchanged
+   * from the DISPLAYED title — so Enter or blur on an untouched generated
+   * title never writes its translation over the stored English. */
   onSave: (title: string) => void;
 }
 

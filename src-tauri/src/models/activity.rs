@@ -263,6 +263,10 @@ fn is_virtual_activity(sub_sport: &str) -> bool {
 /// Generate a default activity title for files that carry no name (e.g. FIT):
 /// "{time of day} {sport}", such as "Morning Strength" or "Evening Run".
 /// `start_time` is the local wall-clock ISO string ("YYYY-MM-DDThh:mm:ss").
+/// Stored in English; the frontend recognises the exact text and shows it
+/// in the interface language (src/lib/activityTitle.ts, #240) — a new part
+/// or `label()` fails its parity test until the dictionaries know it. Keep
+/// it one format for every sport: a special case is not seen there.
 pub fn default_activity_title(sport: &SportType, start_time: &str) -> String {
     let hour: u32 = start_time
         .get(11..13)

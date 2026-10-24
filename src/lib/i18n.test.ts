@@ -311,6 +311,8 @@ describe("the dictionaries", () => {
       "units.km", "units.mi", "units.m", "units.ft", "units.yd", "units.kmh", "units.mph", "units.kg",
       "units.lb", "units.bpm", "units.w", "units.rpm", "units.kcal", "units.h", "units.min", "units.mm",
       "sport.triathlon", "sport.cardio", "sport.yoga", "sport.snowboard", "sport.golf",
+      // A merged event's title (#240), the sport's name.
+      "title.event.triathlon", "title.event.duathlon",
       "unlock.password", "dashboard.records.sprint", "dashboard.volume.title",
       // "Multisport", Coggan's VO2 max as Italian coaching writes it, a segment's PR.
       "activity.header.multisport", "activity.zones.power.vo2max", "activity.segments.pr",

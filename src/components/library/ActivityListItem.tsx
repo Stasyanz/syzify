@@ -1,6 +1,7 @@
 import type { ActivitySummary } from "../../lib/types";
 import { sportLabel } from "../../lib/types";
 import { useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import { SportIcon } from "../brand/SportIcon";
 import { DeviceSilhouette } from "../brand/DeviceSilhouette";
 import { describeDevice } from "../../lib/devices";
@@ -44,7 +45,7 @@ export function ActivityListItem({ activity, onClick, showDevice = true }: Props
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-ink truncate">
-            {activity.title ?? label}
+            {displayTitle(activity.title, t) ?? label}
           </span>
         </div>
         {/* The meta line clips instead of spilling onto the numbers: the

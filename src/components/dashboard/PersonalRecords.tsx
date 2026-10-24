@@ -6,6 +6,7 @@ import { sportLabel } from "../../lib/types";
 import { formatDistance, formatDurationHM, formatElevation, formatPace, formatWeight } from "../../lib/format";
 import { unitLabel, useUnits } from "../../lib/units";
 import { formatNumber, useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import type { MessageKey } from "../../locales/types";
 
 interface Props {
@@ -47,6 +48,7 @@ function RecordRow({
   formatter: (v: number) => string;
   onClick: (id: string) => void;
 }) {
+  const t = useT();
   if (!record) return null;
   return (
     <div className="rec link" onClick={() => onClick(record.activity_id)}>
@@ -57,7 +59,7 @@ function RecordRow({
         <div className="rl">{label}</div>
         <div className="rv truncate">
           {formatter(record.value)}
-          <span> · {record.title ?? record.date}</span>
+          <span> · {displayTitle(record.title, t) ?? record.date}</span>
         </div>
       </div>
       <ChevronRight size={16} className="text-faint shrink-0" />

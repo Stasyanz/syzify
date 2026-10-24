@@ -15,6 +15,7 @@ import {
 import { SportGlyph } from "../components/brand/SportIcon";
 import { confirmDialog } from "../stores/confirmStore";
 import { formatNumber, useT } from "../lib/i18n";
+import { displayTitle } from "../lib/activityTitle";
 import { errorText } from "../lib/errors";
 
 /** Case-insensitive substring filter over segment names. Client-side by
@@ -340,7 +341,7 @@ function LeaderboardRows({
                 <Trophy size={11} className="text-accent-2" aria-label={t("segments.bestEffort")} />
               )}
               <span className="tabular-nums text-faint">{e.rank != null ? `#${e.rank}` : "—"}</span>
-              <span className="font-medium">{e.activity_title ?? t("segments.untitled")}</span>
+              <span className="font-medium">{displayTitle(e.activity_title, t) ?? t("segments.untitled")}</span>
               <span className="text-faint">{formatDate(e.start_time)}</span>
             </span>
           </td>

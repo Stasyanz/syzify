@@ -126,6 +126,40 @@ describe("EditActivityModal in Russian (#234)", () => {
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Тренировка удалена"));
   });
 
+  it("shows a generated title in Russian and writes a title only when it was edited (#240)", async () => {
+    const titleField = () => screen.getByPlaceholderText("Название тренировки") as HTMLInputElement;
+    const save = async () => {
+      vi.mocked(api.updateActivity).mockClear();
+      fireEvent.click(screen.getByText("Сохранить"));
+      await waitFor(() => expect(api.updateActivity).toHaveBeenCalledTimes(1));
+      return vi.mocked(api.updateActivity).mock.calls[0][1];
+    };
+
+    // Untouched: the notes are saved, the stored English title is not.
+    renderRu({ title: "Morning Run" });
+    expect(titleField().value).toBe("Утренний забег");
+    fireEvent.change(screen.getByPlaceholderText("Заметки…"), { target: { value: "легко" } });
+    expect(await save()).toEqual({ title: undefined, notes: "легко", sport_type: "run" });
+    cleanup();
+
+    // Edited: written as typed.
+    renderRu({ title: "Morning Run" });
+    fireEvent.change(titleField(), { target: { value: "Утренний забег у моря" } });
+    expect((await save()).title).toBe("Утренний забег у моря");
+    cleanup();
+
+    // Emptied: nothing to write — a title cannot be cleared.
+    renderRu({ title: "Morning Run" });
+    fireEvent.change(titleField(), { target: { value: "" } });
+    expect((await save()).title).toBeUndefined();
+    cleanup();
+
+    // Untitled: an empty field, and nothing written until something is typed.
+    renderRu({ title: null });
+    expect(titleField().value).toBe("");
+    expect((await save()).title).toBeUndefined();
+  });
+
   it("confirms a delete and says it is done", async () => {
     const onDeleted = renderRu();
     fireEvent.click(screen.getByText("Удалить"));

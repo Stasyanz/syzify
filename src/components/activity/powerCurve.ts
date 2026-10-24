@@ -4,6 +4,7 @@
 import type { PowerCurveEnvelopePoint, PowerCurvePoint } from "../../lib/types";
 import { formatDateTime, t } from "../../lib/i18n";
 import { formatPower } from "../../lib/format";
+import { displayTitle } from "../../lib/activityTitle";
 
 /** X ticks worth labeling on the log axis — the anchors riders compare. */
 export const AXIS_SPLITS = [1, 5, 15, 60, 300, 1200, 3600];
@@ -80,7 +81,7 @@ export function tooltipText(
     if (record.activity_id === activityId) {
       parts.push(t("powerCurve.allTimeBest"));
     } else {
-      const label = record.title || shortDate(record.start_time);
+      const label = displayTitle(record.title, t) || shortDate(record.start_time);
       parts.push(t("powerCurve.best", { power: formatPower(record.watts), label }));
     }
   }

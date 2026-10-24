@@ -120,6 +120,24 @@ screen that words one refusal its own way compares
   component passes its own `t` so the name and the sentence around it
   speak one language. `SPORT_TYPES` must list every `SportType`, or `tsc`
   names the one missing.
+  An activity's title is shown through `displayTitle(title, t)`
+  (`lib/activityTitle.ts`, #240): the backend stores a generated title
+  in English ("Morning Run", `default_activity_title`; "Triathlon" or
+  "Duathlon" for a merged event), and its exact text — any part, any
+  `SportType::label()` — is shown in the language from the `title.*`
+  keys: each sport's `title.sport.<id>` places `{part}` where its
+  language wants it, `title.gender.<id>` (m/f/n; English "-") picks the
+  part's adjective («Утренний забег», «Corsa mattutina sul tapis
+  roulant»). Any other title is shown as it is. Only the display
+  changes: the database, GPX `<name>`, backups and plugins keep the
+  English, and an editor (InlineTitle, the
+  Edit dialog) starts from the shown text and writes a title only when
+  the user changed it. Accepted limit: search matches the stored text,
+  so «Утренний» finds no generated title, "Morning" does.
+  `activityTitle.test.ts` reads `models/activity.rs` and
+  `db/multisport_legs.rs`: a new part, label or event title fails it
+  until the dictionaries know it (a special case for one sport inside
+  the Rust function is not seen).
 - **Numbers, dates and units (#232)** follow the interface language, not
   the OS region: a shown number goes through `formatNumber` /
   `formatPercent`, a date through `formatDateTime` (all in `lib/i18n.ts`,

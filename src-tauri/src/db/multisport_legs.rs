@@ -222,6 +222,8 @@ pub fn merge_into_triathlon(
             Some("legs must span at least two disciplines (run/bike/swim/ski)".into()),
         ));
     }
+    // Stored in English and shown in the interface language
+    // (src/lib/activityTitle.ts, #240; its parity test reads this line).
     let event_title = if disciplines.len() == 2 { "Duathlon" } else { "Triathlon" };
 
     // Aggregate the container's headline metrics.

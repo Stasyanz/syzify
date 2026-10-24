@@ -59,17 +59,23 @@ describe("CalendarView in the interface language (#232)", () => {
         total_duration_s: 5400,
         total_elev_gain_m: 0,
         sport_types: ["run", "swim"],
-        activities: [act1("a", "run", "Темповая"), act1("b", "swim", null), act1("c", "kitesurf", null)],
+        activities: [
+          act1("a", "run", "Темповая"),
+          act1("b", "swim", null),
+          act1("c", "kitesurf", null),
+          // A generated title in the language (#240).
+          act1("d", "walk", "Evening Walk"),
+        ],
       },
     ]);
     act(() => useLanguageStore.getState().setPref("ru"));
     const { container, findAllByText, getByTitle } = renderView();
     await findAllByText("Плавание");
     expect(Array.from(container.querySelectorAll(".cal-pill"), (el) => el.getAttribute("title"))).toEqual([
-      "Темповая", "Плавание", "kitesurf",
+      "Темповая", "Плавание", "kitesurf", "Вечерняя прогулка",
     ]);
     expect(Array.from(container.querySelectorAll(".cal-pop-t"), (el) => el.textContent)).toEqual([
-      "Темповая", "Плавание", "kitesurf",
+      "Темповая", "Плавание", "kitesurf", "Вечерняя прогулка",
     ]);
     getByTitle("Предыдущий месяц");
     getByTitle("Следующий месяц");

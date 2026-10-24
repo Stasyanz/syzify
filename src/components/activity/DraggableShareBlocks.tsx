@@ -3,6 +3,7 @@ import type { Activity, TrackPointColumns } from "../../lib/types";
 import { sportLabel } from "../../lib/types";
 import { formatDate } from "../../lib/format";
 import { currentLanguage, useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import { avoidZone, clampBlockScale, type BlockKind, type BlockPositions, type BlockScales } from "./shareLayout";
 import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
 import {
@@ -250,7 +251,7 @@ function TitleBlock(props: Props) {
   const { onHandleDown, active } = useScalable("title", scales, onScaleChange, ref);
   const t = useT();
   const sport = sportLabel(activity.sport_type, t("common.activity"), t);
-  const title = activity.title ?? sport;
+  const title = displayTitle(activity.title, t) ?? sport;
   const baseFs = exportScaled(14, exportWidth * 0.018, previewWidth, exportWidth) * scales.title;
 
   return (

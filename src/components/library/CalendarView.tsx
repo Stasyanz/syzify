@@ -11,11 +11,12 @@ import { getSportColor } from "../../lib/sportColors";
 import { sportLabel, type DaySummary } from "../../lib/types";
 import { buildMonthGrid, monthTitle, weekdayNames } from "../../lib/calendar";
 import { useMonthView, useToday } from "../../hooks/useToday";
-import { useT } from "../../lib/i18n";
+import { useT, type Translator } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 
-/** What a calendar pill and popup row call an activity. */
-const activityName = (a: { title: string | null; sport_type: string }) =>
-  a.title ?? sportLabel(a.sport_type);
+/** What a calendar pill and popup row call an activity, in `translate`'s language. */
+const activityName = (a: { title: string | null; sport_type: string }, translate: Translator) =>
+  displayTitle(a.title, translate) ?? sportLabel(a.sport_type, a.sport_type, translate);
 
 export function CalendarView() {
   useUnits();
@@ -135,14 +136,14 @@ export function CalendarView() {
                       key={a.id}
                       className="cal-pill"
                       style={{ background: getSportColor(a.sport_type) }}
-                      title={activityName(a)}
+                      title={activityName(a, t)}
                       onClick={(e) => {
                         e.stopPropagation();
                         navigate(`/activity/${a.id}`);
                       }}
                     >
                       <SportGlyph sport={a.sport_type} size={11} />
-                      <span className="cal-pill-t">{activityName(a)}</span>
+                      <span className="cal-pill-t">{activityName(a, t)}</span>
                     </span>
                   ))}
                   {summary.activities.length > 4 && (
@@ -174,7 +175,7 @@ export function CalendarView() {
                         >
                           <SportGlyph sport={a.sport_type} size={14} />
                         </span>
-                        <span className="cal-pop-t">{activityName(a)}</span>
+                        <span className="cal-pop-t">{activityName(a, t)}</span>
                         <span className="cal-pop-m">
                           {a.distance_m != null
                             ? formatDistance(a.distance_m)

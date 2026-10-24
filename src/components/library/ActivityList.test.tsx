@@ -203,6 +203,27 @@ describe("ActivityList in the interface language (#233)", () => {
     await screen.findByText("Объединение…");
     finish("t-1");
   });
+
+  it("names a row by its generated title in Russian, any other title as it is (#240)", async () => {
+    vi.mocked(api.getActivities).mockResolvedValue([
+      { ...summary(0), title: "Morning Run" },
+      { ...summary(1), title: "Evening Walk", sport_type: "walk" },
+      { ...summary(2), title: "Afternoon Mountaineering", sport_type: "mountaineering" },
+      { ...summary(3), title: "Morning Run 2" },
+      { ...summary(4), title: "Alanya Gravel", sport_type: "ride" },
+      { ...summary(5), title: null, sport_type: "swim" },
+    ]);
+    useLanguageStore.getState().setPref("ru");
+    renderList();
+    await screen.findByText("Утренний забег");
+    screen.getByText("Вечерняя прогулка");
+    screen.getByText("Дневное восхождение");
+    screen.getByText("Morning Run 2");
+    screen.getByText("Alanya Gravel");
+    // No title at all: the sport's name.
+    expect(screen.getAllByText("Плавание").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Morning Run")).toBeNull();
+  });
 });
 
 describe("ActivityList device line setting", () => {

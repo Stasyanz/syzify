@@ -14,6 +14,7 @@ import {
 } from "../lib/format";
 import { unitLabel, useUnits } from "../lib/units";
 import { formatDateTime, useT } from "../lib/i18n";
+import { displayTitle } from "../lib/activityTitle";
 import { SportBadge } from "../components/activity/SportBadge";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
@@ -279,7 +280,7 @@ export function ActivityDetailPage() {
           />
           <div className="min-w-0 flex-1">
             <InlineTitle
-              title={activity.title ?? sport}
+              title={displayTitle(activity.title, t) ?? sport}
               onSave={async (title) => {
                 try {
                   await api.updateActivity(activity.id, { title });
@@ -300,7 +301,7 @@ export function ActivityDetailPage() {
                   data-tip={t("activity.header.parentTip")}
                 >
                   <Trophy size={11} />
-                  {parent?.activity.title ?? t("activity.header.multisport")}
+                  {displayTitle(parent?.activity.title ?? null, t) ?? t("activity.header.multisport")}
                 </button>
               )}
             </div>

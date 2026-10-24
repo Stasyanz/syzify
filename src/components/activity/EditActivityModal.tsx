@@ -16,6 +16,7 @@ import { gearChoicesFor } from "../../lib/gear";
 import { useToastStore } from "../../stores/toastStore";
 import { errorText } from "../../lib/errors";
 import { useLanguageStore, useT } from "../../lib/i18n";
+import { displayTitle } from "../../lib/activityTitle";
 import { unitLabel } from "../../lib/units";
 
 interface Props {
@@ -66,7 +67,11 @@ export function EditActivityModal({
   const language = useLanguageStore((s) => s.language);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const [title, setTitle] = useState(activity.title ?? "");
+  // The title as the header shows it (a generated one in the interface
+  // language, #240); sent only when edited, so a save of the notes never
+  // writes the translation over the stored English.
+  const [shownTitle] = useState(() => displayTitle(activity.title, t) ?? "");
+  const [title, setTitle] = useState(shownTitle);
   const [notes, setNotes] = useState(activity.notes ?? "");
   const [sportType, setSportType] = useState(activity.sport_type);
   const [gear, setGear] = useState(gearId ?? NO_GEAR);
@@ -203,7 +208,7 @@ export function EditActivityModal({
       let ftpRefused = false;
       let gearRefused = false;
       await api.updateActivity(activity.id, {
-        title: title || undefined,
+        title: title !== shownTitle ? title || undefined : undefined,
         notes: notes || undefined,
         sport_type: sportType,
       });

@@ -6,6 +6,31 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Syzify speaks Russian and Italian (#237). Pick the language in
+  Settings → General → Language; System, the default, follows the
+  system's languages (#231). Dates and numbers are written the
+  language's way (#232), every screen is translated (#233–#235), and so
+  are Syzify's own errors, the reason the vault did not open included
+  (#236, #244). Legal texts and what plugins show stay as written.
+  A title Syzify gave an activity, such as "Morning Run" or a merged
+  "Triathlon", is shown in the language too («Утренний забег», «Corsa
+  mattutina») while it stays English in the vault and in exports (#240);
+  search finds it by the English words, not by the translated ones.
+
+### Changed
+- English now writes dates and times the US way ("Jan 5, 2026",
+  "6:05 PM") instead of following the system's region — also on System
+  when the system's language is not one Syzify has.
+- Some English wording changed with the translation: an ellipsis is one
+  character ("Loading…"), numbers in error messages are grouped ("2,000
+  characters"), and the device chip says "Recorded with …".
+
+### Fixed
+- The Full Disk Access hint now appears when macOS refuses access to a
+  vault in Documents, Desktop or Downloads — it missed that refusal
+  before (#244).
+
 ## [0.11.0] - 2026-10-19
 
 ### Added

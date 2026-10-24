@@ -412,8 +412,10 @@ describe("Segments page in Russian (#235)", () => {
     await renderRu();
     fireEvent.click(await screen.findByText("Siedra from Damlataş"));
     expect(await screen.findByText("Загрузка попыток…")).toBeTruthy();
-    release([lb({ activity_title: null }), lb({ id: 2, rank: 2 })]);
+    release([lb({ activity_title: null }), lb({ id: 2, rank: 2, activity_title: "Afternoon Ride" })]);
     expect(await screen.findByText("Без названия")).toBeTruthy();
+    // A generated title in the language (#240).
+    expect(screen.getByText("Дневной заезд")).toBeTruthy();
     expect(screen.getByLabelText("Лучшая попытка")).toBeTruthy();
     expect(screen.getAllByTitle("Открыть тренировку")).toHaveLength(2);
     cleanup();
