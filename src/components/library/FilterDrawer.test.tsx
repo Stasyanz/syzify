@@ -25,6 +25,7 @@ import { confirmDialog } from "../../stores/confirmStore";
 import { useActivityStore } from "../../stores/activityStore";
 import type { GearItem } from "../../lib/types";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 const gearItem = (id: string, name: string, kind: GearItem["kind"], activities: number, retired = false): GearItem => ({
   id,
@@ -258,7 +259,9 @@ describe("FilterDrawer gear", () => {
 
     vi.mocked(api.countGearTargets).mockResolvedValueOnce({ eligible: 2, moved_from: [] });
     vi.mocked(confirmDialog).mockResolvedValueOnce(true);
-    vi.mocked(api.assignGearToFiltered).mockRejectedValueOnce("Bring the gear back before assigning activities to it");
+    vi.mocked(api.assignGearToFiltered).mockRejectedValueOnce(
+      commandError("gear.retiredAssign", "Bring the gear back before assigning activities to it"),
+    );
     fireEvent.click(getByRole("button", { name: "Assign" }));
     await waitFor(() =>
       expect(addToast).toHaveBeenCalledWith("error", "Could not assign gear: Bring the gear back before assigning activities to it"),

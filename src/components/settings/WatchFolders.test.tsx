@@ -28,6 +28,7 @@ vi.mock("../../stores/toastStore", () => {
 
 import { WatchFolders } from "./WatchFolders";
 import { api } from "../../lib/tauri";
+import { commandError } from "../../test/commandError";
 import { useToastStore } from "../../stores/toastStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useLanguageStore } from "../../lib/i18n";
@@ -201,8 +202,8 @@ describe("WatchFolders", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("error", expect.stringMatching(/Preview failed.*walk failed/)));
     fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Import failed: vault locked"));
-    // A bare-string refusal reads the same, and an Error never shows "Error:" (#182).
-    vi.mocked(api.scanWatchFolders).mockRejectedValue("vault locked by a backup");
+    // A command's refusal reads the same, and an Error never shows "Error:" (#182).
+    vi.mocked(api.scanWatchFolders).mockRejectedValue(commandError(null, "vault locked by a backup"));
     fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Import failed: vault locked by a backup"));
     expect(toast).not.toHaveBeenCalledWith("error", expect.stringMatching(/Error:/));

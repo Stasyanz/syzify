@@ -60,6 +60,7 @@ import { useToastStore } from "../stores/toastStore";
 import { useThemeStore } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 import { useFeedbackStore } from "../stores/feedbackStore";
 import { useBusyStore } from "../stores/busyStore";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -619,7 +620,7 @@ describe("SettingsPage tabs", () => {
   it("says when a backup failed", async () => {
     vi.mocked(listen).mockResolvedValue(() => {});
     vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
-    vi.mocked(api.backupVault).mockRejectedValue("disk full");
+    vi.mocked(api.backupVault).mockRejectedValue(commandError(null, "disk full"));
     renderAt("/settings?tab=vault");
     fireEvent.click(screen.getByRole("button", { name: "Backup" }));
     await waitFor(() =>
@@ -630,6 +631,12 @@ describe("SettingsPage tabs", () => {
   it.each([
     ["a string", "cache dir is busy", "en", "Could not clear the tile cache: cache dir is busy"],
     ["an Error", new Error("cache dir is busy"), "ru", "Не удалось очистить кэш карты: cache dir is busy"],
+    [
+      "a command error",
+      commandError("tiles.clearFailed", "Failed to clear cache: busy", { detail: "busy" }),
+      "ru",
+      "Не удалось очистить кэш карты: Не удалось очистить кэш: busy",
+    ],
   ] as const)("says why clearing the tile cache failed with %s, and unlocks", async (_kind, rejection, lang, text) => {
     act(() => useLanguageStore.getState().setPref(lang));
     try {
@@ -727,9 +734,16 @@ describe("SettingsPage tabs", () => {
       "Vault restored. Previous vault kept in /v/pre-restore-1. Restarting…",
     ],
     [
-      { restored: true, error: "photos/x.jpg: short read", preserved_at: "/v/pre-restore-1" },
+      {
+        restored: true,
+        error: commandError("restore.extractFailed", "Failed to extract photos/x.jpg: short read", {
+          name: "photos/x.jpg",
+          detail: "short read",
+        }),
+        preserved_at: "/v/pre-restore-1",
+      },
       "warning",
-      "Restore incomplete: photos/x.jpg: short read. Previous vault kept in /v/pre-restore-1. Restarting…",
+      "Restore incomplete: Failed to extract photos/x.jpg: short read. Previous vault kept in /v/pre-restore-1. Restarting…",
     ],
   ] as const)("says how a restore went, then restarts: %j", async (result, level, text) => {
     vi.mocked(open).mockResolvedValue("/tmp/backup.zip");
@@ -840,6 +854,11 @@ describe("SettingsPage tabs", () => {
     await waitFor(() => expect(screen.getByText(/Wrong password or error/)).toBeTruthy());
     // The Vault tab is still open: the dialog shows it, no toast.
     expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
+    // The backend's own "wrong password" says so alone (#236).
+    vi.mocked(api.disableEncryption).mockRejectedValue(commandError("vault.wrongPassword", "Wrong password"));
+    fireEvent.click(screen.getByRole("button", { name: "Disable Encryption" }));
+    await waitFor(() => expect(screen.getByText("Wrong password")).toBeTruthy());
+    expect(screen.queryByText(/Wrong password or error/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Current password")).toBeNull();
   });

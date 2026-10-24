@@ -9,6 +9,7 @@
 
 use serde::Deserialize;
 
+use crate::error::CommandError;
 use crate::models::update::UpdateCheck;
 
 const LATEST_RELEASE_API: &str =
@@ -58,30 +59,33 @@ pub fn evaluate(current: &str, latest: &LatestRelease) -> UpdateCheck {
     }
 }
 
-fn fetch_latest() -> Result<LatestRelease, String> {
+/// The latest release from `url` (the GitHub API; a loopback server in the
+/// tests). What the user can act on is coded (#236): no network, no release
+/// yet, GitHub refusing; a client that cannot be built or data that does not
+/// parse stay uncoded.
+fn fetch_latest(url: &str) -> Result<LatestRelease, CommandError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent("Syzify/1.0")
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
-    let resp = client
-        .get(LATEST_RELEASE_API)
-        .send()
-        .map_err(|e| format!("Update check failed: {}", e))?;
+    let resp = client.get(url).send().map_err(|e| {
+        CommandError::coded("updates.checkFailed", format!("Update check failed: {}", e)).param("detail", e.to_string())
+    })?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err("No releases published yet".into());
+        return Err(CommandError::coded("updates.noReleases", "No releases published yet"));
     }
     if !resp.status().is_success() {
-        return Err(format!("GitHub returned status {}", resp.status()));
+        return Err(CommandError::coded("updates.badStatus", format!("GitHub returned status {}", resp.status()))
+            .param("status", resp.status().to_string()));
     }
-    resp.json()
-        .map_err(|e| format!("Unexpected release data: {}", e))
+    Ok(resp.json().map_err(|e| format!("Unexpected release data: {}", e))?)
 }
 
 /// Blocking check: fetch the latest release and compare against the build's
 /// own version. Runs inside `spawn_blocking` from the command.
-pub fn check() -> Result<UpdateCheck, String> {
-    let latest = fetch_latest()?;
+pub fn check() -> Result<UpdateCheck, CommandError> {
+    let latest = fetch_latest(LATEST_RELEASE_API)?;
     Ok(evaluate(env!("CARGO_PKG_VERSION"), &latest))
 }
 
@@ -158,5 +162,37 @@ mod tests {
         let r = evaluate("0.1.1", &bare);
         assert!(!r.update_available);
         assert_eq!(r.release_url, "https://github.com/Stasyanz/syzify/releases");
+    }
+
+    /// What GitHub answers is the user's to read in their language (#236):
+    /// no release yet, a refusal by status, no network; data that does not
+    /// parse stays the library's words.
+    #[test]
+    fn fetch_latest_says_why_in_coded_words() {
+        use crate::plugins::net::test_server::{Reply, Server};
+        let server = Server::start(|r| match r.path.as_str() {
+            "/missing" => Reply::ok("").status(404),
+            "/down" => Reply::ok("").status(503),
+            "/junk" => Reply::ok("not json"),
+            _ => Reply::ok(r#"{"tag_name":"v9.9.9","html_url":""}"#),
+        });
+        assert_eq!(fetch_latest(&server.url("/latest")).unwrap().tag_name, "v9.9.9");
+        assert_eq!(
+            fetch_latest(&server.url("/missing")).unwrap_err(),
+            CommandError::coded("updates.noReleases", "No releases published yet")
+        );
+        let e = fetch_latest(&server.url("/down")).unwrap_err();
+        assert_eq!(e.code, Some("updates.badStatus"));
+        assert_eq!(e.params["status"].as_str(), Some("503 Service Unavailable"));
+        assert_eq!(e.message, "GitHub returned status 503 Service Unavailable");
+        let e = fetch_latest(&server.url("/junk")).unwrap_err();
+        assert_eq!(e.code, None);
+        assert!(e.message.starts_with("Unexpected release data"), "{e}");
+
+        // A port nothing listens on: no network.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let e = fetch_latest(&format!("http://127.0.0.1:{port}/latest")).unwrap_err();
+        assert_eq!(e.code, Some("updates.checkFailed"));
+        assert_eq!(e.message, format!("Update check failed: {}", e.params["detail"].as_str().unwrap()));
     }
 }

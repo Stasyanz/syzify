@@ -22,6 +22,7 @@ import { RouteMap } from "./RouteMap";
 import { useActivityStore } from "../../stores/activityStore";
 import type { TrackPointColumns } from "../../lib/types";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 // Three points ~111 m apart along a meridian; a right-click snaps within 50 m.
 const track: TrackPointColumns = {
@@ -179,7 +180,7 @@ describe("RouteMap destination point (#179)", () => {
 
   it("a menu opened on another point carries neither the last refusal nor the last save's close", async () => {
     // A refusal on A, then a menu on B: B's menu is clean.
-    vi.mocked(api.setActivityLocationPoint).mockRejectedValueOnce("invalid coordinates: 55.7, 37.6");
+    vi.mocked(api.setActivityLocationPoint).mockRejectedValueOnce(commandError(null, "invalid coordinates: 55.7, 37.6"));
     const { map } = mount();
     act(() => void map.fire("click", { latlng: L.latLng(55.7, 37.6) }));
     fireEvent.click(menuButton()!);

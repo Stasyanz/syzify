@@ -6,6 +6,8 @@ use zip::write::FileOptions;
 use zip::ZipArchive;
 use zip::ZipWriter;
 
+use crate::error::CommandError;
+
 type ZipOptions = FileOptions<'static, ()>;
 
 /// Create a vault backup as a zip archive.
@@ -16,7 +18,7 @@ type ZipOptions = FileOptions<'static, ()>;
 /// This guarantees a partial/interrupted backup never leaves a corrupt file
 /// at `dest_path`.
 #[cfg(test)] // convenience wrapper reading the live vault.db; the app snapshots first
-pub fn create_backup(vault_path: &Path, dest_path: &Path) -> Result<(), String> {
+pub fn create_backup(vault_path: &Path, dest_path: &Path) -> Result<(), CommandError> {
     create_backup_with_progress(vault_path, dest_path, vault_path, &|_, _| {})
 }
 
@@ -36,7 +38,7 @@ pub fn create_backup_with_progress(
     dest_path: &Path,
     db_source: &Path,
     progress: &dyn Fn(u64, u64),
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let tmp_path = part_path(dest_path);
 
     // Ensure no stale .part from a previous failed run.
@@ -98,12 +100,16 @@ fn write_backup(
     db_source: &Path,
     tmp_path: &Path,
     progress: &dyn Fn(u64, u64),
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let total = total_backup_bytes(vault_path, db_source);
     let mut prog = Progress::new(total, progress);
 
-    let zip_file =
-        File::create(tmp_path).map_err(|e| format!("Failed to create backup file: {}", e))?;
+    // The one step a user's choice decides (where the backup goes), coded;
+    // the steps after it fail only on what the system says, as it says it.
+    let zip_file = File::create(tmp_path).map_err(|e| {
+        CommandError::coded("backup.createFailed", format!("Failed to create backup file: {}", e))
+            .param("detail", e.to_string())
+    })?;
     let writer = BufWriter::new(zip_file);
     let mut zip = ZipWriter::new(writer);
     let options: ZipOptions = FileOptions::default()
@@ -252,13 +258,17 @@ fn ensure_backup_size(
     archive_bytes: u64,
     floor: u64,
     max_ratio: u64,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     if total_declared > floor && total_declared / archive_bytes.max(1) > max_ratio {
-        return Err(format!(
-            "Backup archive declares {} MiB of data from a {} MiB file — refusing to restore a suspicious archive",
-            total_declared / (1024 * 1024),
-            archive_bytes / (1024 * 1024),
-        ));
+        let (declared, size) = (total_declared / (1024 * 1024), archive_bytes / (1024 * 1024));
+        return Err(CommandError::coded(
+            "restore.suspiciousArchive",
+            format!(
+                "Backup archive declares {declared} MiB of data from a {size} MiB file — refusing to restore a suspicious archive"
+            ),
+        )
+        .param("declared", declared)
+        .param("size", size));
     }
     Ok(())
 }
@@ -271,7 +281,29 @@ fn ensure_backup_size(
 /// boot an empty one. So every entry name must be extraction-safe, the
 /// declared sizes must not be a zip bomb, AND the archive must actually be a
 /// vault backup (carry vault.db at its root).
-pub fn validate_backup(backup_path: &Path) -> Result<(), String> {
+/// The backup file cannot be opened: the OS's words as the detail.
+fn open_failed(e: std::io::Error) -> CommandError {
+    CommandError::coded("restore.openFailed", format!("Failed to open backup file: {e}")).param("detail", e.to_string())
+}
+
+/// The file is no zip, or a damaged one: the zip reader's words.
+fn invalid_archive(e: zip::result::ZipError) -> CommandError {
+    CommandError::coded("restore.invalidArchive", format!("Invalid backup archive: {e}")).param("detail", e.to_string())
+}
+
+/// An entry that would land outside the vault (zip-slip).
+fn unsafe_path(name: &str) -> CommandError {
+    CommandError::coded("restore.unsafePath", format!("Unsafe path in backup archive: {name}")).param("name", name)
+}
+
+/// Writing an entry out failed: the OS's words as the detail.
+fn extract_failed(name: &str, e: std::io::Error) -> CommandError {
+    CommandError::coded("restore.extractFailed", format!("Failed to extract {name}: {e}"))
+        .param("name", name)
+        .param("detail", e.to_string())
+}
+
+pub fn validate_backup(backup_path: &Path) -> Result<(), CommandError> {
     validate_backup_with_limits(backup_path, RATIO_CHECK_FLOOR_BYTES, MAX_DECLARED_TOTAL_RATIO)
 }
 
@@ -279,15 +311,13 @@ fn validate_backup_with_limits(
     backup_path: &Path,
     floor: u64,
     max_ratio: u64,
-) -> Result<(), String> {
-    let zip_file =
-        File::open(backup_path).map_err(|e| format!("Failed to open backup file: {}", e))?;
+) -> Result<(), CommandError> {
+    let zip_file = File::open(backup_path).map_err(open_failed)?;
     let archive_bytes = zip_file
         .metadata()
         .map_err(|e| format!("Failed to read backup file: {}", e))?
         .len();
-    let mut archive =
-        ZipArchive::new(zip_file).map_err(|e| format!("Invalid backup archive: {}", e))?;
+    let mut archive = ZipArchive::new(zip_file).map_err(invalid_archive)?;
 
     let mut has_db = false;
     let mut total_declared: u64 = 0;
@@ -296,16 +326,16 @@ fn validate_backup_with_limits(
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {}", e))?;
         let Some(rel) = entry.enclosed_name() else {
-            return Err(format!("Unsafe path in backup archive: {}", entry.name()));
+            return Err(unsafe_path(entry.name()));
         };
         has_db = has_db || rel == Path::new("vault.db");
         total_declared = total_declared.saturating_add(entry.size());
     }
     if !has_db {
-        return Err(
-            "This zip is not a Syzify vault backup (no vault.db inside) — nothing was changed"
-                .to_string(),
-        );
+        return Err(CommandError::coded(
+            "restore.notABackup",
+            "This zip is not a Syzify vault backup (no vault.db inside) — nothing was changed",
+        ));
     }
     ensure_backup_size(total_declared, archive_bytes, floor, max_ratio)
 }
@@ -341,7 +371,7 @@ const QUARANTINE_ENTRIES: [&str; 9] = [
 /// Returns the quarantine dir, or None when there was nothing to move.
 /// On a mid-move failure every completed rename is undone (best-effort) so the
 /// caller restarts onto the original, intact vault.
-pub fn quarantine_current_vault(vault_path: &Path) -> Result<Option<PathBuf>, String> {
+pub fn quarantine_current_vault(vault_path: &Path) -> Result<Option<PathBuf>, CommandError> {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let mut quarantine = vault_path.join(format!("{}{}", PRE_RESTORE_PREFIX, stamp));
     // Two restores within one second: suffix instead of mixing into the first.
@@ -359,8 +389,7 @@ pub fn quarantine_current_vault(vault_path: &Path) -> Result<Option<PathBuf>, St
             continue;
         }
         if moved.is_empty() {
-            fs::create_dir_all(&quarantine)
-                .map_err(|e| format!("Failed to create pre-restore dir: {}", e))?;
+            fs::create_dir_all(&quarantine).map_err(pre_restore_dir_failed)?;
         }
         if let Err(e) = fs::rename(&src, quarantine.join(name)) {
             // Roll the completed renames back so the vault is whole again.
@@ -368,7 +397,12 @@ pub fn quarantine_current_vault(vault_path: &Path) -> Result<Option<PathBuf>, St
                 let _ = fs::rename(quarantine.join(done), vault_path.join(done));
             }
             let _ = fs::remove_dir(&quarantine);
-            return Err(format!("Failed to move {} aside for restore: {}", name, e));
+            return Err(CommandError::coded(
+                "restore.moveAsideFailed",
+                format!("Failed to move {} aside for restore: {}", name, e),
+            )
+            .param("name", name)
+            .param("detail", e.to_string()));
         }
         moved.push(name);
     }
@@ -379,51 +413,48 @@ pub fn quarantine_current_vault(vault_path: &Path) -> Result<Option<PathBuf>, St
     Ok(Some(quarantine))
 }
 
+/// The quarantine folder cannot be made: the OS's words as the detail.
+fn pre_restore_dir_failed(e: std::io::Error) -> CommandError {
+    CommandError::coded("restore.preRestoreDirFailed", format!("Failed to create pre-restore dir: {e}"))
+        .param("detail", e.to_string())
+}
+
 /// Restore a vault from a backup zip archive by extracting into `vault_path`.
 ///
 /// Callers MUST move the current vault contents aside first (see
 /// [`quarantine_current_vault`]) — extracting over live data would leave a
 /// stale `vault.lock`/`.enc` mix that breaks the encryption invariants.
-pub fn restore_backup(vault_path: &Path, backup_path: &Path) -> Result<(), String> {
-    let zip_file =
-        File::open(backup_path).map_err(|e| format!("Failed to open backup file: {}", e))?;
-    let mut archive =
-        ZipArchive::new(zip_file).map_err(|e| format!("Invalid backup archive: {}", e))?;
+pub fn restore_backup(vault_path: &Path, backup_path: &Path) -> Result<(), CommandError> {
+    let zip_file = File::open(backup_path).map_err(open_failed)?;
+    let mut archive = ZipArchive::new(zip_file).map_err(invalid_archive)?;
 
     for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+        let mut entry = archive.by_index(i).map_err(invalid_archive)?;
 
         let entry_name = entry.name().to_string();
 
         // Security (zip-slip): enclosed_name() rejects absolute paths and any
         // `..` traversal. A plain `contains("..")` check is insufficient because
         // Path::join with an absolute entry silently discards the vault base.
-        let rel = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup archive: {}", entry_name))?;
-
-        let out_path = vault_path.join(&rel);
         // Defense in depth: the resolved path must stay inside the vault.
-        if !out_path.starts_with(vault_path) {
-            return Err(format!("Unsafe path in backup archive: {}", entry_name));
-        }
+        let out_path = entry
+            .enclosed_name()
+            .map(|rel| vault_path.join(rel))
+            .filter(|p| p.starts_with(vault_path))
+            .ok_or_else(|| unsafe_path(&entry_name))?;
+        let failed = |e| extract_failed(&entry_name, e);
 
         if entry.is_dir() {
-            fs::create_dir_all(&out_path)
-                .map_err(|e| format!("Failed to create dir {}: {}", entry_name, e))?;
+            fs::create_dir_all(&out_path).map_err(failed)?;
         } else {
             if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+                fs::create_dir_all(parent).map_err(failed)?;
             }
             // Stream straight to disk: buffering the whole entry in memory
             // would let a forged central directory (or just a multi-GB
             // vault.db) exhaust RAM — the recurring `read_to_end`-on-zip bug.
             let declared = entry.size();
-            let mut out = File::create(&out_path)
-                .map_err(|e| format!("Failed to create {}: {}", entry_name, e))?;
+            let mut out = File::create(&out_path).map_err(failed)?;
             copy_entry_capped(&mut entry, &mut out, declared, &entry_name)?;
         }
     }
@@ -441,14 +472,15 @@ fn copy_entry_capped(
     out: &mut impl Write,
     declared: u64,
     entry_name: &str,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let written = std::io::copy(&mut entry.take(declared.saturating_add(1)), out)
-        .map_err(|e| format!("Failed to write {}: {}", entry_name, e))?;
+        .map_err(|e| extract_failed(entry_name, e))?;
     if written > declared {
-        return Err(format!(
-            "Zip entry {} produced more data than its header declares — refusing a forged archive",
-            entry_name
-        ));
+        return Err(CommandError::coded(
+            "restore.forgedEntry",
+            format!("Zip entry {entry_name} produced more data than its header declares — refusing a forged archive"),
+        )
+        .param("name", entry_name));
     }
     Ok(())
 }
@@ -778,12 +810,77 @@ mod tests {
         }
 
         let result = restore_backup(&vault, &backup);
-        assert!(result.is_err(), "restore must reject unsafe paths");
+        assert_eq!(result.unwrap_err(), unsafe_path(&evil_path), "restore must reject unsafe paths");
         assert!(
             !escape_target.exists(),
             "file must NOT be written outside the vault"
         );
 
+    }
+
+    /// What stops an extraction is said in coded words (#236): a backup that
+    /// cannot be opened or read, a vault that cannot be written into.
+    #[test]
+    fn restore_says_why_in_coded_words() {
+        use std::io::Write as _;
+        let tmp = crate::test_support::ScratchDir::new("restore_coded");
+        let vault = tmp.join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        assert_eq!(restore_backup(&vault, &tmp.join("missing.zip")).unwrap_err().code, Some("restore.openFailed"));
+        fs::write(tmp.join("junk.zip"), b"not a zip").unwrap();
+        assert_eq!(restore_backup(&vault, &tmp.join("junk.zip")).unwrap_err().code, Some("restore.invalidArchive"));
+
+        let backup = tmp.join("ok.zip");
+        {
+            let mut zip = ZipWriter::new(File::create(&backup).unwrap());
+            zip.add_directory("photos/", ZipOptions::default()).unwrap();
+            zip.start_file("raw/a.fit", ZipOptions::default()).unwrap();
+            zip.write_all(b"fit").unwrap();
+            zip.finish().unwrap();
+        }
+        // A file where the vault's raw/ folder should be.
+        fs::write(vault.join("raw"), b"x").unwrap();
+        let err = restore_backup(&vault, &backup).unwrap_err();
+        assert_eq!((err.code, err.params["name"].as_str()), (Some("restore.extractFailed"), Some("raw/a.fit")));
+        assert!(vault.join("photos").is_dir(), "the folder entry came out first");
+    }
+
+    /// A quarantine that cannot be made, or an entry that cannot be moved
+    /// aside, is refused in coded words — and the vault stays whole.
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_says_why_in_coded_words() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = crate::test_support::ScratchDir::new("quarantine_coded");
+        let vault = tmp.join("vault");
+        fs::create_dir_all(vault.join("raw")).unwrap();
+        fs::write(vault.join("vault.db"), b"db").unwrap();
+        // A folder can only move to another parent when it is writable itself.
+        fs::set_permissions(vault.join("raw"), fs::Permissions::from_mode(0o555)).unwrap();
+        let refused = quarantine_current_vault(&vault);
+        fs::set_permissions(vault.join("raw"), fs::Permissions::from_mode(0o755)).unwrap();
+        // root moves anything: then there is nothing to refuse.
+        let Err(err) = refused else { return };
+        assert_eq!((err.code, err.params["name"].as_str()), (Some("restore.moveAsideFailed"), Some("raw")));
+        assert!(vault.join("vault.db").is_file(), "the moved entry came back");
+        assert!(list_pre_restore_dirs(&vault).is_empty());
+    }
+
+    /// A vault folder that takes no quarantine folder: nothing moves.
+    #[cfg(unix)]
+    #[test]
+    fn a_quarantine_that_cannot_be_made_is_refused_in_coded_words() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = crate::test_support::ScratchDir::new("quarantine_dir");
+        let vault = tmp.join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("vault.db"), b"db").unwrap();
+        fs::set_permissions(&vault, fs::Permissions::from_mode(0o555)).unwrap();
+        let refused = quarantine_current_vault(&vault);
+        fs::set_permissions(&vault, fs::Permissions::from_mode(0o755)).unwrap();
+        let Err(err) = refused else { return };
+        assert_eq!(err.code, Some("restore.preRestoreDirFailed"));
+        assert!(vault.join("vault.db").is_file());
     }
 
     #[test]
@@ -796,7 +893,9 @@ mod tests {
         let dest = tmp.join("missing_dir").join("backup.zip");
         let result = create_backup(&vault, &dest);
 
-        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert_eq!(e.code, Some("backup.createFailed"));
+        assert_eq!(e.message, format!("Failed to create backup file: {}", e.params["detail"].as_str().unwrap()));
         assert!(!dest.exists(), "failed backup must not leave a dest file");
         assert!(
             !part_path(&dest).exists(),
@@ -819,8 +918,12 @@ mod tests {
         fs::write(&bad, b"not a zip at all").unwrap();
 
         assert!(validate_backup(&good).is_ok());
-        assert!(validate_backup(&bad).is_err());
-        assert!(validate_backup(&tmp.join("missing.zip")).is_err());
+        let e = validate_backup(&bad).unwrap_err();
+        assert_eq!(e.code, Some("restore.invalidArchive"));
+        assert_eq!(e.message, format!("Invalid backup archive: {}", e.params["detail"].as_str().unwrap()));
+        let e = validate_backup(&tmp.join("missing.zip")).unwrap_err();
+        assert_eq!(e.code, Some("restore.openFailed"));
+        assert_eq!(e.message, format!("Failed to open backup file: {}", e.params["detail"].as_str().unwrap()));
 
     }
 
@@ -845,7 +948,8 @@ mod tests {
             zip.finish().unwrap();
         }
         let err = validate_backup(&not_a_vault).unwrap_err();
-        assert!(err.contains("not a Syzify vault backup"), "got: {}", err);
+        assert_eq!(err.code, Some("restore.notABackup"));
+        assert!(err.message.contains("not a Syzify vault backup"), "got: {}", err);
 
         // vault.db present but alongside an absolute-path entry: pre-flight
         // must catch it (extraction-time catching is only defense in depth).
@@ -859,7 +963,11 @@ mod tests {
             zip.finish().unwrap();
         }
         let err = validate_backup(&slippery).unwrap_err();
-        assert!(err.contains("Unsafe path"), "got: {}", err);
+        let name = tmp.join("pwned.txt").to_str().unwrap().to_string();
+        assert_eq!(
+            err,
+            CommandError::coded("restore.unsafePath", format!("Unsafe path in backup archive: {name}")).param("name", name)
+        );
 
     }
 
@@ -877,6 +985,17 @@ mod tests {
         // empty file).
         assert!(ensure_backup_size(2048, 10, 1024, 100).is_err());
         assert!(ensure_backup_size(2048, 0, 1024, 100).is_err());
+        // Its numbers are named for the translation, in MiB as the English says.
+        let mib = 1024 * 1024;
+        assert_eq!(
+            ensure_backup_size(300 * mib, 2 * mib, 1024, 100).unwrap_err(),
+            CommandError::coded(
+                "restore.suspiciousArchive",
+                "Backup archive declares 300 MiB of data from a 2 MiB file — refusing to restore a suspicious archive",
+            )
+            .param("declared", 300)
+            .param("size", 2)
+        );
     }
 
     /// End-to-end through the pre-flight: an archive that carries vault.db
@@ -907,7 +1026,7 @@ mod tests {
 
         let err =
             validate_backup_with_limits(&bomb, 1024 * 1024, MAX_DECLARED_TOTAL_RATIO).unwrap_err();
-        assert!(err.contains("refusing to restore"), "got: {}", err);
+        assert!(err.message.contains("refusing to restore"), "got: {}", err);
         // The same archive passes with the real floor (4 MiB is harmless).
         assert!(validate_backup(&bomb).is_ok());
 
@@ -926,7 +1045,32 @@ mod tests {
 
         let mut out = Vec::new();
         let err = copy_entry_capped(&mut &data[..], &mut out, 99, "forged.bin").unwrap_err();
-        assert!(err.contains("forged"), "got: {}", err);
+        assert_eq!(
+            err,
+            CommandError::coded(
+                "restore.forgedEntry",
+                "Zip entry forged.bin produced more data than its header declares — refusing a forged archive"
+            )
+            .param("name", "forged.bin")
+        );
+
+        // A write that fails is the OS's words, wrapped (#236).
+        struct Full;
+        impl Write for Full {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        assert_eq!(
+            copy_entry_capped(&mut &data[..], &mut Full, 100, "x.bin").unwrap_err(),
+            CommandError::coded("restore.extractFailed", "Failed to extract x.bin: disk full")
+                .param("name", "x.bin")
+                .param("detail", "disk full")
+        );
+        assert!(Full.flush().is_ok());
     }
 
     /// list_pre_restore_dirs sees exactly the quarantine dirs — not files

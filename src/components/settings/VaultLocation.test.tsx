@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../../lib/tauri";
+import { commandError } from "../../test/commandError";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
 import { useBusyStore } from "../../stores/busyStore";
@@ -142,7 +143,9 @@ describe("<VaultLocation>", () => {
 
   it("surfaces a backend refusal as an error toast and re-enables the buttons", async () => {
     vi.mocked(confirmDialog).mockResolvedValue(true);
-    mocked.switchVault.mockRejectedValue('No vault found in "/Volumes/Data/Syzify"');
+    mocked.switchVault.mockRejectedValue(
+      commandError("vault.noVaultFound", 'No vault found in "/Volumes/Data/Syzify"', { path: "/Volumes/Data/Syzify" }),
+    );
     renderLocation();
     await screen.findByText(CURRENT);
 

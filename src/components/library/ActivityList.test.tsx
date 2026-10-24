@@ -8,6 +8,7 @@ import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { ActivityList } from "./ActivityList";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -131,6 +132,7 @@ describe("ActivityList merge mode (Ctrl+M)", () => {
 
 describe("ActivityList merge refusal (#182)", () => {
   for (const [kind, rejection] of [
+    ["an uncoded command error", commandError(null, "run can't be a multisport leg")],
     ["a string", "run can't be a multisport leg"],
     ["an Error", new Error("run can't be a multisport leg")],
   ] as const) {

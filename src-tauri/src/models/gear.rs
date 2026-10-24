@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::CommandError;
 use crate::models::activity::SportType;
 
 /// What an item is. Decides its icon and which sports offer it by
@@ -136,9 +137,10 @@ pub const MAX_GEAR_NAME_CHARS: usize = 60;
 pub const MAX_GEAR_FIELD_CHARS: usize = 60;
 pub const MAX_GEAR_NOTES_CHARS: usize = 2000;
 
-fn capped(label: &str, value: Option<String>, max: usize) -> Result<Option<String>, String> {
+/// The value, or `Err(max)` when it is longer — the caller names the field.
+fn capped(value: Option<String>, max: usize) -> Result<Option<String>, usize> {
     match value {
-        Some(v) if v.chars().count() > max => Err(format!("{label} is longer than {max} characters")),
+        Some(v) if v.chars().count() > max => Err(max),
         other => Ok(other),
     }
 }
@@ -146,26 +148,30 @@ fn capped(label: &str, value: Option<String>, max: usize) -> Result<Option<Strin
 impl GearInput {
     /// The input with its text trimmed and blanks turned into None, or why
     /// it cannot be saved. Pure, so the command stays a one-liner.
-    pub fn normalized(&self) -> Result<GearInput, String> {
+    pub fn normalized(&self) -> Result<GearInput, CommandError> {
         let name = self.name.trim();
         if name.is_empty() {
-            return Err("Name is required".into());
+            return Err(CommandError::coded("gear.nameRequired", "Name is required"));
         }
         if name.chars().count() > MAX_GEAR_NAME_CHARS {
-            return Err(format!("Name is longer than {MAX_GEAR_NAME_CHARS} characters"));
+            return Err(CommandError::coded(
+                "gear.nameTooLong",
+                format!("Name is longer than {MAX_GEAR_NAME_CHARS} characters"),
+            )
+            .param("count", MAX_GEAR_NAME_CHARS));
         }
         if !self.initial_distance_m.is_finite() || self.initial_distance_m < 0.0 {
-            return Err("Initial distance must be zero or more".into());
+            return Err(CommandError::coded("gear.initialDistance", "Initial distance must be zero or more"));
         }
         if let Some(limit) = self.distance_limit_m {
             if !limit.is_finite() || limit <= 0.0 {
-                return Err("Distance limit must be more than zero".into());
+                return Err(CommandError::coded("gear.distanceLimit", "Distance limit must be more than zero"));
             }
         }
         let purchased_at = match blank_to_none(&self.purchased_at) {
             Some(d) => {
                 chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
-                    .map_err(|_| "Purchase date must be YYYY-MM-DD".to_string())?;
+                    .map_err(|_| CommandError::coded("gear.purchaseDate", "Purchase date must be YYYY-MM-DD"))?;
                 Some(d)
             }
             None => None,
@@ -179,7 +185,7 @@ impl GearInput {
                 continue;
             }
             if SportType::from_str(s).as_str() != s {
-                return Err(format!("Unknown sport: {s}"));
+                return Err(CommandError::coded("gear.unknownSport", format!("Unknown sport: {s}")).param("sport", s));
             }
             default_for.push(s.to_string());
         }
@@ -192,7 +198,11 @@ impl GearInput {
                 continue;
             }
             if value.chars().count() > MAX_GEAR_FIELD_CHARS {
-                return Err(format!("A rule value is longer than {MAX_GEAR_FIELD_CHARS} characters"));
+                return Err(CommandError::coded(
+                    "gear.ruleTooLong",
+                    format!("A rule value is longer than {MAX_GEAR_FIELD_CHARS} characters"),
+                )
+                .param("count", MAX_GEAR_FIELD_CHARS));
             }
             // Case folds like the table's NOCASE: "Road" and "ROAD" are one rule.
             let dup = rules.iter().any(|x| x.kind == r.kind && x.value.eq_ignore_ascii_case(value));
@@ -203,12 +213,18 @@ impl GearInput {
         Ok(GearInput {
             kind: self.kind,
             name: name.to_string(),
-            brand: capped("Brand", blank_to_none(&self.brand), MAX_GEAR_FIELD_CHARS)?,
-            model: capped("Model", blank_to_none(&self.model), MAX_GEAR_FIELD_CHARS)?,
+            brand: capped(blank_to_none(&self.brand), MAX_GEAR_FIELD_CHARS).map_err(|max| {
+                CommandError::coded("gear.brandTooLong", format!("Brand is longer than {max} characters")).param("count", max)
+            })?,
+            model: capped(blank_to_none(&self.model), MAX_GEAR_FIELD_CHARS).map_err(|max| {
+                CommandError::coded("gear.modelTooLong", format!("Model is longer than {max} characters")).param("count", max)
+            })?,
             purchased_at,
             initial_distance_m: self.initial_distance_m,
             distance_limit_m: self.distance_limit_m,
-            notes: capped("Notes", blank_to_none(&self.notes), MAX_GEAR_NOTES_CHARS)?,
+            notes: capped(blank_to_none(&self.notes), MAX_GEAR_NOTES_CHARS).map_err(|max| {
+                CommandError::coded("gear.notesTooLong", format!("Notes is longer than {max} characters")).param("count", max)
+            })?,
             default_for,
             rules,
         })
@@ -298,24 +314,33 @@ mod tests {
 
     #[test]
     fn refuses_what_cannot_be_saved() {
-        let mut i = input();
-        i.name = "   ".into();
-        assert_eq!(i.normalized().unwrap_err(), "Name is required");
+        // Each refusal carries its code and, for the frontend's fallback, the English words.
+        let refused = |change: &dyn Fn(&mut GearInput)| {
+            let mut i = input();
+            change(&mut i);
+            let e = i.normalized().unwrap_err();
+            (e.code.unwrap(), e.message)
+        };
+        let max = |n: usize| serde_json::Value::from(n);
+        assert_eq!(refused(&|i| i.name = "   ".into()), ("gear.nameRequired", "Name is required".into()));
         let mut i = input();
         i.name = "x".repeat(MAX_GEAR_NAME_CHARS + 1);
-        assert!(i.normalized().unwrap_err().contains("longer"));
-        let mut i = input();
-        i.initial_distance_m = -1.0;
-        assert!(i.normalized().unwrap_err().contains("Initial distance"));
-        let mut i = input();
-        i.initial_distance_m = f64::NAN;
-        assert!(i.normalized().unwrap_err().contains("Initial distance"));
-        let mut i = input();
-        i.distance_limit_m = Some(0.0);
-        assert!(i.normalized().unwrap_err().contains("limit"));
-        let mut i = input();
-        i.purchased_at = Some("01.03.2025".into());
-        assert!(i.normalized().unwrap_err().contains("YYYY-MM-DD"));
+        let e = i.normalized().unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (Some("gear.nameTooLong"), "Name is longer than 60 characters"));
+        assert_eq!(e.params.get("count"), Some(&max(MAX_GEAR_NAME_CHARS)));
+        assert_eq!(
+            refused(&|i| i.initial_distance_m = -1.0),
+            ("gear.initialDistance", "Initial distance must be zero or more".into())
+        );
+        assert_eq!(refused(&|i| i.initial_distance_m = f64::NAN).0, "gear.initialDistance");
+        assert_eq!(
+            refused(&|i| i.distance_limit_m = Some(0.0)),
+            ("gear.distanceLimit", "Distance limit must be more than zero".into())
+        );
+        assert_eq!(
+            refused(&|i| i.purchased_at = Some("01.03.2025".into())),
+            ("gear.purchaseDate", "Purchase date must be YYYY-MM-DD".into())
+        );
         // A blank date is simply none.
         let mut i = input();
         i.purchased_at = Some("  ".into());
@@ -323,7 +348,9 @@ mod tests {
         // Only the app's own sport ids: no aliases, no strays; "other" is one.
         let mut i = input();
         i.default_for = vec!["cycling".into()];
-        assert_eq!(i.normalized().unwrap_err(), "Unknown sport: cycling");
+        let e = i.normalized().unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (Some("gear.unknownSport"), "Unknown sport: cycling"));
+        assert_eq!(e.params.get("sport"), Some(&serde_json::Value::from("cycling")));
         let mut i = input();
         i.default_for = vec!["Ride".into()];
         assert!(i.normalized().is_err());
@@ -331,21 +358,28 @@ mod tests {
         i.default_for = vec!["other".into(), "swim".into()];
         assert_eq!(i.normalized().unwrap().default_for, vec!["other", "swim"]);
         // Brand, model and notes are capped like the name.
-        let mut i = input();
-        i.brand = Some("b".repeat(MAX_GEAR_FIELD_CHARS + 1));
-        assert!(i.normalized().unwrap_err().starts_with("Brand is longer"));
-        let mut i = input();
-        i.model = Some("m".repeat(MAX_GEAR_FIELD_CHARS + 1));
-        assert!(i.normalized().unwrap_err().starts_with("Model is longer"));
+        assert_eq!(
+            refused(&|i| i.brand = Some("b".repeat(MAX_GEAR_FIELD_CHARS + 1))),
+            ("gear.brandTooLong", "Brand is longer than 60 characters".into())
+        );
+        assert_eq!(
+            refused(&|i| i.model = Some("m".repeat(MAX_GEAR_FIELD_CHARS + 1))),
+            ("gear.modelTooLong", "Model is longer than 60 characters".into())
+        );
         let mut i = input();
         i.notes = Some("n".repeat(MAX_GEAR_NOTES_CHARS + 1));
-        assert!(i.normalized().unwrap_err().starts_with("Notes is longer"));
+        let e = i.normalized().unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (Some("gear.notesTooLong"), "Notes is longer than 2000 characters"));
+        assert_eq!(e.params.get("count"), Some(&max(MAX_GEAR_NOTES_CHARS)));
         let mut i = input();
         i.notes = Some("n".repeat(MAX_GEAR_NOTES_CHARS));
         assert!(i.normalized().is_ok());
         let mut i = input();
         i.rules = vec![GearRule { kind: GearRuleKind::ProfileName, value: "p".repeat(MAX_GEAR_FIELD_CHARS + 1) }];
-        assert!(i.normalized().unwrap_err().contains("rule value"));
+        assert_eq!(
+            i.normalized().unwrap_err(),
+            CommandError::coded("gear.ruleTooLong", "A rule value is longer than 60 characters").param("count", 60)
+        );
     }
 
     #[test]

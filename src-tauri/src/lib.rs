@@ -3,6 +3,7 @@ pub mod crypto;
 // Public like `parser`/`crypto`: dev examples (one-off vault maintenance)
 // call the real db layer instead of duplicating its logic.
 pub mod db;
+pub mod error;
 mod export;
 mod geocoding;
 mod import;

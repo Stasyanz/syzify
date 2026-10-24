@@ -72,6 +72,20 @@ pub fn app_state_on(conn: rusqlite::Connection) -> crate::state::AppState {
     }
 }
 
+/// A mock app that manages an unlocked plaintext-vault state on a fresh
+/// migrated database with its vault at `vault`, for a test that calls a
+/// command through its `State` argument: `list_gear(app.state())`.
+pub fn mock_app_at(vault: &Path) -> tauri::App<tauri::test::MockRuntime> {
+    use tauri::Manager;
+    let mut state = app_state_on(crate::db::test_db());
+    state.vault_path = vault.to_path_buf();
+    let app = tauri::test::mock_builder()
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("mock app");
+    app.manage(state);
+    app
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

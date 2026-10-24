@@ -39,6 +39,7 @@ import {
 import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
+import { commandError } from "../../test/commandError";
 
 const road: GearItem = {
   id: "g-road",
@@ -361,8 +362,10 @@ describe("Garage", () => {
     expect(confirmDialog).not.toHaveBeenCalled();
     await waitFor(() => expect(api.listGear).toHaveBeenCalledTimes(3));
     // A refusal is said, not swallowed — and a Tauri command refuses with
-    // a bare string, not an Error (#174).
-    vi.mocked(api.setGearRetired).mockRejectedValueOnce("Gear not found: g-road");
+    // a CommandError, not an Error (#174, #236).
+    vi.mocked(api.setGearRetired).mockRejectedValueOnce(
+      commandError("gear.notFound", "Gear not found: g-road", { id: "g-road" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Retire Road" }));
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not update gear: Gear not found: g-road"),
@@ -639,5 +642,25 @@ describe("Garage in Russian", () => {
     fireEvent.mouseDown(document.body);
     fireEvent.click(within(dialog).getByLabelText("Вид"));
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Велосипед", "Обувь", "Другое"]);
+  });
+
+  it("says the backend's coded refusal in Russian inside the toast (#236)", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([road]);
+    // What a CommandError rejects with: the code, its params, the English.
+    vi.mocked(api.createGear).mockRejectedValue(
+      commandError("gear.nameTooLong", "Name is longer than 60 characters", { count: 60 }),
+    );
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Добавить снаряжение" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Название"), { target: { value: "x" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith(
+        "error",
+        "Не удалось сохранить снаряжение: Название длиннее 60 символов",
+      ),
+    );
   });
 });

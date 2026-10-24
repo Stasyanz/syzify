@@ -3,7 +3,10 @@ use std::path::Path;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::activities::activity_not_found;
+use crate::commands::vault_busy;
 use crate::db;
+use crate::error::CommandError;
 use crate::export::{gpx_writer, vault_backup};
 use crate::state::AppState;
 
@@ -15,8 +18,9 @@ pub struct RestoreOutcome {
     /// placeholder; only a restart recovers).
     pub restored: bool,
     /// Set when extraction failed after the point of no return — the vault may
-    /// be partially restored; the frontend shows this before restarting.
-    pub error: Option<String>,
+    /// be partially restored; the frontend shows this (through `errorText`,
+    /// coded like a rejection, #236) before restarting.
+    pub error: Option<CommandError>,
     /// Where the pre-restore vault contents were moved (None for an empty
     /// vault). The frontend surfaces this so the user knows the replaced data
     /// still exists and where to reclaim disk space from.
@@ -32,26 +36,29 @@ struct BackupProgress {
 /// These commands write to paths supplied by the frontend. Restrict each to
 /// its own extension so they can't be abused (e.g. via XSS) to overwrite
 /// arbitrary files — same policy as save_share_image's .png gate.
-fn ensure_extension(path: &str, ext: &str, what: &str) -> Result<(), String> {
+fn ensure_extension(path: &str, ext: &str, what: &str) -> Result<(), CommandError> {
     let ok = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case(ext))
         .unwrap_or(false);
+    // Uncoded: the save dialog always names the extension; only a caller of
+    // the bare command meets this guard.
     if ok {
         Ok(())
     } else {
-        Err(format!("{} must be saved with a .{} extension", what, ext))
+        Err(format!("{} must be saved with a .{} extension", what, ext).into())
     }
 }
 
 /// A privacy radius is frontend-supplied — reject nonsense (NaN, negatives)
-/// and absurd zones that would blank entire tracks.
-fn ensure_privacy_radius(radius_m: f64) -> Result<(), String> {
+/// and absurd zones that would blank entire tracks. Uncoded, like the
+/// extension guard: the export dialog offers fixed radii.
+fn ensure_privacy_radius(radius_m: f64) -> Result<(), CommandError> {
     if radius_m.is_finite() && radius_m > 0.0 && radius_m <= 10_000.0 {
         Ok(())
     } else {
-        Err("Privacy radius must be between 0 and 10000 m".to_string())
+        Err("Privacy radius must be between 0 and 10000 m".into())
     }
 }
 
@@ -90,13 +97,13 @@ pub fn export_activity_gpx(
     dest_path: String,
     privacy_radius_m: Option<f64>,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     ensure_extension(&dest_path, "gpx", "GPX export")?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
     let activity = db::activities::get_activity_by_id(&conn, &id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Activity not found: {}", id))?;
+        .ok_or_else(|| activity_not_found(&id))?;
 
     let mut trackpoints = db::trackpoints::get_trackpoints(&conn, &id)
         .map_err(|e| e.to_string())?;
@@ -110,18 +117,22 @@ pub fn export_activity_gpx(
     let gpx_content = gpx_writer::activity_to_gpx(&activity, &trackpoints, barometric);
 
     if let Some(parent) = Path::new(&dest_path).parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            CommandError::coded("export.createDirFailed", format!("Failed to create directory: {}", e))
+                .param("detail", e.to_string())
+        })?;
     }
 
-    fs::write(&dest_path, gpx_content)
-        .map_err(|e| format!("Failed to write GPX file: {}", e))?;
+    fs::write(&dest_path, gpx_content).map_err(|e| {
+        CommandError::coded("export.writeGpxFailed", format!("Failed to write GPX file: {}", e))
+            .param("detail", e.to_string())
+    })?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn backup_vault(dest_path: String, app: AppHandle) -> Result<(), String> {
+pub async fn backup_vault<R: tauri::Runtime>(dest_path: String, app: AppHandle<R>) -> Result<(), CommandError> {
     ensure_extension(&dest_path, "zip", "Vault backup")?;
     tauri::async_runtime::spawn_blocking(move || {
         let progress = |processed: u64, total: u64| {
@@ -160,14 +171,11 @@ pub(crate) fn backup_vault_core(
     state: &AppState,
     dest_path: &Path,
     progress: &dyn Fn(u64, u64),
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     // One vault mutation at a time: a concurrent backup would clobber this
     // run's .backup-snapshot mid-archive, and a concurrent restore/relocation
     // would move raw/ and photos/ out from under the archive walk.
-    let _flight = state
-        .vault_flight
-        .try_begin()
-        .ok_or("Another vault operation is already in progress")?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
 
     let vault_path = &state.vault_path;
     let snapshot_dir = vault_path.join(".backup-snapshot");
@@ -213,11 +221,11 @@ pub(crate) fn backup_vault_core(
 /// So: validate → checkpoint+close the live DB → quarantine → extract → the
 /// frontend restarts on `restored: true`.
 #[tauri::command]
-pub async fn restore_vault(
+pub async fn restore_vault<R: tauri::Runtime>(
     backup_path: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     state: State<'_, AppState>,
-) -> Result<RestoreOutcome, String> {
+) -> Result<RestoreOutcome, CommandError> {
     let _ = state; // resolved inside the blocking task via the moved AppHandle
     tauri::async_runtime::spawn_blocking(move || {
         restore_vault_core(&app.state::<AppState>(), Path::new(&backup_path))
@@ -230,16 +238,13 @@ pub async fn restore_vault(
 pub(crate) fn restore_vault_core(
     state: &AppState,
     backup: &Path,
-) -> Result<RestoreOutcome, String> {
+) -> Result<RestoreOutcome, CommandError> {
     let vault_path = &state.vault_path;
 
     // One vault mutation at a time: restoring while a backup streams raw/ and
     // photos/ (or another restore/relocation runs) would tear the archive or
     // mix states. Failing here is pre-flight semantics — nothing was touched.
-    let _flight = state
-        .vault_flight
-        .try_begin()
-        .ok_or("Another vault operation is already in progress")?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
 
     // Pre-flight (deep: safe entry names, no zip bomb, vault.db present): a
     // bad or wrong-kind archive fails here with the live DB still untouched,
@@ -337,6 +342,43 @@ mod tests {
         crate::test_support::ScratchDir::new(&format!("export_{tag}"))
     }
 
+    /// A GPX export is written where asked, folders made; an unknown
+    /// activity and what the OS refuses are said in coded words (#236).
+    #[test]
+    fn a_gpx_export_says_why_it_failed_in_coded_words() {
+        use tauri::Manager;
+        let tmp = unique_dir("gpx_cmd");
+        let app = crate::test_support::mock_app_at(&tmp);
+        let dest = |rel: &str| tmp.join(rel).to_str().unwrap().to_string();
+        let Err(err) = export_activity_gpx("a1".into(), dest("a.gpx"), None, app.state()) else { panic!("exported") };
+        assert_eq!(err, crate::commands::activities::activity_not_found("a1"));
+        // A backup goes to a .zip only: a developer's guard, uncoded.
+        let err = tauri::async_runtime::block_on(backup_vault(dest("b.txt"), app.handle().clone())).unwrap_err();
+        assert_eq!(err.code, None);
+        assert!(!tmp.join("b.txt").exists());
+        // A backup that is not there: refused before the live vault is touched.
+        let restore = restore_vault(dest("none.zip"), app.handle().clone(), app.state());
+        let err = tauri::async_runtime::block_on(restore).unwrap_err();
+        assert_eq!(err.code, Some("restore.openFailed"));
+
+        app.state::<AppState>()
+            .db
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO activity (id, start_time) VALUES ('a1', '2026-01-01T10:00:00+00:00')", [])
+            .unwrap();
+        export_activity_gpx("a1".into(), dest("out/nested/a.gpx"), None, app.state()).unwrap();
+        assert!(tmp.join("out/nested/a.gpx").is_file());
+
+        fs::write(tmp.join("file"), b"x").unwrap();
+        let Err(err) = export_activity_gpx("a1".into(), dest("file/a.gpx"), None, app.state()) else { panic!("exported") };
+        assert_eq!(err.code, Some("export.createDirFailed"));
+        fs::create_dir_all(tmp.join("taken.gpx")).unwrap();
+        let Err(err) = export_activity_gpx("a1".into(), dest("taken.gpx"), None, app.state()) else { panic!("exported") };
+        assert_eq!(err.code, Some("export.writeGpxFailed"));
+        assert_eq!(err.message, format!("Failed to write GPX file: {}", err.params["detail"].as_str().unwrap()));
+    }
+
     /// Concurrent backups share one .backup-snapshot dir — the second call
     /// must be refused while the first is running, and allowed after it.
     #[test]
@@ -350,7 +392,7 @@ mod tests {
         {
             let _running = state.vault_flight.try_begin().unwrap();
             let err = backup_vault_core(&state, &tmp.join("b1.zip"), &|_, _| {}).unwrap_err();
-            assert!(err.contains("already in progress"), "got: {}", err);
+            assert_eq!(err, CommandError::coded("vault.busy", "Another vault operation is already in progress"));
         }
         // Slot freed — a new backup succeeds.
         backup_vault_core(&state, &tmp.join("b2.zip"), &|_, _| {}).unwrap();
@@ -376,7 +418,7 @@ mod tests {
         {
             let _running = state.vault_flight.try_begin().unwrap();
             let err = restore_vault_core(&state, &backup).unwrap_err();
-            assert!(err.contains("already in progress"), "got: {}", err);
+            assert_eq!(err.code, Some("vault.busy"));
             // Pre-flight semantics: nothing was torn down or quarantined.
             assert_eq!(fs::read(vault.join("vault.db")).unwrap(), b"current db");
             assert!(state.vault_error.lock().unwrap().is_none());
@@ -431,7 +473,8 @@ mod tests {
 
         let state = test_state_with(&vault, crate::db::test_db());
         let err = restore_vault_core(&state, &zip_path).unwrap_err();
-        assert!(err.contains("not a Syzify vault backup"), "got: {}", err);
+        assert_eq!(err.code, Some("restore.notABackup"), "the pre-flight's code reaches the command");
+        assert!(err.message.contains("not a Syzify vault backup"), "got: {}", err);
 
         // Session intact: the connection still answers, the vault untouched,
         // no restart-required flag, nothing quarantined.

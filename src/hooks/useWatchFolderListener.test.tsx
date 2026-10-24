@@ -8,6 +8,7 @@ import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { useWatchFolderListener } from "./useWatchFolderListener";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 
 vi.mock("../lib/tauri", () => ({
   api: { getSetting: vi.fn(), importFiles: vi.fn(), catchUpWatchFiles: vi.fn() },
@@ -60,9 +61,11 @@ function mountClosed() {
 }
 
 describe("useWatchFolderListener", () => {
-  /** The backend refuses with a bare string; a JS-side failure is an
-   * Error. The toast carries the words alone either way (#182). */
+  /** The backend refuses with a CommandError (#236) or, from a plugin, a
+   * bare string; a JS-side failure is an Error. The toast carries the
+   * words alone either way (#182). */
   for (const [kind, rejection] of [
+    ["an uncoded command error", commandError(null, "vault locked")],
     ["a string", "vault locked"],
     ["an Error", new Error("vault locked")],
   ] as const) {

@@ -12,8 +12,8 @@ const DEBOUNCE_SECS: u64 = 2;
 
 /// Start watching the given folder paths for new workout files.
 /// Returns a `RecommendedWatcher` that must be kept alive.
-pub fn start_watching(
-    app_handle: AppHandle,
+pub fn start_watching<R: tauri::Runtime>(
+    app_handle: AppHandle<R>,
     paths: Vec<String>,
 ) -> Result<RecommendedWatcher, String> {
     let pending: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -134,7 +134,7 @@ pub fn start_watching(
 }
 
 /// Read current watch folder paths from the database.
-pub fn get_watch_paths_from_db(app_handle: &AppHandle) -> Vec<String> {
+pub fn get_watch_paths_from_db<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Vec<String> {
     let state = app_handle.state::<AppState>();
     let conn = match state.db.lock() {
         Ok(c) => c,

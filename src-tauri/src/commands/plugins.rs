@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::db;
+use crate::error::CommandError;
 use crate::models::plugin::{Plugin, PluginInfo, PluginManifest};
 use crate::plugins::{install, runtime};
 use crate::plugins::view::ViewSpec;
@@ -37,7 +38,7 @@ fn plugin_to_info(p: &Plugin) -> PluginInfo {
 }
 
 #[tauri::command]
-pub fn get_plugins(state: State<AppState>) -> Result<Vec<PluginInfo>, String> {
+pub fn get_plugins(state: State<AppState>) -> Result<Vec<PluginInfo>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let plugins = db::plugins::list_plugins(&conn).map_err(|e| e.to_string())?;
     Ok(plugins.iter().map(plugin_to_info).collect())
@@ -48,8 +49,8 @@ pub fn get_plugins(state: State<AppState>) -> Result<Vec<PluginInfo>, String> {
 pub fn install_plugin_from_file(
     path: String,
     state: State<AppState>,
-) -> Result<PluginInfo, String> {
-    install::from_file(&state, &path).map(|p| plugin_to_info(&p))
+) -> Result<PluginInfo, CommandError> {
+    Ok(install::from_file(&state, &path).map(|p| plugin_to_info(&p))?)
 }
 
 /// Install (or upgrade) a plugin from a signed `.syzify-ext` package.
@@ -57,8 +58,8 @@ pub fn install_plugin_from_file(
 pub fn install_plugin_from_package(
     path: String,
     state: State<AppState>,
-) -> Result<PluginInfo, String> {
-    install::from_package(&state, &path).map(|p| plugin_to_info(&p))
+) -> Result<PluginInfo, CommandError> {
+    Ok(install::from_package(&state, &path).map(|p| plugin_to_info(&p))?)
 }
 
 #[tauri::command]
@@ -66,13 +67,13 @@ pub fn set_plugin_enabled(
     id: String,
     enabled: bool,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::plugins::set_enabled(&conn, &id, enabled).map_err(|e| e.to_string())
+    Ok(db::plugins::set_enabled(&conn, &id, enabled).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub fn uninstall_plugin(id: String, state: State<AppState>) -> Result<(), String> {
+pub fn uninstall_plugin(id: String, state: State<AppState>) -> Result<(), CommandError> {
     // Guard the id before it touches the filesystem (defense in depth — a bad id
     // should never have been stored, but never remove_dir_all outside plugins/).
     crate::models::plugin::validate_id(&id)?;
@@ -97,7 +98,7 @@ pub struct PluginEndpoint {
 #[tauri::command]
 pub fn get_plugin_network_endpoints(
     state: State<AppState>,
-) -> Result<Vec<PluginEndpoint>, String> {
+) -> Result<Vec<PluginEndpoint>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let plugins = db::plugins::list_plugins(&conn).map_err(|e| e.to_string())?;
 
@@ -128,7 +129,7 @@ pub struct PluginContribution {
 pub fn get_plugin_contributions(
     point: String,
     state: State<AppState>,
-) -> Result<Vec<PluginContribution>, String> {
+) -> Result<Vec<PluginContribution>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let plugins = db::plugins::list_plugins(&conn).map_err(|e| e.to_string())?;
     Ok(plugins
@@ -172,12 +173,12 @@ fn plugin_contributes(conn: &rusqlite::Connection, plugin_id: &str, point: &str)
 /// `route.planner` / `sync.source` action), which would freeze the window
 /// from a sync command.
 #[tauri::command]
-pub async fn render_plugin_view(
+pub async fn render_plugin_view<R: tauri::Runtime>(
     plugin_id: String,
     point: String,
     context: String,
-    app: AppHandle,
-) -> Result<ViewSpec, String> {
+    app: AppHandle<R>,
+) -> Result<ViewSpec, CommandError> {
     let export = point.replace('.', "_");
     let output = tauri::async_runtime::spawn_blocking({
         let plugin_id = plugin_id.clone();
@@ -239,6 +240,32 @@ mod tests {
     }
 
     use super::*;
+
+    /// The commands, through `State`. What goes wrong with a plugin is
+    /// plugin protocol, said uncoded (#236).
+    #[test]
+    fn the_commands_answer_through_their_state_and_refuse_uncoded() {
+        use tauri::Manager;
+        let vault = crate::test_support::ScratchDir::new("plugins_state");
+        let app = crate::test_support::mock_app_at(&vault);
+        crate::db::plugins::upsert_plugin(&app.state::<AppState>().db.lock().unwrap(), &record("{}")).unwrap();
+        assert_eq!(get_plugins(app.state()).unwrap().len(), 1);
+        assert!(get_plugin_network_endpoints(app.state()).unwrap().is_empty());
+        assert!(get_plugin_contributions("dashboard.widget".into(), app.state()).unwrap().is_empty());
+        let view = render_plugin_view("com.x".into(), "dashboard.widget".into(), "{}".into(), app.handle().clone());
+        let Err(err) = tauri::async_runtime::block_on(view) else { panic!("rendered") };
+        assert_eq!(err, CommandError::from("plugin com.x does not contribute dashboard.widget"));
+        set_plugin_enabled("com.x".into(), false, app.state()).unwrap();
+        uninstall_plugin("com.x".into(), app.state()).unwrap();
+        assert!(get_plugins(app.state()).unwrap().is_empty());
+
+        let missing = vault.join("missing").to_str().unwrap().to_string();
+        let Err(err) = install_plugin_from_file(missing.clone(), app.state()) else { panic!("installed") };
+        assert_eq!(err.code, None);
+        let Err(err) = install_plugin_from_package(missing, app.state()) else { panic!("installed") };
+        assert_eq!(err.code, None);
+        assert_eq!(uninstall_plugin("../x".into(), app.state()).unwrap_err().code, None);
+    }
 
     fn record(manifest: &str) -> Plugin {
         Plugin {

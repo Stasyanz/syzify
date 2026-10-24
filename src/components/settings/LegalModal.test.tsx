@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
+import { commandError } from "../../test/commandError";
 import { useLanguageStore } from "../../lib/i18n";
 import { LegalModal, type LegalDoc } from "./LegalModal";
 
@@ -36,7 +37,7 @@ describe("LegalModal", () => {
   });
 
   it("surfaces a load error instead of an empty pane", async () => {
-    vi.mocked(api.getLegalText).mockRejectedValue("No such resource");
+    vi.mocked(api.getLegalText).mockRejectedValue(commandError(null, "No such resource"));
     renderModal("notices");
     await waitFor(() => expect(screen.getByText("No such resource")).toBeTruthy());
   });

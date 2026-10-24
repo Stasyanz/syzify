@@ -7,6 +7,7 @@ import { api } from "../lib/tauri";
 import type { SegmentLeaderboardRow, SegmentSummaryRow } from "../lib/types";
 import { Segments, filterSegments } from "./Segments";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 
 vi.mock("../lib/tauri", () => ({
   api: {
@@ -205,7 +206,7 @@ describe("Segments page", () => {
   });
 
   it("surfaces a backend rename error inline", async () => {
-    mocked.renameSegment.mockRejectedValue("segment not found");
+    mocked.renameSegment.mockRejectedValue(commandError("segments.notFound", "segment not found"));
     await renderPage();
     await screen.findByText("Siedra from Damlataş");
     fireEvent.click(screen.getByLabelText("Rename segment"));
@@ -376,6 +377,16 @@ describe("Segments page in Russian (#235)", () => {
     fireEvent.change(search, { target: { value: " everest " } });
     expect(screen.getByText("Нет сегментов, подходящих под «everest».")).toBeTruthy();
     expect(screen.getByTitle("Очистить поиск")).toBeTruthy();
+  });
+
+  it("says a coded rename refusal in Russian, never [object Object] (#236)", async () => {
+    mocked.renameSegment.mockRejectedValue(commandError("segments.notFound", "segment not found"));
+    await renderRu();
+    await screen.findByText("Siedra from Damlataş");
+    fireEvent.click(screen.getByLabelText("Переименовать сегмент"));
+    fireEvent.keyDown(screen.getByDisplayValue("Siedra from Damlataş"), { key: "Enter" });
+    expect(await screen.findByText("Сегмент не найден")).toBeTruthy();
+    expect(screen.queryByText(/object Object/)).toBeNull();
   });
 
   it("says the loading, empty and effort states in the interface language", async () => {

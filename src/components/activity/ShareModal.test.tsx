@@ -48,6 +48,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ShareModal, buildFields } from "./ShareModal";
 import { api } from "../../lib/tauri";
 import { t, useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 // The preview wrapper's measured size (clientWidth/clientHeight stubbed below).
 const WRAP = { w: 800, h: 600 };
@@ -304,11 +305,11 @@ describe("ShareModal EXIF orientation (natural ≠ stored dims)", () => {
     });
   });
 
-  /// A Tauri command refuses with a bare string, not an Error: the toast
-  /// must carry its words, not "undefined" (#174).
+  /// A Tauri command refuses with a CommandError, not an Error: the toast
+  /// must carry its words, not "undefined" (#174, #236).
   it("says a refused export in the backend's words", async () => {
     useToastStore.setState({ toasts: [] });
-    vi.mocked(api.getPhotoDataUrl).mockRejectedValueOnce("The vault is locked");
+    vi.mocked(api.getPhotoDataUrl).mockRejectedValueOnce(commandError(null, "The vault is locked"));
     const { getByText } = renderModal();
     await waitFor(() => expect((getByText("Save PNG").closest("button") as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(getByText("Save PNG"));

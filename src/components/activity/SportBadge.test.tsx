@@ -14,6 +14,7 @@ vi.mock("../../stores/toastStore", () => ({
 import { api } from "../../lib/tauri";
 import { SportBadge } from "./SportBadge";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 afterEach(() => {
   cleanup();
@@ -59,10 +60,10 @@ describe("SportBadge", () => {
     expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
   });
 
-  /// A Tauri command refuses with a bare string, not an Error: the toast
-  /// must carry its words, not "undefined" (#174).
+  /// A Tauri command refuses with a CommandError, not an Error: the toast
+  /// must carry its words, not "undefined" (#174, #236).
   it("says a refusal in the backend's words", async () => {
-    vi.mocked(api.updateActivity).mockRejectedValueOnce("The vault is locked");
+    vi.mocked(api.updateActivity).mockRejectedValueOnce(commandError(null, "The vault is locked"));
     const onChanged = mount();
     fireEvent.click(screen.getByTitle("Ride — change sport"));
     fireEvent.click(screen.getByRole("button", { name: "Run" }));

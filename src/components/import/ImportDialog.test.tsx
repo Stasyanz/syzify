@@ -16,6 +16,7 @@ vi.mock("../../stores/toastStore", () => ({
 
 import { ImportDialog } from "./ImportDialog";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 afterEach(() => {
   cleanup();
@@ -70,7 +71,7 @@ describe("ImportDialog", () => {
   /// must carry its words, not "undefined" (#174).
   it("says a refused import in the backend's words", async () => {
     open.mockResolvedValueOnce(["/a/ride.fit"]);
-    importFiles.mockRejectedValueOnce("The vault is locked");
+    importFiles.mockRejectedValueOnce(commandError(null, "The vault is locked"));
     mount();
     fireEvent.click(screen.getByRole("button"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Import failed: The vault is locked"));

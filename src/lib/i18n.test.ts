@@ -14,6 +14,7 @@ import {
   resolveLanguage,
   richParts,
   t,
+  tKnown,
   translate,
   useLanguageStore,
   useRichT,
@@ -330,6 +331,17 @@ describe("translate and t", () => {
     expect(translate("it", "settings.general.tileCacheHint", { size: "2 KB" })).toBe("Tile della mappa su disco: 2 KB");
     act(() => useLanguageStore.getState().setPref("it"));
     expect(t("settings.general.theme")).toBe("Tema");
+  });
+
+  it("say a key known only at run time, or null when they cannot", () => {
+    act(() => useLanguageStore.getState().setPref("ru"));
+    expect(tKnown("error.vault.wrongPassword", {})).toBe("Неверный пароль");
+    expect(tKnown("library.filter.bulkDone", { name: "Шоссе", count: 3 })).toBe("Снаряжение «Шоссе» назначено на 3 тренировки");
+    expect(tKnown("error.nope", {})).toBeNull();
+    expect(tKnown("toString", {})).toBeNull();
+    expect(tKnown("library.filter.bulkDone", { count: 3 })).toBeNull();
+    // A placeholder named like an Object member is still a parameter of its own.
+    expect(tKnown("error.gear.notFound", Object.create({ id: "inherited" }) as Record<string, unknown>)).toBeNull();
   });
 
   it("are checked by tsc for keys and parameters", () => {

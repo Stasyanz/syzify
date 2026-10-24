@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
+import { commandError } from "../../test/commandError";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
 import { t, translate, useLanguageStore, type Translator } from "../../lib/i18n";
@@ -190,10 +191,16 @@ describe("MonitoringData", () => {
       expect(useToastStore.getState().toasts.map((t) => t.type)).toEqual(["info", "error"]),
     );
     expect(useToastStore.getState().toasts[1].message).toBe("Delete failed: locked");
-    // The backend's own refusal is a bare string: the same words (#182).
-    mocked.deleteMonitoringRange.mockRejectedValueOnce("vault busy");
+    // The backend's own refusal is a CommandError: its words (#182, #236).
+    mocked.deleteMonitoringRange.mockRejectedValueOnce(
+      commandError("vault.busy", "Another vault operation is already in progress"),
+    );
     fireEvent.click(screen.getByText("Delete…"));
-    await waitFor(() => expect(useToastStore.getState().toasts.slice(-1)[0]?.message).toBe("Delete failed: vault busy"));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.slice(-1)[0]?.message).toBe(
+        "Delete failed: Another vault operation is already in progress",
+      ),
+    );
   });
 
   it("re-seeds the range only when the stored span itself changes", async () => {

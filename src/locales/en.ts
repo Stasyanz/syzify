@@ -954,4 +954,112 @@ export const en = {
   "settings.about.report": "Report a bug or suggest a feature on {github}",
   "settings.about.reportOrEmail": "Report a bug or suggest a feature on {github}, or email {email}",
   "settings.about.sendFeedback": "Send feedback",
+  // Backend errors (#236): a command that refuses with a code is said by
+  // `errorText` as `error.<code>`, filled with the params Rust sends. The
+  // English text is what Rust says (errorCodes.test.ts compares them);
+  // {detail} is a library's own words (the OS, the zip reader, the
+  // network), which stay as they come.
+  "error.activity.notFound": "Activity not found: {id}",
+  "error.activity.invalidFtp": "invalid FTP: {ftp}",
+  "error.activity.ftpNoPower": "this activity has no normalized power, so IF and TSS cannot be recomputed",
+  "error.activity.ftpNoDuration": "this activity has no recorded duration, so TSS cannot be recomputed",
+  "error.backup.createFailed": "Failed to create backup file: {detail}",
+  "error.encryption.alreadyEnabled": "Encryption is already enabled",
+  "error.encryption.noScope": "Select at least one thing to encrypt",
+  "error.encryption.notEnabled": "Encryption is not enabled",
+  // {folders} are the pre-restore-* folder names, joined by ", ".
+  "error.encryption.preRestoreLeftovers":
+    "The vault still contains data preserved by a restore ({folders}) that encryption would not cover. Delete it or move it out of the vault first",
+  // {name} is the secret's name, {plugin} the plugin's id ("com.example.sync").
+  "error.encryption.pluginSecrets":
+    "Plugin secrets could not be decrypted — secret \"{name}\" of plugin {plugin}. Sign out of that plugin or uninstall it, then try again",
+  "error.export.createDirFailed": "Failed to create directory: {detail}",
+  "error.export.writeGpxFailed": "Failed to write GPX file: {detail}",
+  // {count} is the limit in characters: 60, or 2000 for the notes.
+  "error.gear.brandTooLong": { one: "Brand is longer than {count} character", other: "Brand is longer than {count} characters" },
+  "error.gear.modelTooLong": { one: "Model is longer than {count} character", other: "Model is longer than {count} characters" },
+  "error.gear.notesTooLong": { one: "Notes is longer than {count} character", other: "Notes is longer than {count} characters" },
+  "error.gear.nameTooLong": { one: "Name is longer than {count} character", other: "Name is longer than {count} characters" },
+  "error.gear.ruleTooLong": {
+    one: "A rule value is longer than {count} character",
+    other: "A rule value is longer than {count} characters",
+  },
+  "error.gear.nameRequired": "Name is required",
+  "error.gear.initialDistance": "Initial distance must be zero or more",
+  "error.gear.distanceLimit": "Distance limit must be more than zero",
+  "error.gear.purchaseDate": "Purchase date must be YYYY-MM-DD",
+  // {sport} is a sport's id as the app stores it ("ride").
+  "error.gear.unknownSport": "Unknown sport: {sport}",
+  "error.gear.notFound": "Gear not found: {id}",
+  "error.gear.multisport": "A multisport activity spans several sports and carries no gear; its legs do",
+  "error.gear.retiredAssign": "Bring the gear back before assigning activities to it",
+  "error.gear.retiredDefault": "Bring the gear back before making it a default",
+  "error.gear.retiredPutOn": "Bring the gear back before putting an activity on it",
+  // A Runkeeper export (.zip). {name} is a file inside it.
+  "error.import.openFailed": "Failed to open export: {detail}",
+  "error.import.notAZip": "Not a valid .zip export: {detail}",
+  "error.import.tooManyFiles": "export has too many files (limit {limit})",
+  "error.import.passwordProtected": "The export is password-protected — export it again without a password",
+  "error.import.tooLarge": "export is too large (uncompressed) — refusing to import",
+  "error.import.extractFailed": "Failed to extract {name}: {detail}",
+  "error.monitoring.badDate": "Dates must be YYYY-MM-DD",
+  "error.monitoring.endBeforeStart": "The end date is before the start date",
+  "error.photos.vaultLocked": "Vault is locked",
+  "error.photos.notFound": "Photo not found: {id}",
+  "error.photos.createDirFailed": "Failed to create photos dir: {detail}",
+  "error.share.writeFailed": "write file: {detail}",
+  "error.restore.openFailed": "Failed to open backup file: {detail}",
+  "error.restore.invalidArchive": "Invalid backup archive: {detail}",
+  // {name} is a path inside the archive.
+  "error.restore.unsafePath": "Unsafe path in backup archive: {name}",
+  "error.restore.notABackup": "This zip is not a Syzify vault backup (no vault.db inside) — nothing was changed",
+  // After the point of no return; {name} is a path inside the archive.
+  "error.restore.extractFailed": "Failed to extract {name}: {detail}",
+  "error.restore.forgedEntry":
+    "Zip entry {name} produced more data than its header declares — refusing a forged archive",
+  "error.restore.preRestoreDirFailed": "Failed to create pre-restore dir: {detail}",
+  // {name} is an entry of the vault: "vault.db", "raw", "photos".
+  "error.restore.moveAsideFailed": "Failed to move {name} aside for restore: {detail}",
+  // {declared} and {size} are in MiB.
+  "error.restore.suspiciousArchive":
+    "Backup archive declares {declared} MiB of data from a {size} MiB file — refusing to restore a suspicious archive",
+  "error.segments.nameEmpty": "segment name is empty",
+  // {count} is the limit in characters, 200.
+  "error.segments.nameTooLong": {
+    one: "segment name is longer than {count} character",
+    other: "segment name is longer than {count} characters",
+  },
+  "error.segments.outOfRange": "selection is out of range",
+  "error.segments.noGps": "selection has no GPS data",
+  "error.segments.noDistance": "selection has no distance",
+  "error.segments.notFound": "segment not found",
+  "error.tiles.clearFailed": "Failed to clear cache: {detail}",
+  "error.updates.checkFailed": "Update check failed: {detail}",
+  "error.updates.noReleases": "No releases published yet",
+  // {status} is the HTTP status, "503 Service Unavailable".
+  "error.updates.badStatus": "GitHub returned status {status}",
+  "error.updates.lookupFailed": "Update lookup failed: {detail}",
+  "error.updates.installFailed": "Update install failed: {detail}",
+  "error.updates.notDownloadable": "The update isn't downloadable yet — retry in a few minutes, or use the release page",
+  // {path} is a folder. "Open another vault…" names the button of the
+  // vault error screen ("app.vaultError.openAnother"): say it as that says it.
+  "error.vault.busy": "Another vault operation is already in progress",
+  "error.vault.locked": "The vault is locked — unlock it first",
+  "error.vault.notOpen": "The vault is not open",
+  "error.vault.noLock": "No vault.lock found — encryption is not enabled",
+  "error.vault.wrongPassword": "Wrong password",
+  "error.vault.alreadyCurrent": "This is already the current vault",
+  "error.vault.alreadyHere": "The vault is already at this location",
+  "error.vault.intoItself": "Cannot move the vault into itself",
+  "error.vault.symlink":
+    "The vault contains a symbolic link (\"{path}\"). Remove or replace it with the real file, then try again",
+  "error.vault.unstorableName": "Failed to save vault location: \"{path}\" can't be stored as written",
+  "error.vault.notEmpty": "\"{path}\" already exists and is not empty",
+  "error.vault.notAFolder": "\"{path}\" is not a folder",
+  "error.vault.checkFailed": "Couldn't check \"{path}\": {detail}",
+  "error.vault.noVaultFound": "No vault found in \"{path}\"",
+  "error.vault.alreadyHoldsVault": "\"{path}\" already holds a vault — use \"Open another vault…\" to open it",
+  // {vault} is the folder of the vault that encloses {path}.
+  "error.vault.insideVault": "\"{path}\" is inside the vault at \"{vault}\" — pick a folder outside it",
+  "error.watch.noDirectory": "Directory does not exist: {path}",
 } as const;

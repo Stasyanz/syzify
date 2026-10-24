@@ -6,6 +6,7 @@ import type { ViewSpec } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { MAX_CONTINUE_ROUNDS, PluginWidget } from "./PluginWidget";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 vi.mock("../../lib/tauri", () => ({
   api: { renderPluginView: vi.fn() },
@@ -133,6 +134,7 @@ describe("PluginWidget continue loop", () => {
   /** The first render failing — a string from the host, an Error from
    * the IPC layer — reads as the words alone (#182). */
   for (const [kind, rejection] of [
+    ["an uncoded command error", commandError(null, "plugin is disabled")],
     ["a string", "plugin is disabled"],
     ["an Error", new Error("plugin is disabled")],
   ] as const) {

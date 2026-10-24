@@ -26,6 +26,7 @@ import { EditActivityModal, stepHighlight, LOCATION_SEARCH_DEBOUNCE_MS } from ".
 import { api } from "../../lib/tauri";
 import type { LocationHit } from "../../lib/types";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 describe("the sport picker in the interface language (#233)", () => {
   afterEach(() => useLanguageStore.getState().setPref("system"));
@@ -456,7 +457,9 @@ describe("FTP correction", () => {
   });
 
   it("reports a refused FTP by name and still saves the rest", async () => {
-    vi.mocked(api.setActivityFtp).mockRejectedValueOnce("this activity has no normalized power, so IF and TSS cannot be recomputed");
+    vi.mocked(api.setActivityFtp).mockRejectedValueOnce(
+      commandError("activity.ftpNoPower", "this activity has no normalized power, so IF and TSS cannot be recomputed"),
+    );
     const { getByLabelText, getByText } = renderWith({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
     fireEvent.change(getByLabelText("FTP (W)"), { target: { value: "238" } });
     fireEvent.click(getByText("Save"));

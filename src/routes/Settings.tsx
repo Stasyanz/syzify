@@ -51,7 +51,7 @@ import {
   type SettingsTab,
 } from "../lib/settingsTabs";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../lib/contact";
-import { errorText } from "../lib/errors";
+import { errorCode, errorText } from "../lib/errors";
 import { unencryptedParts } from "../lib/encryptionScopes";
 
 const THEME_MODES = [
@@ -298,14 +298,14 @@ export function SettingsPage() {
     // one any more.
     ops.start("restore");
     try {
-      // `error` here is the backend's own report of a partial extraction,
-      // a string by contract — not a caught value.
+      // `error` here is the backend's own report of a partial extraction: a
+      // CommandError in the outcome, said like a rejection (#236).
       const { restored, error: partial, preserved_at } = await api.restoreVault(selected as string);
       // Once the vault was touched the live DB is a placeholder — restart even
       // if extraction failed partway (error set), so the app reopens from disk.
       if (restored) {
         const sentences = [
-          partial ? t("settings.vault.restoreIncomplete", { error: partial }) : t("settings.vault.restored"),
+          partial ? t("settings.vault.restoreIncomplete", { error: errorText(partial) }) : t("settings.vault.restored"),
           preserved_at ? t("settings.vault.restoreKept", { path: preserved_at }) : null,
           t("settings.vault.restarting"),
         ];
@@ -390,7 +390,12 @@ export function SettingsPage() {
       setShowDecryptDialog(false);
       setDecPassword("");
     } catch (e) {
-      setDecError(t("settings.vault.decryptFailedInline", { error: errorText(e) }));
+      // A wrong password says so alone — not "Wrong password or error: Wrong password".
+      setDecError(
+        errorCode(e) === "vault.wrongPassword"
+          ? errorText(e)
+          : t("settings.vault.decryptFailedInline", { error: errorText(e) }),
+      );
       if (encryptionDialogGone()) addToast("error", t("settings.vault.decryptFailed", { error: errorText(e) }));
     } finally {
       ops.finish("decrypt");

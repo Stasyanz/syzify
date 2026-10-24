@@ -2,6 +2,7 @@ use std::path::Path;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::error::CommandError;
 use crate::import::datasource;
 use crate::import::pipeline::{self, FailedFile, ImportResult};
 use crate::state::AppState;
@@ -18,7 +19,7 @@ pub fn get_import_datasources() -> Vec<datasource::DatasourceInfo> {
 /// command itself must not rely on that: an import accepted while locked
 /// would write its raw file in PLAINTEXT into an encrypted vault (no key to
 /// encrypt with) until the next unlock's resume pass happens to heal it.
-pub(crate) fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
+pub(crate) fn ensure_vault_unlocked(state: &AppState) -> Result<(), CommandError> {
     if crate::crypto::read_vault_lock(&state.vault_path)?.is_none() {
         return Ok(()); // plaintext vault
     }
@@ -30,17 +31,17 @@ pub(crate) fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
     if has_key {
         Ok(())
     } else {
-        Err("The vault is locked — unlock it first".to_string())
+        Err(CommandError::coded("vault.locked", "The vault is locked — unlock it first"))
     }
 }
 
 /// Run an import data source against a user-picked file (e.g. a Runkeeper .zip).
 #[tauri::command]
-pub fn run_import_datasource(
+pub fn run_import_datasource<R: tauri::Runtime>(
     id: String,
     path: String,
-    app: AppHandle,
-) -> Result<ImportResult, String> {
+    app: AppHandle<R>,
+) -> Result<ImportResult, CommandError> {
     let result = {
         let state = app.state::<AppState>();
         ensure_vault_unlocked(&state)?;
@@ -56,10 +57,10 @@ pub fn run_import_datasource(
 }
 
 #[tauri::command]
-pub async fn import_files(
+pub async fn import_files<R: tauri::Runtime>(
     paths: Vec<String>,
-    app: AppHandle,
-) -> Result<ImportResult, String> {
+    app: AppHandle<R>,
+) -> Result<ImportResult, CommandError> {
     import_paths(app, paths).await
 }
 
@@ -70,7 +71,7 @@ pub async fn import_files(
 pub(crate) async fn import_paths<R: tauri::Runtime>(
     app: AppHandle<R>,
     paths: Vec<String>,
-) -> Result<ImportResult, String> {
+) -> Result<ImportResult, CommandError> {
     ensure_vault_unlocked(&app.state::<AppState>())?;
     let mut result = ImportResult::default();
     let mut batch = pipeline::MonitoringBatch::default();
@@ -194,10 +195,18 @@ mod tests {
         };
         crate::crypto::write_vault_lock(&vault, &lock).unwrap();
         let err = ensure_vault_unlocked(&test_state(&vault, None)).unwrap_err();
-        assert!(err.contains("locked"), "got: {}", err);
+        assert_eq!(err, CommandError::coded("vault.locked", "The vault is locked — unlock it first"));
 
         // UNLOCKED: lock present, key held → fine.
         assert!(ensure_vault_unlocked(&test_state(&vault, Some([7u8; 32]))).is_ok());
+
+        // The commands themselves, on that locked vault.
+        let app = crate::test_support::mock_app_at(&vault);
+        let locked = Some("vault.locked");
+        let by_source = run_import_datasource("runkeeper".into(), "x.zip".into(), app.handle().clone());
+        assert_eq!(by_source.unwrap_err().code, locked);
+        let files = tauri::async_runtime::block_on(import_files(vec![], app.handle().clone()));
+        assert_eq!(files.unwrap_err().code, locked);
 
         let _ = std::fs::remove_dir_all(&vault);
     }

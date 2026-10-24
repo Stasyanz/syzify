@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { formatDistance } from "../../lib/format";
 import { useT } from "../../lib/i18n";
+import { errorText } from "../../lib/errors";
 
 export const MENU_W = 280;
 const MENU_H_EST = 170;
@@ -118,7 +119,7 @@ export function SaveSegmentPopover({
 
       {(save.isError || similarError != null) && (
         <p className="mb-2 text-xs text-red-600">
-          {String(save.isError ? save.error : similarError)}
+          {errorText(save.isError ? save.error : similarError)}
         </p>
       )}
 

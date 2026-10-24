@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ALL_SCOPES } from "./encryptionScopes";
 import type {
+  CommandError,
   ActivitySummary,
   ActivityDetail,
   ActivityFilters,
@@ -131,7 +132,7 @@ export const api = {
     invoke<void>("backup_vault", { destPath }),
 
   restoreVault: (backupPath: string) =>
-    invoke<{ restored: boolean; error: string | null; preserved_at: string | null }>(
+    invoke<{ restored: boolean; error: CommandError | null; preserved_at: string | null }>(
       "restore_vault",
       { backupPath }
     ),

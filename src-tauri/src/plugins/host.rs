@@ -67,7 +67,8 @@ impl VaultAccess for AppState {
         self.vault_path.clone()
     }
     fn ensure_unlocked(&self) -> Result<(), String> {
-        crate::commands::import::ensure_vault_unlocked(self)
+        // The plugin boundary: a plugin reads the English message, uncoded.
+        crate::commands::import::ensure_vault_unlocked(self).map_err(String::from)
     }
     fn activities_key(&self) -> Result<Option<[u8; 32]>, String> {
         self.encryption_key_for(|s| s.activities)
@@ -994,6 +995,8 @@ mod tests {
         crate::crypto::write_vault_lock(&vault, &lock).unwrap();
         let err = import_file(&mut ctx, "run.gpx", GPX.as_bytes()).unwrap_err();
         assert!(err.starts_with(VAULT_LOCKED), "got: {err}");
+        // The app's coded refusal reaches the plugin as its English words (#236).
+        assert_eq!(err, format!("{VAULT_LOCKED}: The vault is locked — unlock it first"));
 
         assert_eq!(count(&state, "SELECT COUNT(*) FROM activity"), 0);
         assert_eq!(count(&state, "SELECT COUNT(*) FROM raw_file"), 0);

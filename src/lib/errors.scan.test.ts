@@ -13,8 +13,9 @@ function sources(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * A Tauri command rejects with a bare string, so a handler that annotates
- * its parameter as `Error` and reads `.message` says "undefined" (#174).
+ * A rejection may be a bare string, so a handler that annotates its
+ * parameter as `Error` and reads `.message` says "undefined" (#174) — or
+ * a command's coded error, whose translation `.message` skips (#236).
  * The registered `unknown` error type catches the un-annotated form at
  * compile time; the annotated form it cannot, so this scan does.
  */
@@ -57,4 +58,46 @@ describe("error handlers (#174)", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  /** A caught value said in an expression the handler-name scan above
+   * cannot follow — `String(save.isError ? save.error : similarError)`
+   * said "[object Object]" for a CommandError (#236). */
+  it("never stringify anything named like an error, wherever it comes from", () => {
+    const offenders = sources(join(__dirname, ".."))
+      .filter((file) => !file.endsWith("/lib/errors.ts"))
+      .flatMap((file) => stringifiedErrors(readFileSync(file, "utf8")).map((m) => `${file}: ${m}`));
+    expect(offenders).toEqual([]);
+  });
+
+  it("catch every shape of a stringified error, and nothing else", () => {
+    const caught = [
+      "{String(save.isError ? save.error : similarError)}",
+      "renameError={String(rename.error)}",
+      "toast(String(e))",
+      "toast(String( err ))",
+      "msg = `Failed: ${e}`",
+      "msg = `Failed: ${err}`",
+      "msg = `Failed: ${error}`",
+      "msg = `Failed: ${query.error}`",
+      "msg = `Failed: ${saveError}`",
+    ];
+    for (const line of caught) expect(stringifiedErrors(line), line).toHaveLength(1);
+    const fine = [
+      "errorText(save.error)",
+      "String(date)",
+      "String(value)",
+      "`${errorText(e)}`",
+      "`${errorCount} errors`",
+      "`${name}`",
+    ];
+    for (const line of fine) expect(stringifiedErrors(line), line).toEqual([]);
+  });
 });
+
+/** `String(…x)` and `${…x}` where x is `e`, or a name ending in "err" or
+ * "error" (`err`, `error`, `rename.error`, `similarError`). */
+function stringifiedErrors(text: string): string[] {
+  const name = String.raw`\b(?:\w*(?:[eE]rror|[eE]rr)|e)`;
+  const patterns = [new RegExp(String.raw`\bString\([^()]*?${name}\s*\)`, "g"), new RegExp(String.raw`\$\{\s*[\w.?]*?${name}\s*\}`, "g")];
+  return patterns.flatMap((re) => [...text.matchAll(re)].map((m) => m[0]));
+}

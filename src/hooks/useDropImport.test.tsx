@@ -45,6 +45,7 @@ vi.mock("../stores/toastStore", () => ({
 
 import { useDropImport } from "./useDropImport";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 
 afterEach(() => {
   cleanup();
@@ -195,7 +196,7 @@ describe("useDropImport on an activity page", () => {
   });
 
   it("says a refused import in the backend's words", async () => {
-    importFiles.mockRejectedValueOnce("The vault is locked");
+    importFiles.mockRejectedValueOnce(commandError(null, "The vault is locked"));
     const { fire } = await renderDropImport("/");
     fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });
     await waitFor(() =>

@@ -240,6 +240,24 @@ export function currentLanguage(): Language {
   return useLanguageStore.getState().language;
 }
 
+/** The message of a key known only at run time — a backend error's code
+ * (#236) — in the language in use, or null when it cannot be said: no
+ * dictionary has the key (an own key only: "constructor" is none), or a
+ * placeholder has no string or number in `params`. The caller then falls
+ * back to what it holds. */
+export function tKnown(key: string, params: Readonly<Record<string, unknown>>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(en, key)) return null;
+  const lang = currentLanguage();
+  const message = DICTIONARIES[lang][key as MessageKey];
+  const filled: Record<string, string | number> = {};
+  for (const [, name] of (typeof message === "string" ? message : message.other).matchAll(/\{(\w+)\}/g)) {
+    const v = Object.prototype.hasOwnProperty.call(params, name) ? params[name] : undefined;
+    if (typeof v !== "string" && typeof v !== "number") return null;
+    filled[name] = v;
+  }
+  return formatMessage(message, lang, filled);
+}
+
 /** A key's message in the language in use, for code outside React. A
  * component calls `useT()` instead: this one does not re-render it when the
  * language changes. */

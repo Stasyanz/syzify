@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::error::CommandError;
+
 /// Get a tile from cache. Returns the file path if cached, None otherwise.
 pub fn get_cached_tile(tiles_dir: &Path, layer: &str, z: u32, x: u32, y: u32) -> Option<PathBuf> {
     let path = tile_path(tiles_dir, layer, z, x, y);
@@ -30,9 +32,11 @@ pub fn cache_size_bytes(tiles_dir: &Path) -> u64 {
 }
 
 /// Clear the entire tile cache.
-pub fn clear_cache(tiles_dir: &Path) -> Result<(), String> {
+pub fn clear_cache(tiles_dir: &Path) -> Result<(), CommandError> {
     if tiles_dir.exists() {
-        fs::remove_dir_all(tiles_dir).map_err(|e| format!("Failed to clear cache: {}", e))?;
+        fs::remove_dir_all(tiles_dir).map_err(|e| {
+            CommandError::coded("tiles.clearFailed", format!("Failed to clear cache: {}", e)).param("detail", e.to_string())
+        })?;
         fs::create_dir_all(tiles_dir).map_err(|e| format!("Failed to recreate cache dir: {}", e))?;
     }
     Ok(())
@@ -97,5 +101,19 @@ mod tests {
         clear_cache(&tmp).unwrap();
         assert_eq!(cache_size_bytes(&tmp), 0);
 
+    }
+
+    /// A cache that cannot be removed says so in the app's words, coded,
+    /// with the system's reason as the detail (#236).
+    #[test]
+    fn a_failed_clear_is_a_coded_error_with_the_system_detail() {
+        let scratch = crate::test_support::ScratchDir::new("tile_clear_fail");
+        let not_a_dir = scratch.join("tiles");
+        fs::write(&not_a_dir, b"a file where the cache folder should be").unwrap();
+        let e = clear_cache(&not_a_dir).unwrap_err();
+        assert_eq!(e.code, Some("tiles.clearFailed"));
+        let detail = e.params["detail"].as_str().unwrap().to_string();
+        assert!(!detail.is_empty());
+        assert_eq!(e.message, format!("Failed to clear cache: {detail}"));
     }
 }

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { SaveSegmentPopover, clampMenuPosition, MENU_W } from "./SaveSegmentPopover";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -108,7 +109,7 @@ describe("SaveSegmentPopover", () => {
   });
 
   it("shows the backend error and stays open", async () => {
-    mocked.saveSegment.mockRejectedValue("selection has no GPS data");
+    mocked.saveSegment.mockRejectedValue(commandError("segments.noGps", "selection has no GPS data"));
     const { onClose } = renderPopover();
     fireEvent.change(screen.getByPlaceholderText("Segment name"), {
       target: { value: "x" },
@@ -116,6 +117,27 @@ describe("SaveSegmentPopover", () => {
     fireEvent.click(screen.getByText("Save"));
     expect(await screen.findByText(/no GPS data/)).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("says a coded refusal of the save and of the duplicate check in Russian (#236)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      mocked.checkSimilarSegments.mockRejectedValue(commandError("segments.outOfRange", "selection is out of range"));
+      renderPopover();
+      expect(await screen.findByText("Выделение выходит за пределы тренировки")).toBeTruthy();
+      cleanup();
+      mocked.checkSimilarSegments.mockResolvedValue([]);
+      mocked.saveSegment.mockRejectedValue(
+        commandError("segments.nameTooLong", "segment name is longer than 200 characters", { count: 200 }),
+      );
+      renderPopover();
+      fireEvent.change(screen.getByPlaceholderText("Название сегмента"), { target: { value: "x" } });
+      fireEvent.click(screen.getByText("Сохранить"));
+      expect(await screen.findByText("Название сегмента длиннее 200 символов")).toBeTruthy();
+      expect(screen.queryByText(/object Object/)).toBeNull();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("speaks Russian: the form, the duplicate warning and the saved beat (#234)", async () => {

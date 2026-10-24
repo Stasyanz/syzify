@@ -4,6 +4,7 @@ import { act, render, cleanup, fireEvent, screen, waitFor } from "@testing-libra
 import { listen } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
+import { commandError } from "../../test/commandError";
 import type { UpdateCheck as UpdateCheckResult } from "../../lib/types";
 import { useLanguageStore } from "../../lib/i18n";
 import { useBusyStore } from "../../stores/busyStore";
@@ -125,7 +126,9 @@ describe("UpdateCheck", () => {
     mocked.checkForUpdates.mockResolvedValue(
       result({ update_available: true, latest_version: "0.2.0" }),
     );
-    mocked.installUpdate.mockRejectedValue("Update install failed: bad signature");
+    mocked.installUpdate.mockRejectedValue(
+      commandError("updates.installFailed", "Update install failed: bad signature", { detail: "bad signature" }),
+    );
     renderRow();
     fireEvent.click(screen.getByText("Check for updates"));
     fireEvent.click(await screen.findByText("Install and restart"));
@@ -135,7 +138,9 @@ describe("UpdateCheck", () => {
   });
 
   it("surfaces a failed check", async () => {
-    mocked.checkForUpdates.mockRejectedValue("Update check failed: offline");
+    mocked.checkForUpdates.mockRejectedValue(
+      commandError("updates.checkFailed", "Update check failed: offline", { detail: "offline" }),
+    );
     renderRow();
     fireEvent.click(screen.getByText("Check for updates"));
     expect(await screen.findByText(/offline/)).toBeTruthy();

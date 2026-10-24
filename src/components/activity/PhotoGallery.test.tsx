@@ -40,6 +40,7 @@ import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { PhotoGallery } from "./PhotoGallery";
 import { useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 afterEach(() => {
   cleanup();
@@ -122,7 +123,9 @@ describe("PhotoGallery", () => {
     await waitFor(() => expect(toasts()).toContain("error: Failed to attach photos: The vault is locked"));
 
     // Caption.
-    vi.mocked(api.updatePhotoCaption).mockRejectedValueOnce("Photo not found: ph-1");
+    vi.mocked(api.updatePhotoCaption).mockRejectedValueOnce(
+      commandError("photos.notFound", "Photo not found: ph-1", { id: "ph-1" }),
+    );
     fireEvent.click(container.querySelectorAll('button[title="Edit caption"]')[0]);
     const input = document.querySelector<HTMLInputElement>('input[type="text"]')!;
     fireEvent.change(input, { target: { value: "Summit" } });

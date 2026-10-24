@@ -15,6 +15,7 @@ import {
 import { SportGlyph } from "../components/brand/SportIcon";
 import { confirmDialog } from "../stores/confirmStore";
 import { formatNumber, useT } from "../lib/i18n";
+import { errorText } from "../lib/errors";
 
 /** Case-insensitive substring filter over segment names. Client-side by
  * design: the list is user-curated and small, a backend query would only
@@ -162,7 +163,7 @@ export function Segments() {
                       onEditCancel={() => setEditing(null)}
                       onDelete={() => void askDelete(s)}
                       renameError={
-                        editing?.id === s.id && rename.isError ? String(rename.error) : null
+                        editing?.id === s.id && rename.isError ? errorText(rename.error) : null
                       }
                     />
                   ))}

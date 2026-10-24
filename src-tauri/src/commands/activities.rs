@@ -10,6 +10,7 @@ use crate::models::lap::Lap;
 use crate::models::swim_length::SwimLength;
 use crate::models::time_in_zone::TimeInZone;
 use crate::models::trackpoint::TrackPointColumns;
+use crate::error::CommandError;
 use crate::geocoding::LocationHit;
 use crate::state::AppState;
 
@@ -17,28 +18,33 @@ use crate::state::AppState;
 pub fn get_activities(
     filters: ActivityFilters,
     state: State<AppState>,
-) -> Result<Vec<ActivitySummary>, String> {
+) -> Result<Vec<ActivitySummary>, CommandError> {
     get_activities_core(&state, &filters)
 }
 
 pub(crate) fn get_activities_core(
     state: &AppState,
     filters: &ActivityFilters,
-) -> Result<Vec<ActivitySummary>, String> {
+) -> Result<Vec<ActivitySummary>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::get_activities(&conn, filters).map_err(|e| e.to_string())
+    Ok(db::activities::get_activities(&conn, filters).map_err(|e| e.to_string())?)
+}
+
+/// The app's words for an activity id that names nothing.
+pub(crate) fn activity_not_found(id: &str) -> CommandError {
+    CommandError::coded("activity.notFound", format!("Activity not found: {id}")).param("id", id)
 }
 
 #[tauri::command]
 pub fn get_activity_detail(
     id: String,
     state: State<AppState>,
-) -> Result<ActivityDetail, String> {
+) -> Result<ActivityDetail, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
     let activity = db::activities::get_activity_by_id(&conn, &id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Activity not found: {}", id))?;
+        .ok_or_else(|| activity_not_found(&id))?;
 
     let trackpoints = db::trackpoints::get_trackpoints_columnar(&conn, &id)
         .map_err(|e| e.to_string())?;
@@ -100,13 +106,13 @@ pub fn update_activity(
     id: String,
     updates: ActivityUpdate,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     update_activity_core(&state, &id, &updates)
 }
 
 /// The State-free part of `update_activity`, testable against a bare
 /// [`AppState`].
-pub(crate) fn update_activity_core(state: &AppState, id: &str, updates: &ActivityUpdate) -> Result<(), String> {
+pub(crate) fn update_activity_core(state: &AppState, id: &str, updates: &ActivityUpdate) -> Result<(), CommandError> {
     use crate::models::activity::has_simulated_course;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     // The sport before the write: the edit modal sends sport_type on every
@@ -133,7 +139,7 @@ pub(crate) fn update_activity_core(state: &AppState, id: &str, updates: &Activit
 }
 
 #[tauri::command]
-pub fn delete_activity(id: String, state: State<AppState>) -> Result<(), String> {
+pub fn delete_activity(id: String, state: State<AppState>) -> Result<(), CommandError> {
     delete_activity_core(&state, &id)
 }
 
@@ -143,22 +149,21 @@ pub fn delete_activity(id: String, state: State<AppState>) -> Result<(), String>
 pub fn merge_into_triathlon(
     activity_ids: Vec<String>,
     state: State<AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let new_id = uuid::Uuid::new_v4().to_string();
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::multisport_legs::merge_into_triathlon(&mut conn, &new_id, &activity_ids)
-        .map_err(|e| e.to_string())
+    Ok(db::multisport_legs::merge_into_triathlon(&mut conn, &new_id, &activity_ids).map_err(|e| e.to_string())?)
 }
 
 /// Reverse a merge: free the legs and delete the container.
 #[tauri::command]
-pub fn unmerge_triathlon(id: String, state: State<AppState>) -> Result<(), String> {
+pub fn unmerge_triathlon(id: String, state: State<AppState>) -> Result<(), CommandError> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::multisport_legs::unmerge(&mut conn, &id).map_err(|e| e.to_string())
+    Ok(db::multisport_legs::unmerge(&mut conn, &id).map_err(|e| e.to_string())?)
 }
 
 /// The State-free part of delete, testable against a bare [`AppState`].
-pub(crate) fn delete_activity_core(state: &AppState, id: &str) -> Result<(), String> {
+pub(crate) fn delete_activity_core(state: &AppState, id: &str) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
     // Remove photo files from vault before deleting the activity row
@@ -192,7 +197,7 @@ pub(crate) fn delete_activity_core(state: &AppState, id: &str) -> Result<(), Str
     }
     db::raw_files::delete_for_activity(&conn, id).map_err(|e| e.to_string())?;
 
-    db::activities::delete_activity(&conn, id).map_err(|e| e.to_string())
+    Ok(db::activities::delete_activity(&conn, id).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
@@ -201,11 +206,10 @@ pub fn get_calendar_data(
     month: u32,
     filters: Option<ActivityFilters>,
     state: State<AppState>,
-) -> Result<Vec<DaySummary>, String> {
+) -> Result<Vec<DaySummary>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let filters = filters.unwrap_or_default();
-    db::activities::get_calendar_data(&conn, year, month, &filters)
-        .map_err(|e| e.to_string())
+    Ok(db::activities::get_calendar_data(&conn, year, month, &filters).map_err(|e| e.to_string())?)
 }
 
 // Sport-type and best-effort recomputes are no longer manual actions: they run
@@ -214,26 +218,26 @@ pub fn get_calendar_data(
 // db::best_efforts::recompute_running) live on for those backfills.
 
 #[tauri::command]
-pub fn get_used_sport_types(state: State<AppState>) -> Result<Vec<String>, String> {
+pub fn get_used_sport_types(state: State<AppState>) -> Result<Vec<String>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::get_used_sport_types(&conn).map_err(|e| e.to_string())
+    Ok(db::activities::get_used_sport_types(&conn).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub fn get_activity_year_range(
     state: State<AppState>,
-) -> Result<Option<(i32, i32)>, String> {
+) -> Result<Option<(i32, i32)>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::get_activity_year_range(&conn).map_err(|e| e.to_string())
+    Ok(db::activities::get_activity_year_range(&conn).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub fn get_activity_record_badges(
     id: String,
     state: State<AppState>,
-) -> Result<Vec<crate::models::activity::RecordBadge>, String> {
+) -> Result<Vec<crate::models::activity::RecordBadge>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::get_record_badges(&conn, &id).map_err(|e| e.to_string())
+    Ok(db::activities::get_record_badges(&conn, &id).map_err(|e| e.to_string())?)
 }
 
 /// The activity's mean-max power curve plus its sport group's all-time
@@ -242,16 +246,16 @@ pub fn get_activity_record_badges(
 pub fn get_power_curve(
     id: String,
     state: State<AppState>,
-) -> Result<crate::models::power_curve::PowerCurveData, String> {
+) -> Result<crate::models::power_curve::PowerCurveData, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::power_curve::get_data(&conn, &id).map_err(|e| e.to_string())
+    Ok(db::power_curve::get_data(&conn, &id).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub fn get_adjacent_activities(
     id: String,
     state: State<AppState>,
-) -> Result<AdjacentActivities, String> {
+) -> Result<AdjacentActivities, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let (prev_id, next_id) =
         db::activities::get_adjacent_activity_ids(&conn, &id).map_err(|e| e.to_string())?;
@@ -268,11 +272,10 @@ pub struct AdjacentActivities {
 pub fn get_activity_locations(
     filters: Option<ActivityFilters>,
     state: State<AppState>,
-) -> Result<Vec<ActivityLocation>, String> {
+) -> Result<Vec<ActivityLocation>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let filters = filters.unwrap_or_default();
-    db::activities::get_activity_start_locations(&conn, &filters)
-        .map_err(|e| e.to_string())
+    Ok(db::activities::get_activity_start_locations(&conn, &filters).map_err(|e| e.to_string())?)
 }
 
 #[derive(serde::Serialize)]
@@ -288,11 +291,11 @@ pub struct LocationUpdateResult {
 /// on the blocking pool: neither the main thread nor an async worker (a
 /// sync fn marked `async` would run inline on one) sits through it.
 #[tauri::command]
-pub async fn update_activity_location(
+pub async fn update_activity_location<R: tauri::Runtime>(
     id: String,
     location_text: String,
-    app: AppHandle,
-) -> Result<LocationUpdateResult, String> {
+    app: AppHandle<R>,
+) -> Result<LocationUpdateResult, CommandError> {
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         update_activity_location_core(&state, &id, &location_text, crate::geocoding::forward_geocode)
@@ -313,7 +316,7 @@ pub(crate) fn update_activity_location_core(
     id: &str,
     location_text: &str,
     geocode: impl Fn(&str) -> Result<(f64, f64, String), String>,
-) -> Result<LocationUpdateResult, String> {
+) -> Result<LocationUpdateResult, CommandError> {
     let trimmed = location_text.trim().to_string();
     if trimmed.is_empty() {
         // Clear location
@@ -379,12 +382,12 @@ pub(crate) fn update_activity_location_core(
 
 /// Network-bound like update_activity_location: on the blocking pool.
 #[tauri::command]
-pub async fn set_activity_location_point(
+pub async fn set_activity_location_point<R: tauri::Runtime>(
     id: String,
     lat: f64,
     lon: f64,
-    app: AppHandle,
-) -> Result<LocationUpdateResult, String> {
+    app: AppHandle<R>,
+) -> Result<LocationUpdateResult, CommandError> {
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         set_activity_location_point_core(&state, &id, lat, lon)
@@ -395,7 +398,9 @@ pub async fn set_activity_location_point(
 
 /// Refuse a place for an activity whose course is simulated (#190): a point
 /// of a virtual world names no place.
-fn refuse_simulated_course(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+/// Uncoded: the UI shows no map for a simulated course, so only a caller
+/// of the bare command meets it.
+fn refuse_simulated_course(conn: &rusqlite::Connection, id: &str) -> Result<(), CommandError> {
     let sport = db::segments::activity_sport(conn, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "activity not found".to_string())?;
@@ -403,7 +408,8 @@ fn refuse_simulated_course(conn: &rusqlite::Connection, id: &str) -> Result<(), 
         return Err(format!(
             "A {}'s course is simulated — its points name no place",
             crate::models::activity::SportType::from_str(&sport).label().to_lowercase()
-        ));
+        )
+        .into());
     }
     Ok(())
 }
@@ -418,10 +424,10 @@ pub(crate) fn set_activity_location_point_core(
     id: &str,
     lat: f64,
     lon: f64,
-) -> Result<LocationUpdateResult, String> {
+) -> Result<LocationUpdateResult, CommandError> {
     if !(lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon))
     {
-        return Err(format!("invalid coordinates: {lat}, {lon}"));
+        return Err(format!("invalid coordinates: {lat}, {lon}").into());
     }
     // The map is not shown for a simulated course (#190), but the command
     // is reachable on its own: a point of a virtual world names no place.
@@ -486,7 +492,10 @@ pub(crate) const LOCATION_SEARCH_MAX_CHARS: usize = 200;
 /// every command that touches `reqwest::blocking` is an `async fn` that
 /// does the work in `spawn_blocking`; the `(async)` attribute is not that.
 #[tauri::command]
-pub async fn search_locations(query: String, app: AppHandle) -> Result<Vec<LocationHit>, String> {
+pub async fn search_locations<R: tauri::Runtime>(
+    query: String,
+    app: AppHandle<R>,
+) -> Result<Vec<LocationHit>, CommandError> {
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         search_locations_core(&state, &query, crate::geocoding::search_locations)
@@ -506,7 +515,7 @@ pub(crate) fn search_locations_core(
     state: &AppState,
     query: &str,
     fetch: impl Fn(&str) -> Result<Vec<LocationHit>, String>,
-) -> Result<Vec<LocationHit>, String> {
+) -> Result<Vec<LocationHit>, CommandError> {
     let trimmed = query.trim();
     let len = trimmed.chars().count();
     if !(LOCATION_SEARCH_MIN_CHARS..=LOCATION_SEARCH_MAX_CHARS).contains(&len) {
@@ -519,7 +528,7 @@ pub(crate) fn search_locations_core(
     if !allowed {
         return Ok(Vec::new());
     }
-    fetch(trimmed)
+    Ok(fetch(trimmed)?)
 }
 
 #[tauri::command]
@@ -529,7 +538,7 @@ pub fn set_activity_location_named(
     lat: f64,
     lon: f64,
     state: State<AppState>,
-) -> Result<LocationUpdateResult, String> {
+) -> Result<LocationUpdateResult, CommandError> {
     set_activity_location_named_core(&state, &id, &name, lat, lon)
 }
 
@@ -544,14 +553,15 @@ pub(crate) fn set_activity_location_named_core(
     name: &str,
     lat: f64,
     lon: f64,
-) -> Result<LocationUpdateResult, String> {
+) -> Result<LocationUpdateResult, CommandError> {
     let name = name.trim();
+    // Uncoded guards: a picked suggestion always has a name and coordinates.
     if name.is_empty() {
-        return Err("empty location name".to_string());
+        return Err("empty location name".into());
     }
     if !(lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon))
     {
-        return Err(format!("invalid coordinates: {lat}, {lon}"));
+        return Err(format!("invalid coordinates: {lat}, {lon}").into());
     }
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let updates = ActivityUpdate {
@@ -580,7 +590,7 @@ pub struct FtpUpdateResult {
 }
 
 #[tauri::command]
-pub fn set_activity_ftp(id: String, ftp_w: f64, state: State<AppState>) -> Result<FtpUpdateResult, String> {
+pub fn set_activity_ftp(id: String, ftp_w: f64, state: State<AppState>) -> Result<FtpUpdateResult, CommandError> {
     set_activity_ftp_core(&state, &id, ftp_w)
 }
 
@@ -598,20 +608,22 @@ pub fn set_activity_ftp(id: String, ftp_w: f64, state: State<AppState>) -> Resul
 /// raw file stays as recorded; this is a database correction, like a
 /// title. Needs normalized power. State-free part, testable against a
 /// bare [`AppState`].
-pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> Result<FtpUpdateResult, String> {
+pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> Result<FtpUpdateResult, CommandError> {
     if !(ftp_w.is_finite() && (1.0..=2000.0).contains(&ftp_w)) {
-        return Err(format!("invalid FTP: {ftp_w}"));
+        return Err(CommandError::coded("activity.invalidFtp", format!("invalid FTP: {ftp_w}")).param("ftp", ftp_w));
     }
     use crate::import::power_summary::{intensity_and_stress, recompute_power_zones};
     let ftp_w = ftp_w.round();
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let stored = db::activities::power_summary(&conn, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Activity not found: {id}"))?;
-    let np = stored
-        .normalized_power_w
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .ok_or("this activity has no normalized power, so IF and TSS cannot be recomputed")?;
+        .ok_or_else(|| activity_not_found(id))?;
+    let np = stored.normalized_power_w.filter(|v| v.is_finite() && *v > 0.0).ok_or_else(|| {
+        CommandError::coded(
+            "activity.ftpNoPower",
+            "this activity has no normalized power, so IF and TSS cannot be recomputed",
+        )
+    })?;
     let positive = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
     // A stored TSS is rescaled, not recomputed: TSS ∝ 1/FTP², so this keeps
     // the time it was figured over — the device's timer, or the track's
@@ -620,8 +632,12 @@ pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> R
     let training_stress_score = match (positive(stored.threshold_power_w), positive(stored.training_stress_score)) {
         (Some(old_ftp), Some(tss)) => tss * (old_ftp / ftp_w).powi(2),
         _ => {
-            let duration_s = positive(stored.duration_s)
-                .ok_or("this activity has no recorded duration, so TSS cannot be recomputed")?;
+            let duration_s = positive(stored.duration_s).ok_or_else(|| {
+                CommandError::coded(
+                    "activity.ftpNoDuration",
+                    "this activity has no recorded duration, so TSS cannot be recomputed",
+                )
+            })?;
             intensity_and_stress(np, ftp_w, Some(duration_s)).1.unwrap_or_default()
         }
     };
@@ -642,9 +658,9 @@ pub(crate) fn set_activity_ftp_core(state: &AppState, id: &str, ftp_w: f64) -> R
 pub fn search_activities(
     query: String,
     state: State<AppState>,
-) -> Result<Vec<ActivitySummary>, String> {
+) -> Result<Vec<ActivitySummary>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::search_activities(&conn, &query).map_err(|e| e.to_string())
+    Ok(db::activities::search_activities(&conn, &query).map_err(|e| e.to_string())?)
 }
 
 #[cfg(test)]
@@ -712,6 +728,16 @@ mod tests {
     /// The suggestion search never touches the network for a query too short
     /// to mean anything or with the geocoding toggle off; with it on, the
     /// trimmed query goes out and the hits come back as they are.
+    /// The command itself: a query too short to send answers nothing,
+    /// without the network.
+    #[test]
+    fn search_locations_sends_nothing_for_a_short_query() {
+        let vault = ScratchDir::new("locsearch_cmd");
+        let app = crate::test_support::mock_app_at(&vault);
+        let hits = tauri::async_runtime::block_on(search_locations(" ".into(), app.handle().clone())).unwrap();
+        assert!(hits.is_empty());
+    }
+
     #[test]
     fn search_locations_core_gates_on_length_and_the_toggle() {
         let (_vault, state) = state_with_activity();
@@ -847,7 +873,14 @@ mod tests {
         // Garbage in, nothing written.
         assert!(set_activity_ftp_core(&state, "act-1", 0.0).is_err());
         assert!(set_activity_ftp_core(&state, "act-1", f64::NAN).is_err());
-        assert!(set_activity_ftp_core(&state, "act-1", 5000.0).is_err());
+        assert_eq!(
+            set_activity_ftp_core(&state, "act-1", 5000.0).unwrap_err(),
+            CommandError::coded("activity.invalidFtp", "invalid FTP: 5000").param("ftp", 5000.0)
+        );
+        assert_eq!(
+            set_activity_ftp_core(&state, "nope", 240.0).unwrap_err(),
+            CommandError::coded("activity.notFound", "Activity not found: nope").param("id", "nope")
+        );
         let conn = state.db.lock().unwrap();
         let ftp: f64 = conn.query_row("SELECT threshold_power_w FROM activity WHERE id='act-1'", [], |r| r.get(0)).unwrap();
         assert_eq!(ftp, 250.0);
@@ -855,11 +888,15 @@ mod tests {
         // refused, and said why.
         conn.execute("UPDATE activity SET duration_s = NULL, training_stress_score = NULL WHERE id='act-1'", []).unwrap();
         drop(conn);
-        assert!(set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err().contains("no recorded duration"));
+        let e = set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err();
+        assert_eq!(e.code, Some("activity.ftpNoDuration"));
+        assert!(e.message.contains("no recorded duration"));
         let conn = state.db.lock().unwrap();
         conn.execute("UPDATE activity SET duration_s = 3600, normalized_power_w = NULL WHERE id='act-1'", []).unwrap();
         drop(conn);
-        assert!(set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err().contains("no normalized power"));
+        let e = set_activity_ftp_core(&state, "act-1", 240.0).unwrap_err();
+        assert_eq!(e.code, Some("activity.ftpNoPower"));
+        assert!(e.message.contains("no normalized power"));
     }
 
     /// A corrected FTP rescales the stored TSS, keeping the time it was
@@ -890,6 +927,56 @@ mod tests {
         state.db.lock().unwrap().execute("UPDATE activity SET training_stress_score = NULL WHERE id = 'act-1'", []).unwrap();
         let fresh = set_activity_ftp_core(&state, "act-1", 200.0).unwrap();
         assert!((fresh.training_stress_score - 100.0).abs() < 1e-9, "3600 × 200² / (200² × 3600) × 100");
+    }
+
+    /// The thin commands, through `State`: each answers on a small vault,
+    /// and a refused FTP is coded (#236).
+    #[test]
+    fn the_commands_answer_through_their_state() {
+        let vault = ScratchDir::new("activity_state");
+        let app = crate::test_support::mock_app_at(&vault);
+        app.state::<AppState>()
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO activity (id, start_time, sport_type, duration_s) VALUES
+                   ('swim', '2026-10-01T07:00:00+00:00', 'swim', 600),
+                   ('bike', '2026-10-01T07:20:00+00:00', 'ride', 600),
+                   ('gone', '2026-10-02T07:00:00+00:00', 'run', 600);",
+            )
+            .unwrap();
+        assert_eq!(get_used_sport_types(app.state()).unwrap().len(), 3);
+        assert_eq!(get_activity_year_range(app.state()).unwrap(), Some((2026, 2026)));
+        assert_eq!(get_calendar_data(2026, 10, None, app.state()).unwrap().len(), 2);
+        assert!(get_activity_record_badges("bike".into(), app.state()).is_ok());
+        assert!(get_power_curve("bike".into(), app.state()).is_ok());
+        assert!(get_activity_locations(None, app.state()).is_ok());
+        assert!(search_activities("bike".into(), app.state()).is_ok());
+        assert_eq!(
+            set_activity_ftp("bike".into(), -1.0, app.state()).unwrap_err().code,
+            Some("activity.invalidFtp")
+        );
+        assert_eq!(get_activities(ActivityFilters::default(), app.state()).unwrap().len(), 3);
+        let title = ActivityUpdate { title: Some("Morning".into()), ..Default::default() };
+        update_activity("bike".into(), title, app.state()).unwrap();
+        let near = get_adjacent_activities("bike".into(), app.state()).unwrap();
+        assert!(near.prev_id.is_some() || near.next_id.is_some());
+        let named = set_activity_location_named("bike".into(), "Alanya".into(), 36.5, 32.0, app.state()).unwrap();
+        assert_eq!(named.location_name, "Alanya");
+        // Neither reaches the network: a blank text clears, a point off the
+        // globe is refused first.
+        let handle = app.handle().clone();
+        let cleared =
+            tauri::async_runtime::block_on(update_activity_location("bike".into(), " ".into(), handle.clone())).unwrap();
+        assert_eq!(cleared.location_name, "");
+        let off = tauri::async_runtime::block_on(set_activity_location_point("bike".into(), 91.0, 0.0, handle));
+        let Err(err) = off else { panic!("a point off the globe was taken") };
+        assert_eq!(err.code, None);
+        delete_activity("gone".into(), app.state()).unwrap();
+        let container = merge_into_triathlon(vec!["swim".into(), "bike".into()], app.state()).unwrap();
+        unmerge_triathlon(container, app.state()).unwrap();
+        assert_eq!(get_used_sport_types(app.state()).unwrap().len(), 2);
     }
 
     /// The detail's FTP hint compares a ride with earlier rides only: a
@@ -953,7 +1040,8 @@ mod tests {
         }
 
         let err = set_activity_ftp_core(&state, "act-1", 250.0).unwrap_err();
-        assert!(err.contains("zone insert refused"), "{err}");
+        assert!(err.message.contains("zone insert refused"), "{err}");
+        assert_eq!(err.code, None, "SQLite's words stay uncoded");
 
         let conn = state.db.lock().unwrap();
         let (ftp, iff, tss): (f64, f64, f64) = conn
@@ -1246,7 +1334,7 @@ mod tests {
             Ok(_) => panic!("a virtual ride took a destination point"),
             Err(e) => e,
         };
-        assert_eq!(err, "A virtual ride's course is simulated — its points name no place");
+        assert_eq!(err.message, "A virtual ride's course is simulated — its points name no place");
         assert!(set_activity_location_point_core(&state, "missing", 1.0, 1.0).is_err());
         {
             let conn = state.db.lock().unwrap();
@@ -1260,7 +1348,7 @@ mod tests {
             Ok(_) => panic!("a virtual run took a destination point"),
             Err(e) => e,
         };
-        assert_eq!(err, "A virtual run's course is simulated — its points name no place");
+        assert_eq!(err.message, "A virtual run's course is simulated — its points name no place");
         let conn = state.db.lock().unwrap();
         let (name, lat): (Option<String>, Option<f64>) = conn
             .query_row("SELECT location_name, start_lat FROM activity WHERE id = 'zw'", [], |r| Ok((r.get(0)?, r.get(1)?)))

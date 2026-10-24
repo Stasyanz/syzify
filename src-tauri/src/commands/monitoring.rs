@@ -1,17 +1,18 @@
 use tauri::State;
 
 use crate::db;
+use crate::error::CommandError;
 use crate::models::monitoring::{MonitoringDeleted, MonitoringSummary};
 use crate::state::AppState;
 
 /// Settings → Vault: how much Garmin monitoring the vault holds.
 #[tauri::command]
-pub fn get_monitoring_summary(state: State<AppState>) -> Result<MonitoringSummary, String> {
+pub fn get_monitoring_summary(state: State<AppState>) -> Result<MonitoringSummary, CommandError> {
     // While locked the connection is a schema-less stand-in — say "locked",
     // not "no such table".
     super::import::ensure_vault_unlocked(&state)?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::monitoring::summary(&conn).map_err(|e| e.to_string())
+    Ok(db::monitoring::summary(&conn).map_err(|e| e.to_string())?)
 }
 
 /// Delete the monitoring data of an inclusive local-date range (ADR 0002,
@@ -23,7 +24,7 @@ pub fn delete_monitoring_range(
     from: String,
     to: String,
     state: State<AppState>,
-) -> Result<MonitoringDeleted, String> {
+) -> Result<MonitoringDeleted, CommandError> {
     delete_monitoring_range_core(&state, &from, &to)
 }
 
@@ -36,12 +37,12 @@ pub(crate) fn delete_monitoring_range_core(
     state: &AppState,
     from: &str,
     to: &str,
-) -> Result<MonitoringDeleted, String> {
+) -> Result<MonitoringDeleted, CommandError> {
     if !is_date(from) || !is_date(to) {
-        return Err("Dates must be YYYY-MM-DD".to_string());
+        return Err(CommandError::coded("monitoring.badDate", "Dates must be YYYY-MM-DD"));
     }
     if to < from {
-        return Err("The end date is before the start date".to_string());
+        return Err(CommandError::coded("monitoring.endBeforeStart", "The end date is before the start date"));
     }
     super::import::ensure_vault_unlocked(state)?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -179,6 +180,16 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_answers_through_the_state() {
+        use tauri::Manager;
+        let vault = crate::test_support::ScratchDir::new("mon_summary");
+        let app = crate::test_support::mock_app_at(&vault);
+        assert!(get_monitoring_summary(app.state()).is_ok());
+        let none = delete_monitoring_range("2026-09-05".into(), "2026-09-05".into(), app.state()).unwrap();
+        assert_eq!((none.days, none.files), (0, 0));
+    }
+
+    #[test]
     fn deleting_a_day_removes_its_file_row_and_hash_but_keeps_the_other_day() {
         let vault = crate::test_support::ScratchDir::new("mon_del");
         std::fs::create_dir_all(vault.join("raw")).unwrap();
@@ -252,7 +263,14 @@ mod tests {
         seed_file(&state, "rf-a", &one_day(MIDNIGHT), false);
         assert!(delete_monitoring_range_core(&state, "2026-9-5", "2026-09-05").is_err());
         assert!(delete_monitoring_range_core(&state, "2026-09-05", "yesterday").is_err());
-        assert!(delete_monitoring_range_core(&state, "2026-09-06", "2026-09-05").is_err());
+        assert_eq!(
+            delete_monitoring_range_core(&state, "2026-09-06", "2026-09-05").unwrap_err(),
+            CommandError::coded("monitoring.endBeforeStart", "The end date is before the start date")
+        );
+        assert_eq!(
+            delete_monitoring_range_core(&state, "2026-09-05", "yesterday").unwrap_err(),
+            CommandError::coded("monitoring.badDate", "Dates must be YYYY-MM-DD")
+        );
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day"), 1);
         assert!(vault.join("raw/rf-a.fit").exists());
     }
@@ -354,7 +372,7 @@ mod tests {
         };
         crate::crypto::write_vault_lock(&vault, &lock).unwrap();
         let err = delete_monitoring_range_core(&state, "2026-09-05", "2026-09-05").unwrap_err();
-        assert!(err.contains("locked"), "{err}");
+        assert_eq!(err.code, Some("vault.locked"));
         assert_eq!(count(&state, "SELECT COUNT(*) FROM monitoring_day"), 1);
         assert!(vault.join("raw/rf-a.fit").exists());
     }

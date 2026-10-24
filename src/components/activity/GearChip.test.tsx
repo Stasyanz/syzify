@@ -13,6 +13,7 @@ vi.mock("../../stores/toastStore", () => ({
 import { GearChip, gearChipVisible, gearPlaceholder, gearTip } from "./GearChip";
 import { api } from "../../lib/tauri";
 import { t, useLanguageStore } from "../../lib/i18n";
+import { commandError } from "../../test/commandError";
 
 const road: GearItem = {
   id: "g-road",
@@ -103,8 +104,8 @@ describe("GearChip", () => {
   });
 
   it("says a refusal and leaves the menu open", async () => {
-    // A Tauri command refuses with a bare string, not an Error.
-    vi.mocked(api.setActivityGear).mockRejectedValueOnce("Bring the gear back");
+    // A Tauri command refuses with a CommandError, not an Error.
+    vi.mocked(api.setActivityGear).mockRejectedValueOnce(commandError(null, "Bring the gear back"));
     const onChanged = renderIt({ gearId: "g-road" });
     await waitFor(() => expect(screen.getByTestId("gear-chip").textContent).toBe("Road"));
     fireEvent.click(screen.getByTestId("gear-chip"));

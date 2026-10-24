@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use tauri::State;
 use uuid::Uuid;
 
+use crate::commands::activities::activity_not_found;
 use crate::db;
+use crate::error::CommandError;
 use crate::models::photo::Photo;
 use crate::state::AppState;
 
@@ -19,14 +21,18 @@ fn read_photo_file(
     vault_path: &Path,
     key: Option<&[u8; 32]>,
     rel: &str,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, CommandError> {
     let full = vault_path.join(rel);
     if rel.ends_with(".enc") {
-        let key = key.ok_or("Vault is locked")?;
-        crate::crypto::decrypt_file_to_memory(key, &full)
+        let key = key.ok_or_else(|| CommandError::coded("photos.vaultLocked", "Vault is locked"))?;
+        Ok(crate::crypto::decrypt_file_to_memory(key, &full)?)
     } else {
-        fs::read(&full).map_err(|e| format!("read photo file: {}", e))
+        Ok(fs::read(&full).map_err(|e| format!("read photo file: {}", e))?)
     }
+}
+
+fn photo_not_found(id: &str) -> CommandError {
+    CommandError::coded("photos.notFound", format!("Photo not found: {}", id)).param("id", id)
 }
 
 const THUMB_MAX_DIM: u32 = 512;
@@ -55,16 +61,18 @@ pub fn attach_photos(
     activity_id: String,
     paths: Vec<String>,
     state: State<AppState>,
-) -> Result<AttachPhotosResult, String> {
+) -> Result<AttachPhotosResult, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
     db::activities::get_activity_by_id(&conn, &activity_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Activity not found: {}", activity_id))?;
+        .ok_or_else(|| activity_not_found(&activity_id))?;
 
     let activity_dir = state.vault_path.join("photos").join(&activity_id);
-    fs::create_dir_all(&activity_dir)
-        .map_err(|e| format!("Failed to create photos dir: {}", e))?;
+    fs::create_dir_all(&activity_dir).map_err(|e| {
+        CommandError::coded("photos.createDirFailed", format!("Failed to create photos dir: {}", e))
+            .param("detail", e.to_string())
+    })?;
 
     // Key only when the `photos` scope is on — see AppState::encryption_key_for.
     let key = state.encryption_key_for(|s| s.photos)?;
@@ -318,21 +326,21 @@ fn attach_one(
 pub fn get_photos(
     activity_id: String,
     state: State<AppState>,
-) -> Result<Vec<Photo>, String> {
+) -> Result<Vec<Photo>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::photos::get_photos_for_activity(&conn, &activity_id).map_err(|e| e.to_string())
+    Ok(db::photos::get_photos_for_activity(&conn, &activity_id).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub fn delete_photo(
     photo_id: String,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
     let photo = db::photos::get_photo_by_id(&conn, &photo_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Photo not found: {}", photo_id))?;
+        .ok_or_else(|| photo_not_found(&photo_id))?;
 
     let full_path = state.vault_path.join(&photo.path_in_vault);
     let _ = fs::remove_file(&full_path);
@@ -349,7 +357,7 @@ pub fn update_photo_caption(
     photo_id: String,
     caption: Option<String>,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::photos::update_caption(&conn, &photo_id, caption.as_deref())
         .map_err(|e| e.to_string())?;
@@ -359,7 +367,7 @@ pub fn update_photo_caption(
 /// Save a PNG produced on the frontend (e.g. share-image export) to an
 /// arbitrary destination path the user picked via the file dialog.
 #[tauri::command]
-pub fn save_share_image(dest_path: String, png_base64: String) -> Result<(), String> {
+pub fn save_share_image(dest_path: String, png_base64: String) -> Result<(), CommandError> {
     use base64::{engine::general_purpose, Engine as _};
 
     // This command writes to a path supplied by the frontend. Restrict it to
@@ -370,14 +378,18 @@ pub fn save_share_image(dest_path: String, png_base64: String) -> Result<(), Str
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("png"))
         .unwrap_or(false);
+    // Uncoded guards, like the base64 one below: the save dialog names the
+    // extension and the frontend encodes the image itself.
     if !is_png {
-        return Err("Share image must be saved with a .png extension".to_string());
+        return Err("Share image must be saved with a .png extension".into());
     }
 
     let bytes = general_purpose::STANDARD
         .decode(png_base64.as_bytes())
         .map_err(|e| format!("base64 decode: {}", e))?;
-    fs::write(&dest_path, &bytes).map_err(|e| format!("write file: {}", e))?;
+    fs::write(&dest_path, &bytes).map_err(|e| {
+        CommandError::coded("share.writeFailed", format!("write file: {}", e)).param("detail", e.to_string())
+    })?;
     Ok(())
 }
 
@@ -388,12 +400,12 @@ pub fn get_photo_data_url(
     photo_id: String,
     size: Option<String>,
     state: State<AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     use base64::{engine::general_purpose, Engine as _};
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let photo = db::photos::get_photo_by_id(&conn, &photo_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Photo not found: {}", photo_id))?;
+        .ok_or_else(|| photo_not_found(&photo_id))?;
 
     let (rel, mime): (String, String) = if size.as_deref() == Some("thumb") {
         match &photo.thumbnail_path {
@@ -416,7 +428,7 @@ pub fn get_photo_data_url(
 pub fn reorder_photos(
     photo_ids: Vec<String>,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     for (idx, id) in photo_ids.iter().enumerate() {
         db::photos::update_sort_order(&conn, id, idx as i64)
@@ -886,8 +898,43 @@ mod tests {
         // A .png destination is accepted.
         let ok_dir = ScratchDir::new("photos_share");
         let ok = ok_dir.join("out.png");
-        save_share_image(ok.to_str().unwrap().into(), b64).unwrap();
+        save_share_image(ok.to_str().unwrap().into(), b64.clone()).unwrap();
         assert!(ok.exists());
+
+        // A folder that is not there: the OS refuses, said in coded words (#236).
+        let lost = ok_dir.join("gone/out.png");
+        let err = save_share_image(lost.to_str().unwrap().into(), b64).unwrap_err();
+        assert_eq!(err.code, Some("share.writeFailed"));
+        assert_eq!(err.message, format!("write file: {}", err.params["detail"].as_str().unwrap()));
+    }
+
+    /// The commands, through `State`: an unknown activity or photo, and a
+    /// photos folder that cannot be made, are refused in coded words (#236).
+    #[test]
+    fn the_commands_refuse_in_coded_words() {
+        use tauri::Manager;
+        let vault = ScratchDir::new("photos_state");
+        let app = crate::test_support::mock_app_at(&vault);
+        assert!(get_photos("act-1".into(), app.state()).unwrap().is_empty());
+        let ghost = CommandError::coded("photos.notFound", "Photo not found: ghost").param("id", "ghost");
+        assert_eq!(delete_photo("ghost".into(), app.state()), Err(ghost.clone()));
+        assert_eq!(get_photo_data_url("ghost".into(), None, app.state()), Err(ghost));
+        // Nothing to change on an unknown photo: no refusal either.
+        assert!(update_photo_caption("ghost".into(), Some("hi".into()), app.state()).is_ok());
+        assert!(reorder_photos(vec!["ghost".into()], app.state()).is_ok());
+        let Err(err) = attach_photos("act-1".into(), vec![], app.state()) else { panic!("no such activity") };
+        assert_eq!(err, crate::commands::activities::activity_not_found("act-1"));
+
+        app.state::<AppState>()
+            .db
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO activity (id, start_time) VALUES ('act-1', '2026-01-01T10:00:00+00:00')", [])
+            .unwrap();
+        // A file where the photos folder should be.
+        fs::write(vault.join("photos"), b"x").unwrap();
+        let Err(err) = attach_photos("act-1".into(), vec![], app.state()) else { panic!("no photos folder") };
+        assert_eq!(err.code, Some("photos.createDirFailed"));
     }
 
     #[test]

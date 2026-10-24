@@ -2,6 +2,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::db;
+use crate::error::CommandError;
 use crate::models::segment::{
     NewSegmentMeta, Segment, SegmentEffortRow, SegmentLeaderboardRow, SegmentSummaryRow,
     SimilarSegment,
@@ -10,7 +11,8 @@ use crate::models::trackpoint::TrackGeometry;
 use crate::state::AppState;
 
 /// Sport + geometry of the source activity (the only columns segment
-/// building needs — not the full 20-column trackpoint read).
+/// building needs — not the full 20-column trackpoint read). Uncoded: the
+/// activity page offers no segment on a simulated course.
 fn segment_source(
     conn: &rusqlite::Connection,
     activity_id: &str,
@@ -52,6 +54,48 @@ mod tests {
         assert_eq!(segment_source(&conn, "road").unwrap().0, "ride");
         assert_eq!(segment_source(&conn, "none").unwrap_err(), "activity not found");
     }
+
+    /// The commands, through `State`: a segment is checked, saved, listed,
+    /// renamed and deleted; an unknown one is refused in coded words (#236).
+    #[test]
+    fn the_commands_answer_through_their_state() {
+        use tauri::Manager;
+        let vault = crate::test_support::ScratchDir::new("segments_state");
+        let app = crate::test_support::mock_app_at(&vault);
+        app.state::<AppState>()
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES ('road', '2026-10-01T07:00:00+00:00', 'ride');
+                 INSERT INTO trackpoint (activity_id, t, lat, lon, altitude_m) VALUES
+                   ('road', '2026-10-01T07:00:00+00:00', 55.750, 37.600, 100),
+                   ('road', '2026-10-01T07:01:00+00:00', 55.751, 37.601, 101),
+                   ('road', '2026-10-01T07:02:00+00:00', 55.752, 37.602, 102);",
+            )
+            .unwrap();
+        assert!(check_similar_segments("road".into(), 0, 2, app.state()).unwrap().is_empty());
+        let seg = save_segment("road".into(), 0, 2, "Climb".into(), app.state()).unwrap();
+        assert_eq!(list_segments(app.state()).unwrap().len(), 1);
+        rename_segment(seg.id.clone(), "Hill".into(), app.state()).unwrap();
+        assert!(get_segment_efforts(seg.id.clone(), app.state()).is_ok());
+        assert!(get_activity_segment_efforts("road".into(), app.state()).is_ok());
+        assert_eq!(
+            rename_segment("ghost".into(), "Hill".into(), app.state()),
+            Err(CommandError::coded("segments.notFound", "segment not found"))
+        );
+        assert_eq!(
+            rename_segment(seg.id.clone(), " ".into(), app.state()).unwrap_err().code,
+            Some("segments.nameEmpty")
+        );
+        delete_segment(seg.id, app.state()).unwrap();
+        assert!(list_segments(app.state()).unwrap().is_empty());
+        // What SQLite says otherwise stays its own words.
+        app.state::<AppState>().db.lock().unwrap().execute_batch("ALTER TABLE segment RENAME TO segment_gone").unwrap();
+        let e = rename_segment("any".into(), "Hill".into(), app.state()).unwrap_err();
+        assert_eq!(e.code, None);
+        assert!(e.message.contains("no such table"), "{e}");
+    }
 }
 
 /// Existing segments that look like duplicates of the would-be segment
@@ -63,7 +107,7 @@ pub fn check_similar_segments(
     start_idx: usize,
     end_idx: usize,
     state: State<AppState>,
-) -> Result<Vec<SimilarSegment>, String> {
+) -> Result<Vec<SimilarSegment>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let (sport, geo) = segment_source(&conn, &activity_id)?;
     // A throwaway build gives the candidate's endpoints and haversine length
@@ -80,7 +124,7 @@ pub fn check_similar_segments(
         end_idx,
         &geo,
     )?;
-    db::segments::find_similar(
+    Ok(db::segments::find_similar(
         &conn,
         &sport,
         seg.start_lat,
@@ -89,7 +133,7 @@ pub fn check_similar_segments(
         seg.end_lon,
         seg.distance_m,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?)
 }
 
 /// Save the selected trackpoint range as a named segment. Everything is
@@ -102,7 +146,7 @@ pub fn save_segment(
     end_idx: usize,
     name: String,
     state: State<AppState>,
-) -> Result<Segment, String> {
+) -> Result<Segment, CommandError> {
     let name = db::segments::validated_name(&name)?;
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     let (sport, geo) = segment_source(&conn, &activity_id)?;
@@ -163,26 +207,30 @@ fn backfill_segment_off_thread(db_handle: crate::state::Db, segment_id: String) 
 
 /// Every saved segment with its effort aggregates — the /segments page.
 #[tauri::command]
-pub fn list_segments(state: State<AppState>) -> Result<Vec<SegmentSummaryRow>, String> {
+pub fn list_segments(state: State<AppState>) -> Result<Vec<SegmentSummaryRow>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::segments::list_segments(&conn).map_err(|e| e.to_string())
+    Ok(db::segments::list_segments(&conn).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub fn rename_segment(id: String, name: String, state: State<AppState>) -> Result<(), String> {
-    let name = db::segments::validated_name(&name)?;
+pub fn rename_segment(id: String, name: String, state: State<AppState>) -> Result<(), CommandError> {
+    rename_segment_core(&state, &id, &name)
+}
+
+pub(crate) fn rename_segment_core(state: &AppState, id: &str, name: &str) -> Result<(), CommandError> {
+    let name = db::segments::validated_name(name)?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::segments::rename_segment(&conn, &id, name).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => "segment not found".to_string(),
-        e => e.to_string(),
+    db::segments::rename_segment(&conn, id, name).map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => CommandError::coded("segments.notFound", "segment not found"),
+        e => e.to_string().into(),
     })
 }
 
 /// Delete a segment — polyline and efforts cascade with it.
 #[tauri::command]
-pub fn delete_segment(id: String, state: State<AppState>) -> Result<(), String> {
+pub fn delete_segment(id: String, state: State<AppState>) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::segments::delete_segment(&conn, &id).map_err(|e| e.to_string())
+    Ok(db::segments::delete_segment(&conn, &id).map_err(|e| e.to_string())?)
 }
 
 /// A segment's leaderboard, best effort first.
@@ -190,9 +238,9 @@ pub fn delete_segment(id: String, state: State<AppState>) -> Result<(), String> 
 pub fn get_segment_efforts(
     id: String,
     state: State<AppState>,
-) -> Result<Vec<SegmentLeaderboardRow>, String> {
+) -> Result<Vec<SegmentLeaderboardRow>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::segment_efforts::efforts_for_segment(&conn, &id).map_err(|e| e.to_string())
+    Ok(db::segment_efforts::efforts_for_segment(&conn, &id).map_err(|e| e.to_string())?)
 }
 
 /// The activity's detected segment passes, with per-segment standings.
@@ -200,7 +248,7 @@ pub fn get_segment_efforts(
 pub fn get_activity_segment_efforts(
     activity_id: String,
     state: State<AppState>,
-) -> Result<Vec<SegmentEffortRow>, String> {
+) -> Result<Vec<SegmentEffortRow>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::segment_efforts::efforts_for_activity(&conn, &activity_id).map_err(|e| e.to_string())
+    Ok(db::segment_efforts::efforts_for_activity(&conn, &activity_id).map_err(|e| e.to_string())?)
 }

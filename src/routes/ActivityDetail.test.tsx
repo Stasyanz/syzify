@@ -47,6 +47,7 @@ import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { ActivityDetailPage } from "./ActivityDetail";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 
 afterEach(cleanup);
 
@@ -212,6 +213,7 @@ describe("ActivityDetailPage refusals (#182)", () => {
   /** The backend refuses with a bare string; a JS-side failure is an
    * Error. The toast carries the words alone either way. */
   for (const [kind, make] of [
+    ["an uncoded command error", (m: string) => commandError(null, m)],
     ["a string", (m: string) => m],
     ["an Error", (m: string) => new Error(m)],
   ] as const) {

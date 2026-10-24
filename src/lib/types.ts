@@ -1,5 +1,13 @@
 import { t, type Translator } from "./i18n";
 
+/** What a command errs with (src-tauri/src/error.rs), as a rejection or in a
+ * DTO's field: said through `errorText`, never read by its fields. */
+export interface CommandError {
+  code: string | null;
+  params: Record<string, string | number>;
+  message: string;
+}
+
 export interface Activity {
   id: string;
   /** The location point (typed, picked, or a suggestion), if any. */

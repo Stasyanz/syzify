@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::vault_busy;
 use crate::crypto;
 use crate::db;
+use crate::error::CommandError;
 use crate::import::catch_up;
 use crate::import::pipeline;
 use crate::import::watcher;
@@ -12,15 +14,15 @@ use crate::state::AppState;
 use crate::vault;
 
 #[tauri::command]
-pub fn get_setting(key: String, state: State<AppState>) -> Result<Option<String>, String> {
+pub fn get_setting(key: String, state: State<AppState>) -> Result<Option<String>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::settings::get_setting(&conn, &key).map_err(|e| e.to_string())
+    Ok(db::settings::get_setting(&conn, &key).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub fn set_setting(key: String, value: String, state: State<AppState>) -> Result<(), String> {
+pub fn set_setting(key: String, value: String, state: State<AppState>) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::settings::set_setting(&conn, &key, &value).map_err(|e| e.to_string())
+    Ok(db::settings::set_setting(&conn, &key, &value).map_err(|e| e.to_string())?)
 }
 
 /// Maps a legal-document id from the UI to its bundled resource filename.
@@ -38,13 +40,13 @@ fn legal_doc_file(doc: &str) -> Option<&'static str> {
 /// surfaced in Settings → About so the app itself carries its license terms
 /// (AGPLv3 §5(d) "Appropriate Legal Notices" friendliness for forks too).
 #[tauri::command]
-pub fn get_legal_text(doc: String, app: AppHandle) -> Result<String, String> {
+pub fn get_legal_text<R: tauri::Runtime>(doc: String, app: AppHandle<R>) -> Result<String, CommandError> {
     let file = legal_doc_file(&doc).ok_or(format!("Unknown legal document: {doc}"))?;
     let path = app
         .path()
         .resolve(file, tauri::path::BaseDirectory::Resource)
         .map_err(|e| e.to_string())?;
-    fs::read_to_string(path).map_err(|e| e.to_string())
+    Ok(fs::read_to_string(path).map_err(|e| e.to_string())?)
 }
 
 /// Kick off a background geocoding pass now — called when the user flips the
@@ -67,25 +69,30 @@ pub struct ScanResult {
 }
 
 #[tauri::command]
-pub fn get_watch_folders(state: State<AppState>) -> Result<Vec<WatchFolder>, String> {
+pub fn get_watch_folders(state: State<AppState>) -> Result<Vec<WatchFolder>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::watch_folders::list(&conn).map_err(|e| e.to_string())
+    Ok(db::watch_folders::list(&conn).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub fn add_watch_folder(path: String, state: State<AppState>) -> Result<WatchFolder, String> {
+pub fn add_watch_folder(path: String, state: State<AppState>) -> Result<WatchFolder, CommandError> {
+    add_watch_folder_core(&state, &path)
+}
+
+pub(crate) fn add_watch_folder_core(state: &AppState, path: &str) -> Result<WatchFolder, CommandError> {
     // Validate path exists
-    if !Path::new(&path).is_dir() {
-        return Err(format!("Directory does not exist: {}", path));
+    if !Path::new(path).is_dir() {
+        return Err(CommandError::coded("watch.noDirectory", format!("Directory does not exist: {}", path))
+            .param("path", path));
     }
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::watch_folders::add(&conn, &path).map_err(|e| e.to_string())
+    Ok(db::watch_folders::add(&conn, path).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub fn remove_watch_folder(id: i64, state: State<AppState>) -> Result<(), String> {
+pub fn remove_watch_folder(id: i64, state: State<AppState>) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::watch_folders::remove(&conn, id).map_err(|e| e.to_string())
+    Ok(db::watch_folders::remove(&conn, id).map_err(|e| e.to_string())?)
 }
 
 /// The files a scan would import from the watch folders, plus the folders
@@ -112,7 +119,7 @@ pub fn scan_targets(folders: &[String]) -> (Vec<String>, Vec<pipeline::FailedFil
 /// same path as a drop (locked-vault check, progress, monitoring batch,
 /// geocoding); the pipeline skips what the vault already holds.
 #[tauri::command]
-pub async fn scan_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanResult, String> {
+pub async fn scan_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanResult, CommandError> {
     let folders = {
         let state = app.state::<AppState>();
         // Checked here as well as in import_paths: a scan that finds only
@@ -138,14 +145,14 @@ pub async fn scan_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<
 }
 
 #[tauri::command]
-pub fn get_vault_path(state: State<AppState>) -> Result<String, String> {
+pub fn get_vault_path(state: State<AppState>) -> Result<String, CommandError> {
     Ok(state.vault_path.to_string_lossy().to_string())
 }
 
 /// A boot-time vault error (e.g. the vault sits in a macOS-protected folder
 /// and the app lacks Full Disk Access), or None when the vault opened fine.
 #[tauri::command]
-pub fn get_vault_error(state: State<AppState>) -> Result<Option<String>, String> {
+pub fn get_vault_error(state: State<AppState>) -> Result<Option<String>, CommandError> {
     Ok(state.vault_error.lock().map_err(|e| e.to_string())?.clone())
 }
 
@@ -161,11 +168,11 @@ struct RelocateProgress {
 /// afterwards: `AppState.vault_path` is immutable and the photo/tile
 /// protocols and import services keep reading the old path until then.
 #[tauri::command]
-pub async fn relocate_vault(
+pub async fn relocate_vault<R: tauri::Runtime>(
     dest_path: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let src = state.vault_path.clone();
     let db = state.db.clone();
     // The vault may be unlocked with the database scope encrypted — capture the
@@ -178,10 +185,7 @@ pub async fn relocate_vault(
         // running backup or restore would tear whichever loses the race.
         // Claimed before the connection swap, so failing here is side-effect-free.
         let flight_state = app.state::<AppState>();
-        let _flight = flight_state
-            .vault_flight
-            .try_begin()
-            .ok_or("Another vault operation is already in progress")?;
+        let _flight = flight_state.vault_flight.try_begin().ok_or_else(vault_busy)?;
 
         let config_dir = app
             .path()
@@ -248,11 +252,11 @@ pub async fn relocate_vault(
 /// an empty folder (or its `Syzify` subfolder) gets a fresh vault on reboot,
 /// never inside an existing vault.
 #[tauri::command]
-pub async fn switch_vault(
+pub async fn switch_vault<R: tauri::Runtime>(
     dest_path: String,
     expect_existing: bool,
-    app: AppHandle,
-) -> Result<String, String> {
+    app: AppHandle<R>,
+) -> Result<String, CommandError> {
     // Off the main thread: the checks stat every ancestor of the pick, which
     // on a stale network volume can take seconds.
     tauri::async_runtime::spawn_blocking(move || {
@@ -279,11 +283,8 @@ pub(crate) fn switch_vault_core(
     expect_existing: bool,
     config_dir: &Path,
     state: &AppState,
-) -> Result<PathBuf, String> {
-    let flight = state
-        .vault_flight
-        .try_begin()
-        .ok_or("Another vault operation is already in progress")?;
+) -> Result<PathBuf, CommandError> {
+    let flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
     let root = if expect_existing {
         vault::resolve_existing_vault_root(dest)?
     } else {
@@ -295,7 +296,7 @@ pub(crate) fn switch_vault_core(
     let current = vault::normalize_path(&state.vault_path)
         .unwrap_or_else(|_| state.vault_path.clone());
     if root == current {
-        return Err("This is already the current vault".into());
+        return Err(CommandError::coded("vault.alreadyCurrent", "This is already the current vault"));
     }
     // Fold the WAL into vault.db before leaving: people tend to copy or
     // archive a vault they just left by hand. Best effort — a background
@@ -323,9 +324,9 @@ pub fn restart_app(app: AppHandle) {
 #[tauri::command]
 pub fn get_detected_devices(
     state: State<AppState>,
-) -> Result<Vec<crate::models::activity::DeviceStats>, String> {
+) -> Result<Vec<crate::models::activity::DeviceStats>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::activities::get_detected_devices(&conn).map_err(|e| e.to_string())
+    Ok(db::activities::get_detected_devices(&conn).map_err(|e| e.to_string())?)
 }
 
 #[derive(serde::Serialize)]
@@ -379,7 +380,7 @@ pub fn preview_files(folders: &[String]) -> Vec<(String, Vec<PreviewFile>)> {
 /// new or already in the vault. Files are read and hashed off the runtime
 /// and without the DB lock; only the hash lookups take it.
 #[tauri::command]
-pub async fn preview_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanPreview, String> {
+pub async fn preview_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Result<ScanPreview, CommandError> {
     let folders = {
         let state = app.state::<AppState>();
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -418,7 +419,7 @@ pub async fn preview_watch_folders<R: tauri::Runtime>(app: AppHandle<R>) -> Resu
 /// `import::catch_up`). The frontend asks once the vault is open and offers
 /// the answer the way it offers a watcher event (auto or ask).
 #[tauri::command]
-pub async fn catch_up_watch_files<R: tauri::Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
+pub async fn catch_up_watch_files<R: tauri::Runtime>(app: AppHandle<R>) -> Result<Vec<String>, CommandError> {
     catch_up_files(app, crate::import::volume_monitor::mounted_device_files, catch_up::now_secs()).await
 }
 
@@ -430,11 +431,11 @@ async fn catch_up_files<R: tauri::Runtime>(
     app: AppHandle<R>,
     device_files: impl FnOnce() -> Vec<String> + Send + 'static,
     started: i64,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, CommandError> {
     let (folders, mark) = {
         let state = app.state::<AppState>();
         if state.vault_error.lock().map_err(|e| e.to_string())?.is_some() {
-            return Err("The vault is not open".to_string());
+            return Err(CommandError::coded("vault.notOpen", "The vault is not open"));
         }
         crate::commands::import::ensure_vault_unlocked(&state)?;
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -472,7 +473,7 @@ pub struct EncryptionStatus {
 }
 
 #[tauri::command]
-pub fn get_encryption_status(state: State<AppState>) -> Result<EncryptionStatus, String> {
+pub fn get_encryption_status(state: State<AppState>) -> Result<EncryptionStatus, CommandError> {
     let vault_lock = crypto::read_vault_lock(&state.vault_path)?;
     let key_guard = state.encryption_key.lock().map_err(|e| e.to_string())?;
     let has_key = key_guard.is_some();
@@ -498,7 +499,7 @@ pub fn get_encryption_status(state: State<AppState>) -> Result<EncryptionStatus,
 // paint its own busy state.
 
 #[tauri::command]
-pub async fn unlock_vault(password: String, app: AppHandle) -> Result<(), String> {
+pub async fn unlock_vault(password: String, app: AppHandle) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || unlock_vault_blocking(&password, &app))
         .await
         .map_err(|e| format!("Unlock task failed: {}", e))?
@@ -507,7 +508,7 @@ pub async fn unlock_vault(password: String, app: AppHandle) -> Result<(), String
 /// Derive the key from `password`, verify it against vault.lock, and — if the
 /// database scope is encrypted and the vault booted locked — open the real
 /// keyed DB, swap out the in-memory placeholder, and start deferred services.
-fn unlock_vault_blocking(password: &str, app: &AppHandle) -> Result<(), String> {
+fn unlock_vault_blocking(password: &str, app: &AppHandle) -> Result<(), CommandError> {
     unlock_vault_core(password, &app.state::<AppState>())?;
 
     // Start the deferred background services now that the key is loaded — for
@@ -519,9 +520,10 @@ fn unlock_vault_blocking(password: &str, app: &AppHandle) -> Result<(), String> 
 }
 
 /// The AppHandle-free part of unlock, testable against a bare [`AppState`].
-fn unlock_vault_core(password: &str, state: &AppState) -> Result<(), String> {
-    let mut lock = crypto::read_vault_lock(&state.vault_path)?
-        .ok_or_else(|| "No vault.lock found — encryption is not enabled".to_string())?;
+fn unlock_vault_core(password: &str, state: &AppState) -> Result<(), CommandError> {
+    let mut lock = crypto::read_vault_lock(&state.vault_path)?.ok_or_else(|| {
+        CommandError::coded("vault.noLock", "No vault.lock found — encryption is not enabled")
+    })?;
 
     let key = derive_and_verify(password, &lock)?;
 
@@ -614,12 +616,12 @@ fn resume_file_encryption(
 
 /// Derive the vault key from a password and confirm it matches the lock's
 /// verifier. Shared by unlock and disable flows.
-fn derive_and_verify(password: &str, lock: &crypto::VaultLock) -> Result<[u8; 32], String> {
+fn derive_and_verify(password: &str, lock: &crypto::VaultLock) -> Result<[u8; 32], CommandError> {
     let salt_bytes = hex::decode(&lock.salt)
         .map_err(|e| format!("Invalid salt in vault.lock: {}", e))?;
     let mut salt = [0u8; 32];
     if salt_bytes.len() != 32 {
-        return Err("Invalid salt length in vault.lock".to_string());
+        return Err("Invalid salt length in vault.lock".into());
     }
     salt.copy_from_slice(&salt_bytes);
 
@@ -631,12 +633,12 @@ fn derive_and_verify(password: &str, lock: &crypto::VaultLock) -> Result<[u8; 32
         .map_err(|e| format!("Invalid nonce in vault.lock: {}", e))?;
     let mut nonce = [0u8; 12];
     if nonce_bytes.len() != 12 {
-        return Err("Invalid nonce length in vault.lock".to_string());
+        return Err("Invalid nonce length in vault.lock".into());
     }
     nonce.copy_from_slice(&nonce_bytes);
 
     if !crypto::verify_password(&key, &verifier_bytes, &nonce) {
-        return Err("Wrong password".to_string());
+        return Err(CommandError::coded("vault.wrongPassword", "Wrong password"));
     }
     Ok(key)
 }
@@ -701,21 +703,21 @@ fn settle_locked_encrypted(
 }
 
 #[tauri::command]
-pub async fn enable_encryption(
+pub async fn enable_encryption<R: tauri::Runtime>(
     password: String,
     scopes: crypto::EncryptionScopes,
-    app: AppHandle,
-) -> Result<(), String> {
+    app: AppHandle<R>,
+) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || enable_encryption_blocking(&password, scopes, &app))
         .await
         .map_err(|e| format!("Encryption task failed: {}", e))?
 }
 
-fn enable_encryption_blocking(
+fn enable_encryption_blocking<R: tauri::Runtime>(
     password: &str,
     scopes: crypto::EncryptionScopes,
-    app: &AppHandle,
-) -> Result<(), String> {
+    app: &AppHandle<R>,
+) -> Result<(), CommandError> {
     enable_encryption_core(password, scopes, &app.state::<AppState>())
 }
 
@@ -724,21 +726,18 @@ fn enable_encryption_core(
     password: &str,
     scopes: crypto::EncryptionScopes,
     state: &AppState,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     // The heaviest vault mutation of all — the DB is re-encrypted in place
     // and every raw/photo file renamed to .enc — must not interleave with a
     // backup walking those same directories (or a restore/relocation moving
     // them). Claimed before anything is written, so a refusal changes nothing.
-    let _flight = state
-        .vault_flight
-        .try_begin()
-        .ok_or("Another vault operation is already in progress")?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
 
     if crypto::read_vault_lock(&state.vault_path)?.is_some() {
-        return Err("Encryption is already enabled".to_string());
+        return Err(CommandError::coded("encryption.alreadyEnabled", "Encryption is already enabled"));
     }
     if !scopes.any() {
-        return Err("Select at least one thing to encrypt".to_string());
+        return Err(CommandError::coded("encryption.noScope", "Select at least one thing to encrypt"));
     }
     // A pre-restore-* quarantine holds a complete copy of a replaced vault
     // that no scope's bulk pass touches — enabling around it would leave the
@@ -747,10 +746,14 @@ fn enable_encryption_core(
     // silently: refuse and let them delete it or move it out first.
     let leftovers = crate::export::vault_backup::list_pre_restore_dirs(&state.vault_path);
     if !leftovers.is_empty() {
-        return Err(format!(
-            "The vault still contains data preserved by a restore ({}) that encryption would not cover. Delete it or move it out of the vault first",
-            leftovers.join(", ")
-        ));
+        let folders = leftovers.join(", ");
+        return Err(CommandError::coded(
+            "encryption.preRestoreLeftovers",
+            format!(
+                "The vault still contains data preserved by a restore ({folders}) that encryption would not cover. Delete it or move it out of the vault first"
+            ),
+        )
+        .param("folders", folders));
     }
 
     let salt = crypto::generate_salt();
@@ -809,7 +812,7 @@ fn enable_encryption_core(
                 // DB is encrypted, only the reopen failed → LOCKED.
                 settle_locked_encrypted(&state, &mut lock, scopes);
             }
-            return Err(e);
+            return Err(e.into());
         }
         lock.scopes.database = true;
         crypto::write_vault_lock(&state.vault_path, &lock)?;
@@ -923,28 +926,25 @@ fn reconcile_photo_paths(conn: &rusqlite::Connection, vault_path: &Path) -> Resu
 }
 
 #[tauri::command]
-pub async fn disable_encryption(password: String, app: AppHandle) -> Result<(), String> {
+pub async fn disable_encryption<R: tauri::Runtime>(password: String, app: AppHandle<R>) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || disable_encryption_blocking(&password, &app))
         .await
         .map_err(|e| format!("Decryption task failed: {}", e))?
 }
 
-fn disable_encryption_blocking(password: &str, app: &AppHandle) -> Result<(), String> {
+fn disable_encryption_blocking<R: tauri::Runtime>(password: &str, app: &AppHandle<R>) -> Result<(), CommandError> {
     disable_encryption_core(password, &app.state::<AppState>())
 }
 
 /// The AppHandle-free part of disable, testable against a bare [`AppState`].
-fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), String> {
+fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), CommandError> {
     // Same vault-wide gate as enable: the decrypt sweep renames every .enc
     // back while a concurrent backup/restore/relocation would be walking or
     // moving those same directories.
-    let _flight = state
-        .vault_flight
-        .try_begin()
-        .ok_or("Another vault operation is already in progress")?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
 
     let mut lock = crypto::read_vault_lock(&state.vault_path)?
-        .ok_or_else(|| "Encryption is not enabled".to_string())?;
+        .ok_or_else(|| CommandError::coded("encryption.notEnabled", "Encryption is not enabled"))?;
 
     let key = derive_and_verify(password, &lock)?;
     let orig_scopes = lock.scopes;
@@ -957,8 +957,7 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Strin
     // settles LOCKED, the unlock resume pass seals these rows again.)
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        crate::plugins::secrets::decrypt_all(&conn, &key)
-            .map_err(|e| format!("Plugin secrets could not be decrypted — {e}. Sign out of that plugin or uninstall it, then try again"))?;
+        crate::plugins::secrets::decrypt_all(&conn, &key).map_err(secrets_refusal)?;
     }
 
     // Turn every scope OFF in the lock up front (keeping it on disk for its
@@ -980,7 +979,7 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Strin
             // only database would leave the lock claiming the files are plaintext
             // while their .enc still sit on disk.
             settle_locked_encrypted(&state, &mut lock, orig_scopes);
-            return Err(e);
+            return Err(e.into());
         }
         let mut db_locked = state.db_locked.lock().map_err(|e| e.to_string())?;
         *db_locked = false;
@@ -1003,7 +1002,7 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Strin
             database: false,
         };
         let _ = crypto::write_vault_lock(&state.vault_path, &lock);
-        return Err(e);
+        return Err(e.into());
     }
 
     // Remove vault.lock only after everything is back to plaintext — while it
@@ -1021,10 +1020,10 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn restart_watcher(
-    app_handle: tauri::AppHandle,
+pub fn restart_watcher<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     // Stop existing watcher (drop it)
     {
         let mut wh = state.watcher_handle.lock().map_err(|e| e.to_string())?;
@@ -1049,7 +1048,7 @@ pub fn restart_watcher(
 /// Manual update check (Settings → About). The only network call happens
 /// on the user's click — see `crate::updates` for the privacy contract.
 #[tauri::command]
-pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, String> {
+pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, CommandError> {
     tauri::async_runtime::spawn_blocking(crate::updates::check)
         .await
         .map_err(|e| format!("Update check task failed: {}", e))?
@@ -1061,7 +1060,7 @@ pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, S
 /// minisign signature against the public key baked into tauri.conf.json
 /// before touching the installed app; on success `restart()` never returns.
 #[tauri::command]
-pub async fn install_update(app: AppHandle) -> Result<(), String> {
+pub async fn install_update(app: AppHandle) -> Result<(), CommandError> {
     use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
     let update = app
@@ -1069,15 +1068,11 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Updater unavailable: {}", e))?
         .check()
         .await
-        .map_err(|e| format!("Update lookup failed: {}", e))?
+        .map_err(lookup_failed)?
         // The Settings row only shows the install button after the manual
         // check saw a newer release on api.github.com; the updater re-checks
         // against latest.json, which can lag a freshly published release.
-        .ok_or_else(|| {
-            "The update isn't downloadable yet — retry in a few minutes, \
-             or use the release page"
-                .to_string()
-        })?;
+        .ok_or_else(not_downloadable_yet)?;
     let progress = app.clone();
     let mut downloaded: u64 = 0;
     update
@@ -1092,8 +1087,42 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
             || {},
         )
         .await
-        .map_err(|e| format!("Update install failed: {}", e))?;
+        .map_err(install_failed)?;
     app.restart();
+}
+
+/// A plugin secret that does not open stops Disable in coded words, the
+/// plugin and the secret named; the database's failure is its own words.
+fn secrets_refusal(e: crate::plugins::secrets::DecryptAllError) -> CommandError {
+    use crate::plugins::secrets::DecryptAllError;
+    match e {
+        DecryptAllError::Unopenable { plugin, name } => CommandError::coded(
+            "encryption.pluginSecrets",
+            format!(
+                "Plugin secrets could not be decrypted — secret \"{name}\" of plugin {plugin}. Sign out of that plugin or uninstall it, then try again"
+            ),
+        )
+        .param("plugin", plugin)
+        .param("name", name),
+        DecryptAllError::Db(e) => e.into(),
+    }
+}
+
+/// The updater could not read `latest.json`: the network's or GitHub's words.
+fn lookup_failed(e: impl std::fmt::Display) -> CommandError {
+    CommandError::coded("updates.lookupFailed", format!("Update lookup failed: {e}")).param("detail", e.to_string())
+}
+
+/// The download or the signature check failed.
+fn install_failed(e: impl std::fmt::Display) -> CommandError {
+    CommandError::coded("updates.installFailed", format!("Update install failed: {e}")).param("detail", e.to_string())
+}
+
+fn not_downloadable_yet() -> CommandError {
+    CommandError::coded(
+        "updates.notDownloadable",
+        "The update isn't downloadable yet — retry in a few minutes, or use the release page",
+    )
 }
 
 #[cfg(test)]
@@ -1315,7 +1344,7 @@ mod tests {
         let app = mock_app_with(test_state(&vault));
         let err = tauri::async_runtime::block_on(catch_up_files(app.handle().clone(), Vec::new, catch_up::now_secs()))
             .unwrap_err();
-        assert!(err.contains("locked"), "{err}");
+        assert_eq!(err.code, Some("vault.locked"));
         assert_eq!(mark(&app), None);
 
         let vault = ScratchDir::new("catch-up-failed");
@@ -1324,7 +1353,7 @@ mod tests {
         let app = mock_app_with(state);
         let err = tauri::async_runtime::block_on(catch_up_files(app.handle().clone(), Vec::new, catch_up::now_secs()))
             .unwrap_err();
-        assert_eq!(err, "The vault is not open");
+        assert_eq!(err, CommandError::coded("vault.notOpen", "The vault is not open"));
     }
 
     /// A preview hashes what it can read and leaves the unreadable marked
@@ -1381,6 +1410,124 @@ mod tests {
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
         }
+    }
+
+    /// The thin commands, through `State`: settings, watch folders, the
+    /// vault's path and boot error, devices and the encryption status — and
+    /// a missing watch folder refused in coded words (#236).
+    #[test]
+    fn the_commands_answer_through_their_state() {
+        let vault = ScratchDir::new("settings_state");
+        let app = mock_app_with(test_state(&vault));
+        set_setting("units".into(), "imperial".into(), app.state()).unwrap();
+        assert_eq!(get_setting("units".into(), app.state()).unwrap().as_deref(), Some("imperial"));
+
+        let folder = vault.join("garmin");
+        fs::create_dir_all(&folder).unwrap();
+        let added = add_watch_folder(folder.to_str().unwrap().into(), app.state()).unwrap();
+        assert_eq!(get_watch_folders(app.state()).unwrap().len(), 1);
+        remove_watch_folder(added.id, app.state()).unwrap();
+        assert!(get_watch_folders(app.state()).unwrap().is_empty());
+        let missing = vault.join("unplugged").to_str().unwrap().to_string();
+        let Err(err) = add_watch_folder(missing.clone(), app.state()) else { panic!("a missing folder was added") };
+        assert_eq!(
+            err,
+            CommandError::coded("watch.noDirectory", format!("Directory does not exist: {missing}"))
+                .param("path", missing.as_str())
+        );
+
+        assert_eq!(get_vault_path(app.state()).unwrap(), vault.to_string_lossy());
+        assert_eq!(get_vault_error(app.state()).unwrap(), None);
+        assert!(get_detected_devices(app.state()).unwrap().is_empty());
+        let status = get_encryption_status(app.state()).unwrap();
+        assert!(!status.enabled && !status.locked);
+    }
+
+    /// The commands that take the app handle, through a mock app: an
+    /// unknown legal text, a disable on a plaintext vault, a move while
+    /// another vault operation runs.
+    #[test]
+    fn the_handle_commands_refuse_in_their_words() {
+        let vault = ScratchDir::new("settings_handle");
+        let app = mock_app_with(test_state(&vault));
+        let handle = app.handle().clone();
+        assert_eq!(
+            get_legal_text("eula".into(), handle.clone()).unwrap_err(),
+            CommandError::from("Unknown legal document: eula")
+        );
+        // A known text the mock app has no resources for: the path
+        // resolver's words, uncoded (the read itself is never reached).
+        assert_eq!(get_legal_text("license".into(), handle.clone()).unwrap_err().code, None);
+        assert_eq!(
+            tauri::async_runtime::block_on(disable_encryption("pw".into(), handle.clone())).unwrap_err(),
+            CommandError::coded("encryption.notEnabled", "Encryption is not enabled")
+        );
+        let nothing = crypto::EncryptionScopes { activities: false, database: false, photos: false };
+        assert_eq!(
+            tauri::async_runtime::block_on(enable_encryption("pw".into(), nothing, handle.clone())).unwrap_err(),
+            CommandError::coded("encryption.noScope", "Select at least one thing to encrypt")
+        );
+        let state = app.state::<AppState>();
+        let _running = state.vault_flight.try_begin().unwrap();
+        let dest = vault.join("moved").to_str().unwrap().to_string();
+        assert_eq!(
+            tauri::async_runtime::block_on(relocate_vault(dest.clone(), handle.clone(), app.state())).unwrap_err(),
+            vault_busy()
+        );
+        assert_eq!(tauri::async_runtime::block_on(switch_vault(dest, false, handle)).unwrap_err(), vault_busy());
+    }
+
+    /// No watch folders, no watcher; one folder, one watcher.
+    #[test]
+    fn restart_watcher_watches_what_the_settings_list() {
+        let vault = ScratchDir::new("settings_watcher");
+        let app = mock_app_with(test_state(&vault));
+        let state = app.state::<AppState>();
+        restart_watcher(app.handle().clone(), app.state()).unwrap();
+        assert!(state.watcher_handle.lock().unwrap().is_none());
+
+        db::watch_folders::add(&state.db.lock().unwrap(), vault.to_str().unwrap()).unwrap();
+        restart_watcher(app.handle().clone(), app.state()).unwrap();
+        assert!(state.watcher_handle.lock().unwrap().take().is_some());
+    }
+
+    /// What the updater says is wrapped in coded words, its own kept as
+    /// the detail.
+    #[test]
+    fn updater_failures_are_coded() {
+        assert_eq!(
+            lookup_failed("offline"),
+            CommandError::coded("updates.lookupFailed", "Update lookup failed: offline").param("detail", "offline")
+        );
+        assert_eq!(
+            install_failed("bad signature"),
+            CommandError::coded("updates.installFailed", "Update install failed: bad signature")
+                .param("detail", "bad signature")
+        );
+        assert_eq!(
+            not_downloadable_yet(),
+            CommandError::coded(
+                "updates.notDownloadable",
+                "The update isn't downloadable yet — retry in a few minutes, or use the release page"
+            )
+        );
+    }
+
+    /// A lock whose salt or nonce has the wrong length is damaged, not a
+    /// wrong password: said in the code's own words, uncoded.
+    #[test]
+    fn a_damaged_lock_is_not_a_wrong_password() {
+        let lock = |salt: usize, nonce: usize| crypto::VaultLock {
+            salt: "00".repeat(salt),
+            verifier: String::new(),
+            nonce: "00".repeat(nonce),
+            created_at: String::new(),
+            scopes: crypto::EncryptionScopes::default(),
+        };
+        let err = derive_and_verify("pw", &lock(16, 12)).unwrap_err();
+        assert_eq!(err, CommandError::from("Invalid salt length in vault.lock"));
+        let err = derive_and_verify("pw", &lock(32, 6)).unwrap_err();
+        assert_eq!(err, CommandError::from("Invalid nonce length in vault.lock"));
     }
 
     /// The live connection answers a schema query (i.e. it's not a dead
@@ -1545,8 +1692,20 @@ mod tests {
             db::plugins::upsert_plugin(&conn, &test_plugin("com.test.sync")).unwrap();
             crate::plugins::secrets::set(&conn, Some(&[42u8; 32]), "com.test.sync", "token", "foreign").unwrap();
         }
-        let err = disable_encryption_core("pw", &state).unwrap_err();
-        assert!(err.contains("Plugin secrets could not be decrypted") && err.contains("com.test.sync"), "{err}");
+        assert_eq!(
+            disable_encryption_core("pw", &state).unwrap_err(),
+            CommandError::coded(
+                "encryption.pluginSecrets",
+                "Plugin secrets could not be decrypted — secret \"token\" of plugin com.test.sync. Sign out of that plugin or uninstall it, then try again"
+            )
+            .param("plugin", "com.test.sync")
+            .param("name", "token")
+        );
+        // The database refusing is its own words, uncoded.
+        assert_eq!(
+            secrets_refusal(crate::plugins::secrets::DecryptAllError::Db("disk I/O error".into())),
+            CommandError::from("disk I/O error")
+        );
         // The vault is exactly as enabled as before: lock with its scopes,
         // key held, files still ciphertext, status unchanged.
         let lock = crypto::read_vault_lock(&vault).unwrap().unwrap();
@@ -1648,11 +1807,11 @@ mod tests {
 
         // Enabling twice is rejected.
         let err = enable_encryption_core("pw", scopes, &state).unwrap_err();
-        assert!(err.contains("already enabled"), "{}", err);
+        assert_eq!(err, CommandError::coded("encryption.alreadyEnabled", "Encryption is already enabled"));
 
         // A wrong password can't disable, and tears nothing down.
         let err = disable_encryption_core("wrong", &state).unwrap_err();
-        assert!(err.contains("Wrong password"), "{}", err);
+        assert_eq!(err, CommandError::coded("vault.wrongPassword", "Wrong password"));
         assert!(crypto::read_vault_lock(&vault).unwrap().is_some());
         assert!(vault.join("raw/a.fit.enc").exists());
 
@@ -1697,7 +1856,7 @@ mod tests {
         {
             let _running = state.vault_flight.try_begin().unwrap();
             let err = enable_encryption_core("pw", scopes, &state).unwrap_err();
-            assert!(err.contains("already in progress"), "got: {}", err);
+            assert_eq!(err.code, Some("vault.busy"));
             // Side-effect-free refusal: no lock, no key, file untouched.
             assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
             assert!(state.encryption_key.lock().unwrap().is_none());
@@ -1708,7 +1867,7 @@ mod tests {
         {
             let _running = state.vault_flight.try_begin().unwrap();
             let err = disable_encryption_core("pw", &state).unwrap_err();
-            assert!(err.contains("already in progress"), "got: {}", err);
+            assert_eq!(err.code, Some("vault.busy"));
             // Still fully enabled: lock intact, ciphertext untouched.
             assert!(crypto::read_vault_lock(&vault).unwrap().is_some());
             assert!(vault.join("raw/a.fit.enc").exists());
@@ -1737,7 +1896,9 @@ mod tests {
         std::fs::write(quarantine.join("vault.db"), b"old plaintext vault").unwrap();
 
         let err = enable_encryption_core("pw", scopes, &state).unwrap_err();
-        assert!(err.contains("preserved by a restore"), "got: {}", err);
+        assert_eq!(err.code, Some("encryption.preRestoreLeftovers"));
+        assert_eq!(err.params["folders"].as_str(), Some("pre-restore-20260708-090000"));
+        assert!(err.message.contains("preserved by a restore"), "got: {}", err);
         // Nothing was enabled: no lock, no key, quarantine untouched.
         assert!(crypto::read_vault_lock(&vault).unwrap().is_none());
         assert!(state.encryption_key.lock().unwrap().is_none());
@@ -1778,7 +1939,7 @@ mod tests {
 
         // Wrong password: still locked, still no key.
         let err = unlock_vault_core("nope", &state).unwrap_err();
-        assert!(err.contains("Wrong password"), "{}", err);
+        assert_eq!(err.code, Some("vault.wrongPassword"));
         assert!(*state.db_locked.lock().unwrap());
         assert!(state.encryption_key.lock().unwrap().is_none());
 
@@ -1804,7 +1965,14 @@ mod tests {
 
         let state = test_state(&vault);
         let err = unlock_vault_core("pw", &state).unwrap_err();
-        assert!(err.contains("encryption is not enabled"), "{}", err);
+        assert_eq!(err, CommandError::coded("vault.noLock", "No vault.lock found — encryption is not enabled"));
+        // Disable says the same in its own words.
+        let err = disable_encryption_core("pw", &state).unwrap_err();
+        assert_eq!(err, CommandError::coded("encryption.notEnabled", "Encryption is not enabled"));
+        // And enable wants something to encrypt.
+        let none = crypto::EncryptionScopes { activities: false, database: false, photos: false };
+        let err = enable_encryption_core("pw", none, &state).unwrap_err();
+        assert_eq!(err, CommandError::coded("encryption.noScope", "Select at least one thing to encrypt"));
     }
 
     /// Enable makes the key available through encryption_key_for the moment the
@@ -1877,7 +2045,7 @@ mod tests {
             &state,
         )
         .unwrap_err();
-        assert!(!err.is_empty());
+        assert!(!err.message.is_empty());
 
         // Rolled back to a clean disabled state: lock gone, key gone, the raw
         // file never got encrypted (DB is first, so files were untouched).
@@ -1970,6 +2138,47 @@ mod tests {
         assert!(*state.db_locked.lock().unwrap());
         assert!(state.encryption_key.lock().unwrap().is_none());
         assert!(!crate::plaintext_db_readable(&vault), "DB stays encrypted");
+    }
+
+    /// A file sweep that cannot decrypt a file keeps the lock with the file
+    /// scopes, so a retry resumes — and says why in the library's words.
+    #[test]
+    fn disable_keeps_the_file_scopes_when_the_sweep_fails() {
+        let vault = ScratchDir::new("disable_sweep_fail");
+        let conn = crate::init_vault(&vault).unwrap();
+        let state = test_state_with(&vault, conn);
+        std::fs::create_dir_all(vault.join("raw")).unwrap();
+        std::fs::write(vault.join("raw/a.fit"), b"workout").unwrap();
+        {
+            let c = state.db.lock().unwrap();
+            crate::db::raw_files::insert_raw_file(
+                &c,
+                &RawFile {
+                    id: "rf-1".into(),
+                    activity_id: None,
+                    path_in_vault: "raw/a.fit".into(),
+                    original_path: None,
+                    format: "fit".into(),
+                    hash_sha256: "h".into(),
+                    imported_at: String::new(),
+                    parse_status: "ok".into(),
+                    failure_reason: None,
+                },
+            )
+            .unwrap();
+        }
+        enable_encryption_core(
+            "pw",
+            crypto::EncryptionScopes { activities: true, database: false, photos: false },
+            &state,
+        )
+        .unwrap();
+        std::fs::write(vault.join("raw/a.fit.enc"), b"not ciphertext").unwrap();
+
+        let err = disable_encryption_core("pw", &state).unwrap_err();
+        assert_eq!(err.code, None, "{err}");
+        let lock = crypto::read_vault_lock(&vault).unwrap().expect("lock kept");
+        assert!(lock.scopes.activities && !lock.scopes.database);
     }
 
     /// The critical data-loss guard: if the DB was encrypted but the reopen
@@ -2111,24 +2320,24 @@ mod tests {
         {
             let _running = state.vault_flight.try_begin().unwrap();
             let err = switch_vault_core(&other, true, &cfg, &state).unwrap_err();
-            assert!(err.contains("already in progress"), "{err}");
+            assert_eq!(err.code, Some("vault.busy"));
         }
         let err = switch_vault_core(&current, true, &cfg, &state).unwrap_err();
-        assert!(err.contains("already the current vault"), "{err}");
+        assert_eq!(err, CommandError::coded("vault.alreadyCurrent", "This is already the current vault"));
         // Spelled through a symlink it is still the current vault.
         #[cfg(unix)]
         {
             let alias = tmp.join("alias");
             std::os::unix::fs::symlink(&current, &alias).unwrap();
             let err = switch_vault_core(&alias, true, &cfg, &state).unwrap_err();
-            assert!(err.contains("already the current vault"), "{err}");
+            assert_eq!(err.code, Some("vault.alreadyCurrent"));
         }
         let empty = tmp.join("empty");
         std::fs::create_dir(&empty).unwrap();
         let err = switch_vault_core(&empty, true, &cfg, &state).unwrap_err();
-        assert!(err.contains("No vault found"), "{err}");
+        assert_eq!(err.code, Some("vault.noVaultFound"), "the vault module's code reaches the command");
         let err = switch_vault_core(&current.join("nested"), false, &cfg, &state).unwrap_err();
-        assert!(err.contains("inside the vault at"), "{err}");
+        assert_eq!(err.code, Some("vault.insideVault"));
 
         // A root the marker can't hold verbatim (trailing space is legal on
         // unix filesystems) is refused after the write — and rolled back.
@@ -2138,7 +2347,7 @@ mod tests {
             std::fs::create_dir(&trailing).unwrap();
             std::fs::write(trailing.join("vault.db"), b"db").unwrap();
             let err = switch_vault_core(&trailing, true, &cfg, &state).unwrap_err();
-            assert!(err.contains("can't be stored"), "{err}");
+            assert_eq!(err.code, Some("vault.unstorableName"));
         }
 
         assert_eq!(vault::read_location(&cfg), None);

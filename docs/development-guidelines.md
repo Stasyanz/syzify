@@ -16,7 +16,7 @@ Stack: Tauri 2 + Rust backend (`src-tauri/`), React 19 + TypeScript frontend
 
 | Layer | Path | Responsibility |
 |---|---|---|
-| **commands** | `src-tauri/src/commands/` | Thin `#[tauri::command]` handlers. Lock state, delegate, map errors to `String`. No SQL, no business logic. |
+| **commands** | `src-tauri/src/commands/` | Thin `#[tauri::command]` handlers. Lock state, delegate, map errors to `CommandError`. No SQL, no business logic. |
 | **db** | `src-tauri/src/db/` | The single gateway to SQLite. All SQL lives here. Returns `rusqlite::Result<T>`. Query-shaping/aggregation that is inseparable from SQL belongs here too. |
 | **models** | `src-tauri/src/models/` | Data contracts: row structs, DTOs, read-models, enums. `serde`, snake_case. Owns every type that crosses a layer or the IPC boundary. |
 | **parser** | `src-tauri/src/parser/` | `parse_<fmt>(...) -> ParsedActivity`; one normalized output type, dispatched in `import/pipeline.rs`. |
@@ -26,11 +26,41 @@ Canonical command shape:
 
 ```rust
 #[tauri::command]
-pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
+pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::things::get(&conn, &id).map_err(|e| e.to_string())
+    Ok(db::things::get(&conn, &id).map_err(|e| e.to_string())?)
 }
 ```
+
+**Command errors (#236).** A command errs with `CommandError`
+(`src-tauri/src/error.rs`), which reaches the webview as `{ code, params,
+message }`. A refusal the user reads and can act on is coded:
+`CommandError::coded("thing.notFound", format!("Thing not found: {id}"))
+.param("id", id)` — the code a literal (`src/lib/errorCodes.test.ts` scans
+for them), the English message what the user read before, the params
+named, numbers left numbers. Each code has an `error.<code>` message in
+`src/locales/` whose English equals the Rust text with `{name}` per param
+(the same test compares them); `errorText` says it in the interface
+language. A library's own words (io, SQLite, zip, HTTP), an internal step
+and a developer's guard stay uncoded — a `String` turns into one by `?`
+(`Ok(db::x(&conn).map_err(|e| e.to_string())?)`, the one shape for a
+command's tail) and is shown as it is. Where it may live:
+- a **domain function whose refusal the user reads** (vault placement,
+  backup/restore, import, a model's validator) may return `CommandError`
+  itself, coded at the place that knows why;
+- the **db layer** returns `rusqlite::Result` — `CommandError` only in a
+  validator the commands call before any SQL (`db::segments::validated_name`);
+- a **command** maps the library errors (`map_err(|e| e.to_string())?`) and
+  wraps a domain refusal in its code when the domain returns a typed error
+  (`AssignRefusal`, `DecryptAllError`);
+- `From<CommandError> for String` drops the code: never code an error that
+  passes through a `String` layer on its way (a helper that returns
+  `Result<_, String>`) — the code is gone before the webview sees it.
+Plugins keep reading strings: the Host SDK converts at its boundary
+(`String::from(command_error)` is the English message). A DTO field the
+user reads (`RestoreOutcome.error`) carries a `CommandError` too and goes
+through `errorText`. A screen that words one refusal its own way compares
+`errorCode(e)` with the code, never the text.
 
 ### Monitoring & recovery (ADR 0002)
 
@@ -196,12 +226,16 @@ never persisted. Test against the loopback `test_server` in `net.rs` (set
 **General**
 - ❌ Don't add a dependency for something small/standard; prefer the std/existing crates.
 - ❌ No `unwrap()`/`expect()` on fallible paths in production code; propagate errors.
-- ❌ Frontend: no `err.message` on a caught or rejected value — a Tauri command
-  rejects with a bare `String`, so that reads "undefined". Use `errorText(e)`
+- ❌ Frontend: no `err.message` on a caught or rejected value — a rejection
+  may be a bare string (a plugin's), and a command's `CommandError` carries
+  a code to translate, which `.message` skips. Use `errorText(e)`
   from `src/lib/errors.ts` (the query error type is registered as `unknown`
   in `src/queryRegister.d.ts`, so `onError: (e) => e.message` will not compile —
   but an explicit `(e: Error) =>` annotation would, so never write one;
-  `src/lib/errors.scan.test.ts` fails the suite on it).
+  `src/lib/errors.scan.test.ts` fails the suite on it, and on `String(…)` or
+  `${…}` of anything named `e`, `err` or `…error`). A test mocks a command's
+  refusal with `commandError(code, message, params)` from
+  `src/test/commandError.ts`, the shape the backend sends.
 - ❌ Don't break a published contract (IPC shapes, Host SDK, manifest) without versioning.
 
 **Privacy invariants (non-negotiable, PRD §16)**

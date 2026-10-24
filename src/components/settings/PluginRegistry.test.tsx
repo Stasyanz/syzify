@@ -10,6 +10,7 @@ import { useToastStore } from "../../stores/toastStore";
 import type { PluginInfo } from "../../lib/types";
 import { t, translate, useLanguageStore, type Translator } from "../../lib/i18n";
 import { PluginRegistry, permissionLabel, secretsDisclosure, secretsSealed } from "./PluginRegistry";
+import { commandError } from "../../test/commandError";
 
 const ru: Translator = (key, ...args) => translate("ru", key, ...args);
 
@@ -253,6 +254,7 @@ describe("PluginRegistry refusals (#182)", () => {
   /** The backend refuses with a bare string; a dialog or JS failure is an
    * Error. Every toast carries the words alone. */
   for (const [kind, make] of [
+    ["an uncoded command error", (m: string) => commandError(null, m)],
     ["a string", (m: string) => m],
     ["an Error", (m: string) => new Error(m)],
   ] as const) {

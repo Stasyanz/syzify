@@ -14,6 +14,7 @@ use uuid::Uuid;
 use zip::result::ZipError;
 use zip::ZipArchive;
 
+use crate::error::CommandError;
 use crate::import::pipeline::{self, FailedFile, ImportResult};
 use crate::import::runkeeper_csv;
 
@@ -68,19 +69,25 @@ pub fn import_zip(
     vault_path: &Path,
     zip_path: &str,
     encryption_key: Option<&[u8; 32]>,
-) -> Result<ImportResult, String> {
+) -> Result<ImportResult, CommandError> {
     import_zip_within(conn, vault_path, zip_path, encryption_key, LIMITS)
 }
 
+/// What refuses the export as a whole is coded (#236); a single entry's
+/// failure is a `FailedFile` reason, counted, not shown.
 fn import_zip_within(
     conn: &Connection,
     vault_path: &Path,
     zip_path: &str,
     encryption_key: Option<&[u8; 32]>,
     limits: Limits,
-) -> Result<ImportResult, String> {
-    let file = fs::File::open(zip_path).map_err(|e| format!("Failed to open export: {e}"))?;
-    let mut zip = ZipArchive::new(file).map_err(|e| format!("Not a valid .zip export: {e}"))?;
+) -> Result<ImportResult, CommandError> {
+    let file = fs::File::open(zip_path).map_err(|e| {
+        CommandError::coded("import.openFailed", format!("Failed to open export: {e}")).param("detail", e.to_string())
+    })?;
+    let mut zip = ZipArchive::new(file).map_err(|e| {
+        CommandError::coded("import.notAZip", format!("Not a valid .zip export: {e}")).param("detail", e.to_string())
+    })?;
 
     let tmp = std::env::temp_dir().join(format!("rk_import_{}", Uuid::new_v4()));
     fs::create_dir_all(&tmp).map_err(|e| format!("Failed to create temp dir: {e}"))?;
@@ -113,7 +120,11 @@ fn import_zip_within(
 
         file_count += 1;
         if file_count > limits.files {
-            return Err(format!("export has too many files (limit {})", limits.files));
+            return Err(CommandError::coded(
+                "import.tooManyFiles",
+                format!("export has too many files (limit {})", limits.files),
+            )
+            .param("limit", limits.files));
         }
 
         let mut entry = match zip.by_index(i) {
@@ -121,7 +132,10 @@ fn import_zip_within(
             // A password is the archive's matter: said once, with its
             // reason, instead of every file failing without one.
             Err(ZipError::UnsupportedArchive(ZipError::PASSWORD_REQUIRED)) => {
-                return Err("The export is password-protected — export it again without a password".to_string());
+                return Err(CommandError::coded(
+                    "import.passwordProtected",
+                    "The export is password-protected — export it again without a password",
+                ));
             }
             // An entry packed in a way this reader can't open (an old
             // method — Shrink, Implode, Reduce) is that entry's failure.
@@ -144,7 +158,7 @@ fn import_zip_within(
         let read = crate::util::read_capped(&mut Counted { inner: &mut entry, n: &mut inflated }, cap, &fname);
         total_bytes += inflated;
         if total_bytes > limits.total_bytes {
-            return Err("export is too large (uncompressed) — refusing to import".to_string());
+            return Err(CommandError::coded("import.tooLarge", "export is too large (uncompressed) — refusing to import"));
         }
         let bytes = match read {
             Ok(bytes) => bytes,
@@ -156,11 +170,8 @@ fn import_zip_within(
 
         let dest = tmp.join(extracted_name(i, &fname));
         if let Err(e) = fs::write(&dest, &bytes) {
-            if write_failure_is_the_entrys(e.kind()) {
-                entry_failures.push(FailedFile { reason: format!("Failed to extract {fname}: {e}"), path: fname });
-                continue;
-            }
-            return Err(format!("Failed to extract {fname}: {e}"));
+            entry_failures.push(extraction_failure(fname, e)?);
+            continue;
         }
 
         if is_gpx {
@@ -226,6 +237,16 @@ fn bare_entry_name(name: &str) -> Option<String> {
 /// unwritable temp dir, which is said once for the whole import.
 fn write_failure_is_the_entrys(kind: std::io::ErrorKind) -> bool {
     matches!(kind, std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::InvalidInput)
+}
+
+/// A failed extraction write: the entry's own failure to report, or — when
+/// it is every entry's (a full disk) — the refusal of the whole export.
+fn extraction_failure(fname: String, e: std::io::Error) -> Result<FailedFile, CommandError> {
+    let reason = format!("Failed to extract {fname}: {e}");
+    if write_failure_is_the_entrys(e.kind()) {
+        return Ok(FailedFile { reason, path: fname });
+    }
+    Err(CommandError::coded("import.extractFailed", reason).param("name", fname).param("detail", e.to_string()))
 }
 
 /// The name an entry is extracted under: its index first, so same-named
@@ -430,7 +451,8 @@ mod tests {
         write_zip(&zip_path, &[("run.gpx", gpx_at("2015-12-12", "55.40").as_bytes())]);
         patch_central(&zip_path, 0, |h| h[8] |= 1);
         let err = import_zip(&conn, &dir, zip_path.to_str().unwrap(), None).unwrap_err();
-        assert!(err.contains("password-protected"), "{err}");
+        assert_eq!(err.code, Some("import.passwordProtected"));
+        assert!(err.message.contains("password-protected"), "{err}");
     }
 
     /// A GPX the pipeline refuses is named as in the export, not by its
@@ -474,7 +496,44 @@ mod tests {
         let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), big.as_slice())).collect();
         write_zip(&flood, &entries);
         let err = import_zip_within(&conn, &dir, flood.to_str().unwrap(), None, small).unwrap_err();
-        assert!(err.contains("too large"), "{err}");
+        assert_eq!(err.code, Some("import.tooLarge"));
+        assert!(err.message.contains("too large"), "{err}");
+    }
+
+    /// What refuses the whole export says so coded, its numbers and the
+    /// system's reason named for the translation (#236).
+    #[test]
+    fn a_refused_export_is_a_coded_error() {
+        let conn = db::test_db();
+        let dir = crate::test_support::ScratchDir::new("rk_coded");
+        let missing = dir.join("missing.zip");
+        let e = import_zip(&conn, &dir, missing.to_str().unwrap(), None).unwrap_err();
+        assert_eq!(e.code, Some("import.openFailed"));
+        assert_eq!(e.message, format!("Failed to open export: {}", e.params["detail"].as_str().unwrap()));
+
+        let not_zip = dir.join("not.zip");
+        fs::write(&not_zip, b"plain text").unwrap();
+        let e = import_zip(&conn, &dir, not_zip.to_str().unwrap(), None).unwrap_err();
+        assert_eq!(e.code, Some("import.notAZip"));
+        assert_eq!(e.message, format!("Not a valid .zip export: {}", e.params["detail"].as_str().unwrap()));
+
+        let few = Limits { gpx_bytes: 4096, csv_bytes: 4096, total_bytes: 20_000, files: 1 };
+        let two = dir.join("two.zip");
+        write_zip(&two, &[("a.gpx", b"x"), ("b.gpx", b"y")]);
+        assert_eq!(
+            import_zip_within(&conn, &dir, two.to_str().unwrap(), None, few).unwrap_err(),
+            CommandError::coded("import.tooManyFiles", "export has too many files (limit 1)").param("limit", 1)
+        );
+
+        // A write every entry would fail (a full disk) refuses the export.
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        let detail = full.to_string();
+        assert_eq!(
+            extraction_failure("run.gpx".into(), full).unwrap_err(),
+            CommandError::coded("import.extractFailed", format!("Failed to extract run.gpx: {detail}"))
+                .param("name", "run.gpx")
+                .param("detail", detail.as_str())
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act, render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { RenderResult } from "@testing-library/react";
+import { commandError } from "./test/commandError";
 
 vi.mock("./lib/tauri", () => ({
   api: {
@@ -342,7 +343,9 @@ describe("App boot", { timeout: 20_000 }, () => {
     // from the earlier successful-switch tests.
     vi.mocked(api.restartApp).mockClear();
     vi.mocked(open).mockResolvedValue("/no/vault/here");
-    vi.mocked(api.switchVault).mockRejectedValue('No vault found in "/no/vault/here"');
+    vi.mocked(api.switchVault).mockRejectedValue(
+      commandError("vault.noVaultFound", 'No vault found in "/no/vault/here"', { path: "/no/vault/here" }),
+    );
 
     fireEvent.click(screen.getByText("Open another vault…"));
 

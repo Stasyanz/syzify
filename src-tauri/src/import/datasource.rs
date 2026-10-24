@@ -7,6 +7,7 @@
 use rusqlite::Connection;
 use std::path::Path;
 
+use crate::error::CommandError;
 use crate::import::pipeline::ImportResult;
 
 /// Metadata shown in the import UI (snake_case for the IPC boundary).
@@ -40,9 +41,25 @@ pub fn run(
     id: &str,
     path: &str,
     encryption_key: Option<&[u8; 32]>,
-) -> Result<ImportResult, String> {
+) -> Result<ImportResult, CommandError> {
     match id {
         "runkeeper" => super::runkeeper::import_zip(conn, vault_path, path, encryption_key),
-        other => Err(format!("unknown import source: {other}")),
+        // Uncoded: the UI offers only the sources `list` names.
+        other => Err(format!("unknown import source: {other}").into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_source_is_an_uncoded_error_and_a_known_one_passes_its_code_on() {
+        let conn = crate::db::test_db();
+        let dir = crate::test_support::ScratchDir::new("datasource");
+        let e = run(&conn, &dir, "strava", "x.zip", None).unwrap_err();
+        assert_eq!(e, CommandError::from("unknown import source: strava"));
+        let e = run(&conn, &dir, "runkeeper", dir.join("missing.zip").to_str().unwrap(), None).unwrap_err();
+        assert_eq!(e.code, Some("import.openFailed"));
     }
 }

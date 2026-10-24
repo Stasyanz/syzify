@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, Result};
 
 use crate::db::trackpoints::haversine_m;
+use crate::error::CommandError;
 use crate::models::segment::{NewSegmentMeta, Segment, SegmentPoint, SimilarSegment};
 use crate::models::trackpoint::TrackGeometry;
 
@@ -25,13 +26,17 @@ const M_PER_DEG_LAT: f64 = 111_194.93;
 const BOX_MARGIN: f64 = 1.05;
 
 /// Trimmed, validated segment name (non-empty, capped length).
-pub fn validated_name(name: &str) -> std::result::Result<&str, String> {
+pub fn validated_name(name: &str) -> std::result::Result<&str, CommandError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("segment name is empty".into());
+        return Err(CommandError::coded("segments.nameEmpty", "segment name is empty"));
     }
     if name.chars().count() > MAX_NAME_LEN {
-        return Err(format!("segment name is longer than {MAX_NAME_LEN} characters"));
+        return Err(CommandError::coded(
+            "segments.nameTooLong",
+            format!("segment name is longer than {MAX_NAME_LEN} characters"),
+        )
+        .param("count", MAX_NAME_LEN));
     }
     Ok(name)
 }
@@ -47,7 +52,7 @@ pub fn build_segment(
     a: usize,
     b: usize,
     geo: &TrackGeometry,
-) -> std::result::Result<(Segment, Vec<SegmentPoint>), String> {
+) -> std::result::Result<(Segment, Vec<SegmentPoint>), CommandError> {
     let (lat, lon, alt) = (&geo.lat, &geo.lon, &geo.altitude_m);
     let n = lat.len().min(lon.len());
     let (a, b) = (a.min(b), a.max(b));
@@ -55,7 +60,7 @@ pub fn build_segment(
     // is stale (e.g. re-imported shorter) — saving a silently different
     // slice than the user saw is worse than an error.
     if b >= n {
-        return Err("selection is out of range".into());
+        return Err(CommandError::coded("segments.outOfRange", "selection is out of range"));
     }
 
     let mut points: Vec<SegmentPoint> = Vec::new();
@@ -82,10 +87,10 @@ pub fn build_segment(
     }
 
     if points.len() < 2 {
-        return Err("selection has no GPS data".into());
+        return Err(CommandError::coded("segments.noGps", "selection has no GPS data"));
     }
     if cum <= 0.0 {
-        return Err("selection has no distance".into());
+        return Err(CommandError::coded("segments.noDistance", "selection has no distance"));
     }
 
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
@@ -380,7 +385,7 @@ mod tests {
         alt: &[Option<f64>],
         id: &str,
         created_at: &str,
-    ) -> std::result::Result<(Segment, Vec<SegmentPoint>), String> {
+    ) -> std::result::Result<(Segment, Vec<SegmentPoint>), CommandError> {
         build_segment(
             NewSegmentMeta { name, sport, activity_id, id, created_at },
             a,
@@ -442,24 +447,28 @@ mod tests {
     fn build_rejects_gpsless_and_degenerate_selections() {
         let none = vec![None; 4];
         let alt = vec![Some(1.0); 4];
-        assert!(build("x", "run", "a", 0, 3, &none, &none, &alt, "s", "t").is_err());
+        let refused = |r: std::result::Result<(Segment, Vec<SegmentPoint>), CommandError>| r.unwrap_err().code;
+        assert_eq!(refused(build("x", "run", "a", 0, 3, &none, &none, &alt, "s", "t")), Some("segments.noGps"));
 
         // A single GPS point is not a segment.
         let one_lat = vec![Some(55.75), None];
         let one_lon = vec![Some(37.62), None];
-        assert!(build("x", "run", "a", 0, 1, &one_lat, &one_lon, &alt, "s", "t").is_err());
+        let e = build("x", "run", "a", 0, 1, &one_lat, &one_lon, &alt, "s", "t").unwrap_err();
+        assert_eq!(e, CommandError::coded("segments.noGps", "selection has no GPS data"));
 
         // Identical coordinates → zero length.
         let same_lat = vec![Some(55.75); 3];
         let same_lon = vec![Some(37.62); 3];
-        assert!(build("x", "run", "a", 0, 2, &same_lat, &same_lon, &alt, "s", "t").is_err());
+        let e = build("x", "run", "a", 0, 2, &same_lat, &same_lon, &alt, "s", "t").unwrap_err();
+        assert_eq!(e, CommandError::coded("segments.noDistance", "selection has no distance"));
 
         // Any range past the end is refused, not clamped — a partial overrun
         // means the caller's track view is stale and clamping would silently
         // save a different slice.
         let (lat, lon, alt) = line();
-        assert!(build("x", "run", "a", 9, 12, &lat, &lon, &alt, "s", "t").is_err());
-        assert!(build("x", "run", "a", 2, 9, &lat, &lon, &alt, "s", "t").is_err());
+        let e = build("x", "run", "a", 9, 12, &lat, &lon, &alt, "s", "t").unwrap_err();
+        assert_eq!(e, CommandError::coded("segments.outOfRange", "selection is out of range"));
+        assert_eq!(refused(build("x", "run", "a", 2, 9, &lat, &lon, &alt, "s", "t")), Some("segments.outOfRange"));
     }
 
     #[test]
@@ -487,9 +496,12 @@ mod tests {
     fn validated_name_trims_and_bounds() {
         assert_eq!(validated_name("  Big climb  ").unwrap(), "Big climb");
         assert!(validated_name("").is_err());
-        assert!(validated_name("   ").is_err());
+        assert_eq!(validated_name("   ").unwrap_err(), CommandError::coded("segments.nameEmpty", "segment name is empty"));
         assert!(validated_name(&"x".repeat(MAX_NAME_LEN)).is_ok());
-        assert!(validated_name(&"x".repeat(MAX_NAME_LEN + 1)).is_err());
+        assert_eq!(
+            validated_name(&"x".repeat(MAX_NAME_LEN + 1)).unwrap_err(),
+            CommandError::coded("segments.nameTooLong", "segment name is longer than 200 characters").param("count", 200)
+        );
     }
 
     #[test]

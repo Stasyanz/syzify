@@ -93,16 +93,25 @@ pub fn encrypt_all(conn: &Connection, key: &[u8; 32]) -> Result<usize, String> {
 /// still held. One transaction: a value that does not open under `key`
 /// (named, so the user knows which plugin to sign out of) rolls the whole
 /// pass back; nothing is lost, the caller keeps the lock and the key.
-pub fn decrypt_all(conn: &Connection, key: &[u8; 32]) -> Result<usize, String> {
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    let rows = db::plugins::secrets_where(&tx, true).map_err(|e| e.to_string())?;
+pub fn decrypt_all(conn: &Connection, key: &[u8; 32]) -> Result<usize, DecryptAllError> {
+    let tx = conn.unchecked_transaction().map_err(|e| DecryptAllError::Db(e.to_string()))?;
+    let rows = db::plugins::secrets_where(&tx, true).map_err(|e| DecryptAllError::Db(e.to_string()))?;
     for (plugin_id, name, blob) in &rows {
         let value = crypto::open(key, &aad(plugin_id, name), blob)
-            .map_err(|e| format!("secret {name:?} of plugin {plugin_id}: {e}"))?;
-        db::plugins::secret_set(&tx, plugin_id, name, &value, false).map_err(|e| e.to_string())?;
+            .map_err(|_| DecryptAllError::Unopenable { plugin: plugin_id.clone(), name: name.clone() })?;
+        db::plugins::secret_set(&tx, plugin_id, name, &value, false).map_err(|e| DecryptAllError::Db(e.to_string()))?;
     }
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| DecryptAllError::Db(e.to_string()))?;
     Ok(rows.len())
+}
+
+/// Why `decrypt_all` stopped: a value that does not open under the key —
+/// the plugin and the secret named, for the user to sign out of — or the
+/// database's own words.
+#[derive(Debug, PartialEq)]
+pub enum DecryptAllError {
+    Unopenable { plugin: String, name: String },
+    Db(String),
 }
 
 fn validate_name(name: &str) -> Result<(), String> {
@@ -245,8 +254,10 @@ mod tests {
         // nothing changes, and the row is named.
         assert_eq!(encrypt_all(&conn, &key).unwrap(), 3);
         set(&conn, Some(&[1u8; 32]), "com.a", "t3", "foreign").unwrap();
-        let err = decrypt_all(&conn, &key).unwrap_err();
-        assert!(err.contains("\"t3\"") && err.contains("com.a"), "{err}");
+        assert_eq!(
+            decrypt_all(&conn, &key).unwrap_err(),
+            DecryptAllError::Unopenable { plugin: "com.a".into(), name: "t3".into() }
+        );
         for name in ["t1", "t2", "t3"] {
             assert!(raw(&conn, "com.a", name).1, "{name} still sealed");
         }

@@ -4,15 +4,18 @@ import { act, render, cleanup, fireEvent, screen, waitFor } from "@testing-libra
 import { api } from "../lib/tauri";
 import { UnlockModal } from "./UnlockModal";
 import { useLanguageStore } from "../lib/i18n";
+import { commandError } from "../test/commandError";
 
 vi.mock("../lib/tauri", () => ({ api: { unlockVault: vi.fn() } }));
 
 afterEach(cleanup);
 
 describe("UnlockModal", () => {
-  /** The backend refuses with a bare string; a JS-side failure is an
-   * Error. Both read as their words alone (#182). */
+  /** The backend refuses with a CommandError (#236), a plugin with a bare
+   * string; a JS-side failure is an Error. All read as their words alone
+   * (#182). */
   for (const [kind, rejection] of [
+    ["a command error", commandError("vault.wrongPassword", "Wrong password")],
     ["a string", "Wrong password"],
     ["an Error", new Error("Wrong password")],
   ] as const) {
