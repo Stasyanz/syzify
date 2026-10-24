@@ -15,6 +15,7 @@ vi.mock("../../stores/toastStore", () => ({
 }));
 
 import { ImportDialog } from "./ImportDialog";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -48,6 +49,15 @@ describe("ImportDialog", () => {
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", expect.stringContaining("1")));
   });
 
+  it("says it is importing while the import runs", async () => {
+    open.mockResolvedValueOnce(["/a/ride.fit"]);
+    importFiles.mockReturnValueOnce(new Promise(() => {}));
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /Import Files/ }));
+    const busy = await screen.findByRole("button", { name: "Importing…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("does nothing when the dialog is cancelled", async () => {
     open.mockResolvedValueOnce(null);
     mount();
@@ -64,5 +74,32 @@ describe("ImportDialog", () => {
     mount();
     fireEvent.click(screen.getByRole("button"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Import failed: The vault is locked"));
+  });
+
+  it("speaks the interface language: the button, its filter and the toast (#235)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      open.mockResolvedValueOnce(["/a/ride.fit", "/a/run.fit"]);
+      importFiles.mockResolvedValueOnce({
+        imported: 2,
+        skipped: 0,
+        failed: [],
+        monitoring_files: 0,
+        monitoring_days: 0,
+        monitoring_range: null,
+        monitoring_night: false,
+      });
+      mount();
+      fireEvent.click(screen.getByRole("button", { name: "Импортировать файлы" }));
+      await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Импортировано: 2 тренировки"));
+      expect(open).toHaveBeenCalledWith(
+        expect.objectContaining({ filters: [expect.objectContaining({ name: "Файлы тренировок" })] }),
+      );
+      cleanup();
+      mount("icon");
+      expect(screen.getByLabelText("Импортировать файлы тренировок")).toBeTruthy();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

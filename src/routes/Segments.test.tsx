@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
 import type { SegmentLeaderboardRow, SegmentSummaryRow } from "../lib/types";
 import { Segments, filterSegments } from "./Segments";
+import { useLanguageStore } from "../lib/i18n";
 
 vi.mock("../lib/tauri", () => ({
   api: {
@@ -328,5 +329,86 @@ describe("Segments page", () => {
     expect(mocked.getSegmentEfforts).toHaveBeenCalledWith("seg-1");
     // 25:11 for the slower ride.
     expect(screen.getByText("25:11")).toBeTruthy();
+  });
+});
+
+describe("Segments page in Russian (#235)", () => {
+  beforeEach(() => useLanguageStore.getState().setPref("ru"));
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  async function renderRu() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Segments />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Сегменты");
+  }
+
+  it("names the table, its columns and its buttons in the interface language", async () => {
+    mocked.listSegments.mockResolvedValue([summary({ best_effort_power_w: 245.4, effort_count: 12345 })]);
+    await renderRu();
+    await screen.findByText("Siedra from Damlataş");
+    for (const header of ["Сегмент", "Дистанция", "Уклон", "Попытки", "Мощность", "Лучшее"]) {
+      expect(screen.getByText(header)).toBeTruthy();
+    }
+    expect(screen.getByLabelText("Развернуть")).toBeTruthy();
+    expect(screen.getByLabelText("Действия")).toBeTruthy();
+    // The effort count is a number the language groups.
+    expect(screen.getByText("12 345")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Удалить сегмент"));
+    await waitFor(() =>
+      expect(confirmMock).toHaveBeenCalledWith({
+        title: "Удалить сегмент",
+        message: "Удалить «Siedra from Damlataş» и все его попытки? Это нельзя отменить.",
+        confirmLabel: "Удалить",
+        danger: true,
+      }),
+    );
+    fireEvent.click(screen.getByLabelText("Переименовать сегмент"));
+    expect(screen.getByLabelText("Сохранить название")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Отменить переименование"));
+    const search = screen.getByLabelText("Поиск сегментов") as HTMLInputElement;
+    expect(search.placeholder).toBe("Поиск сегментов…");
+    fireEvent.change(search, { target: { value: " everest " } });
+    expect(screen.getByText("Нет сегментов, подходящих под «everest».")).toBeTruthy();
+    expect(screen.getByTitle("Очистить поиск")).toBeTruthy();
+  });
+
+  it("says the loading, empty and effort states in the interface language", async () => {
+    mocked.listSegments.mockReturnValueOnce(new Promise(() => {}));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Segments />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Загрузка сегментов…")).toBeTruthy();
+    cleanup();
+
+    mocked.listSegments.mockResolvedValueOnce([]);
+    await renderRu();
+    expect(await screen.findByText(/^Сегментов пока нет\./)).toBeTruthy();
+    cleanup();
+
+    let release: (rows: SegmentLeaderboardRow[]) => void = () => {};
+    mocked.getSegmentEfforts.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
+    await renderRu();
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    expect(await screen.findByText("Загрузка попыток…")).toBeTruthy();
+    release([lb({ activity_title: null }), lb({ id: 2, rank: 2 })]);
+    expect(await screen.findByText("Без названия")).toBeTruthy();
+    expect(screen.getByLabelText("Лучшая попытка")).toBeTruthy();
+    expect(screen.getAllByTitle("Открыть тренировку")).toHaveLength(2);
+    cleanup();
+
+    await renderRu();
+    fireEvent.click(await screen.findByText("Siedra from Damlataş"));
+    expect(await screen.findByText(/^Попыток пока нет/)).toBeTruthy();
   });
 });

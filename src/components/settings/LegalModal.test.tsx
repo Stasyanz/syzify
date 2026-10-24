@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 import { LegalModal, type LegalDoc } from "./LegalModal";
 
 vi.mock("../../lib/tauri", () => ({
@@ -53,5 +54,24 @@ describe("LegalModal", () => {
     renderModal("exception", onClose);
     fireEvent.click(screen.getByLabelText("Close"));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("translates only its chrome: the documents and their names stay English", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      vi.mocked(api.getLegalText).mockResolvedValue("Syzify Plugin Exception text");
+      renderModal("exception");
+      const title = screen.getByText("Syzify Plugin Exception");
+      expect(title.getAttribute("translate")).toBe("no");
+      const text = await screen.findByText("Syzify Plugin Exception text");
+      expect(text.getAttribute("lang")).toBe("en");
+      expect(text.getAttribute("translate")).toBe("no");
+      screen.getByLabelText("Закрыть");
+      cleanup();
+      renderModal("notices");
+      expect(screen.getByRole("heading").textContent).toBe("Сторонние лицензии");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

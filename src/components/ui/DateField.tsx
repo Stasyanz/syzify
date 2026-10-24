@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { buildMonthGrid, monthNames, weekdayNames } from "../../lib/calendar";
-import { formatDateTime } from "../../lib/i18n";
+import { formatDateTime, useT } from "../../lib/i18n";
 import { useToday } from "../../hooks/useToday";
 import { Select } from "./Select";
 
@@ -25,7 +25,7 @@ export function DateField({
   align,
   drop,
   yearSpan,
-  placeholder = "Any",
+  placeholder,
 }: {
   label: string;
   value: string | undefined;
@@ -35,8 +35,10 @@ export function DateField({
   align?: "right";
   drop?: "down";
   yearSpan?: [number, number];
+  /** What the field says without a value; "Any" (date) by default. */
   placeholder?: string;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   // Live day, so the picker's "today" mark survives midnight.
@@ -117,7 +119,7 @@ export function DateField({
           <span className="dp-flabel">{label}</span>
           <Calendar size={13} />
         </span>
-        <span className="dp-fval">{display || placeholder}</span>
+        <span className="dp-fval">{display || (placeholder ?? t("common.anyDate"))}</span>
       </button>
       {open && (
         <div className="dp-pop">
@@ -128,21 +130,21 @@ export function DateField({
                 value={String(view.m)}
                 options={monthOptions}
                 onChange={(m) => setView((p) => ({ ...p, m: Number(m) }))}
-                ariaLabel="Month"
+                ariaLabel={t("common.month")}
               />
               <Select
                 compact
                 value={String(view.y)}
                 options={yearOptions}
                 onChange={(y) => setView((p) => ({ ...p, y: Number(y) }))}
-                ariaLabel="Year"
+                ariaLabel={t("common.year")}
               />
             </div>
             <div className="dp-nav">
-              <button type="button" onClick={() => shift(-1)} aria-label="Previous month">
+              <button type="button" onClick={() => shift(-1)} aria-label={t("common.previousMonth")}>
                 <ChevronLeft size={16} />
               </button>
-              <button type="button" onClick={() => shift(1)} aria-label="Next month">
+              <button type="button" onClick={() => shift(1)} aria-label={t("common.nextMonth")}>
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -183,7 +185,7 @@ export function DateField({
               setOpen(false);
             }}
           >
-            Clear
+            {t("common.clear")}
           </button>
         </div>
       )}

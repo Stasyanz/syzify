@@ -64,11 +64,17 @@ pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
   placeholder, a plural message is an object of `Intl.PluralRules` forms
   picked by a numeric `count`. Text that is a name and reads the same in
   every language (a device model, the wordmark) is marked `translate="no"`
-  on its element or `i18n-ignore` on its line — never a word. The scan
-  test's `NOT_YET_TRANSLATED` counts what is left per file: translating
-  lowers a count, and a new English string in JSX, a shown label or a toast
-  fails the suite. Tables of names and strings a function returns are out
-  of its sight — `TRACKED_BY_HAND` lists those files. A sentence with a
+  on its element or `i18n-ignore` on its line — never a word. Every screen
+  is translated (#235): the scan test fails on any English string in JSX,
+  a shown label or a toast, in any file. Tables of names and strings a
+  function returns are out of its sight — a `return "Text"` in a helper
+  passes it, and only review catches that — so a table maps to message
+  keys (`as const satisfies Record<…, MessageKey>`, looked up by own key
+  only) and a helper in a `.tsx` takes a `translate: Translator`. A long
+  operation of Settings that must outlive a remount (a language change,
+  another tab, leaving the page) keeps its busy flag in
+  `stores/busyStore.ts`: the language picker stays locked and a change of
+  the system's languages waits while any runs. A sentence with a
   bold word or a link inside is ONE message, never two halves around it:
   `const rt = useRichT()` and `rt("app.watch.found", { count, files:
   <strong>…</strong> })` cut the message at its `{name}`s before filling,

@@ -3,9 +3,11 @@ interface ToggleProps {
   on: boolean;
   onToggle: () => void;
   ariaLabel?: string;
+  /** Off while the switch's own operation runs. */
+  disabled?: boolean;
 }
 
-export function Toggle({ on, onToggle, ariaLabel }: ToggleProps) {
+export function Toggle({ on, onToggle, ariaLabel, disabled = false }: ToggleProps) {
   return (
     <button
       type="button"
@@ -13,7 +15,8 @@ export function Toggle({ on, onToggle, ariaLabel }: ToggleProps) {
       aria-checked={on}
       aria-label={ariaLabel}
       onClick={onToggle}
-      className="w-11 h-[26px] rounded-full border-0 cursor-pointer p-0.5 shrink-0 flex items-center transition-colors"
+      disabled={disabled}
+      className="w-11 h-[26px] rounded-full border-0 cursor-pointer p-0.5 shrink-0 flex items-center transition-colors disabled:cursor-not-allowed disabled:opacity-60"
       style={{
         background: on ? "var(--accent)" : "var(--border-2)",
         justifyContent: on ? "flex-end" : "flex-start",

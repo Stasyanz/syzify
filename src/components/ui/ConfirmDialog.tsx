@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useConfirmStore } from "../../stores/confirmStore";
+import { useT } from "../../lib/i18n";
 
 /**
  * The single host for `confirmDialog()` requests — a themed modal in place
@@ -7,6 +8,7 @@ import { useConfirmStore } from "../../stores/confirmStore";
  * modal policy); Escape cancels, Enter confirms.
  */
 export function ConfirmDialogHost() {
+  const t = useT();
   const pending = useConfirmStore((s) => s.pending);
   const settle = useConfirmStore((s) => s.settle);
 
@@ -44,7 +46,7 @@ export function ConfirmDialogHost() {
             onClick={() => settle(false)}
             className="px-3.5 py-1.5 rounded-lg border border-border-2 text-sm font-medium text-muted hover:text-ink hover:bg-card-2"
           >
-            {pending.cancelLabel ?? "Cancel"}
+            {pending.cancelLabel ?? t("common.cancel")}
           </button>
           <button
             autoFocus
@@ -55,7 +57,7 @@ export function ConfirmDialogHost() {
                 : "px-3.5 py-1.5 rounded-lg text-sm font-medium bg-accent text-accent-ink hover:bg-accent-2"
             }
           >
-            {pending.confirmLabel ?? "Confirm"}
+            {pending.confirmLabel ?? t("common.confirm")}
           </button>
         </div>
       </div>

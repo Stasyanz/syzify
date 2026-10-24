@@ -19,10 +19,17 @@ vi.mock("../lib/tauri", () => ({
     runImportDatasource: vi.fn(),
     backupVault: vi.fn(),
     restoreVault: vi.fn(),
+    restartApp: vi.fn(async () => {}),
   },
 }));
 vi.mock("../stores/confirmStore", () => ({ confirmDialog: vi.fn(async () => true) }));
-vi.mock("../lib/contact", () => ({ CONTACT_EMAIL: "hi@example.com", GITHUB_ISSUES_URL: "https://example.com/issues" }));
+const contact = vi.hoisted(() => ({ email: "hi@example.com" }));
+vi.mock("../lib/contact", () => ({
+  get CONTACT_EMAIL() {
+    return contact.email;
+  },
+  GITHUB_ISSUES_URL: "https://example.com/issues",
+}));
 vi.mock("../stores/toastStore", () => {
   const addToast = vi.fn(() => "t1");
   const state = { addToast, updateToast: vi.fn(), removeToast: vi.fn() };
@@ -54,6 +61,7 @@ import { useThemeStore } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
 import { useLanguageStore } from "../lib/i18n";
 import { useFeedbackStore } from "../stores/feedbackStore";
+import { useBusyStore } from "../stores/busyStore";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -116,7 +124,10 @@ describe("SettingsPage tabs", () => {
       scopes: { activities: false, database: false, photos: false },
     });
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    useBusyStore.setState({ running: {}, lastError: {} });
+  });
 
   it("opens on General with the five tabs and only that section", async () => {
     renderAt("/settings");
@@ -245,7 +256,8 @@ describe("SettingsPage tabs", () => {
   }
 
   it("turning encryption on asks for a password and nothing else — there is no scope to tick (#209)", async () => {
-    vi.mocked(api.enableEncryption).mockResolvedValue(undefined);
+    // Still running, so the dialog is still there to read.
+    vi.mocked(api.enableEncryption).mockReturnValue(new Promise(() => {}));
     await startEnablingEncryption();
     expect(screen.queryAllByRole("checkbox")).toEqual([]);
     expect(
@@ -523,6 +535,249 @@ describe("SettingsPage tabs", () => {
       await act(async () => fail("bad key"));
       await waitFor(() => expect(picker().disabled).toBe(false));
     });
+
+    // The sections' own operations live in the busy store (#235): a vault
+    // switch or move, a watch-folder preview or scan, an update install, a
+    // monitoring delete — started on another tab, they lock the picker too.
+    it.each(["vaultSwitch", "vaultMove", "watchPreview", "watchScan", "updateInstall", "monitoringDelete"] as const)(
+      "a section's %s",
+      (op) => {
+        renderAt("/settings");
+        expect(picker().disabled).toBe(false);
+        act(() => useBusyStore.getState().start(op));
+        expect(picker().disabled).toBe(true);
+        act(() => useBusyStore.getState().finish(op));
+        expect(picker().disabled).toBe(false);
+      },
+    );
+  });
+
+  it("speaks Russian on every tab of its own", async () => {
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      vi.mocked(api.getEncryptionStatus).mockResolvedValue({
+        enabled: true,
+        locked: false,
+        scopes: { activities: true, database: false, photos: false },
+      });
+      renderAt("/settings?tab=vault");
+      expect(screen.getAllByRole("tab").map((x) => x.textContent)).toEqual([
+        "Общие",
+        "Хранилище",
+        "Гараж",
+        "Плагины",
+        "О программе",
+      ]);
+      expect(screen.getByRole("tablist").getAttribute("aria-label")).toBe("Разделы настроек");
+      expect(rows()).toEqual(["Шифрование", "Резервное копирование"]);
+      // An early, partly encrypted vault names what is left, in Russian.
+      expect(await screen.findByText(/^Не зашифровано: база данных, фото\./)).toBeTruthy();
+      screen.getByRole("button", { name: "Восстановить" });
+
+      fireEvent.click(screen.getByRole("tab", { name: "О программе" }));
+      expect(rows()).toEqual(["Syzify", "Лицензия", "Обратная связь"]);
+      screen.getByText("Локальное хранилище тренировок");
+      expect(await screen.findByText("Версия 9.9.9")).toBeTruthy();
+      const license = screen.getByText("AGPL-3.0");
+      expect(license.getAttribute("translate")).toBe("no");
+      expect(license.parentElement?.textContent).toBe(
+        "© 2026 Stanislav Zainullin · AGPL-3.0 с исключением для плагинов · Сторонние лицензии",
+      );
+      expect(screen.getByText("hi@example.com").parentElement?.textContent).toBe(
+        "Сообщить об ошибке или предложить идею можно в GitHub Issues или письмом на hi@example.com",
+      );
+      // The tracker's name is a name: the same words, marked untranslatable.
+      expect(screen.getByText("GitHub Issues", { selector: "a" }).getAttribute("translate")).toBe("no");
+      screen.getByLabelText("GitHub Issues");
+      screen.getByLabelText("Отправить отзыв");
+      fireEvent.click(screen.getByText("исключением для плагинов"));
+      screen.getByText("LEGAL exception");
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  it("names the documents of the licence line and drops the email without an address", () => {
+    renderAt("/settings?tab=about");
+    fireEvent.click(screen.getByText("AGPL-3.0"));
+    screen.getByText("LEGAL license");
+    expect(screen.getByText("GitHub Issues", { selector: "a" }).parentElement?.textContent).toBe(
+      "Report a bug or suggest a feature on GitHub Issues, or email hi@example.com",
+    );
+    cleanup();
+    contact.email = "";
+    try {
+      renderAt("/settings?tab=about");
+      expect(screen.getByText("GitHub Issues", { selector: "a" }).parentElement?.textContent).toBe(
+        "Report a bug or suggest a feature on GitHub Issues",
+      );
+    } finally {
+      contact.email = "hi@example.com";
+    }
+  });
+
+  it("says when a backup failed", async () => {
+    vi.mocked(listen).mockResolvedValue(() => {});
+    vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
+    vi.mocked(api.backupVault).mockRejectedValue("disk full");
+    renderAt("/settings?tab=vault");
+    fireEvent.click(screen.getByRole("button", { name: "Backup" }));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Backup failed: disk full"),
+    );
+  });
+
+  it.each([
+    ["a string", "cache dir is busy", "en", "Could not clear the tile cache: cache dir is busy"],
+    ["an Error", new Error("cache dir is busy"), "ru", "Не удалось очистить кэш карты: cache dir is busy"],
+  ] as const)("says why clearing the tile cache failed with %s, and unlocks", async (_kind, rejection, lang, text) => {
+    act(() => useLanguageStore.getState().setPref(lang));
+    try {
+      vi.mocked(api.clearTileCache).mockRejectedValue(rejection);
+      renderAt("/settings");
+      await waitFor(() => expect(screen.getByText(/2 KB/)).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: lang === "en" ? "Clear Cache" : "Очистить кэш" }));
+      await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", text));
+      expect(useBusyStore.getState().running).toEqual({});
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  it("unlocks the page when the backup's progress listener cannot subscribe", async () => {
+    vi.mocked(listen).mockRejectedValueOnce("event bus gone");
+    vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
+    renderAt("/settings?tab=vault");
+    fireEvent.click(screen.getByRole("button", { name: "Backup" }));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Backup failed: event bus gone"),
+    );
+    expect(useBusyStore.getState().running).toEqual({});
+    expect(api.backupVault).not.toHaveBeenCalled();
+    expect(useToastStore.getState().removeToast).toHaveBeenCalledWith("t1");
+  });
+
+  it("keeps a backup's indicator and the locks when the user leaves Settings and comes back (#235)", async () => {
+    vi.mocked(listen).mockResolvedValue(() => {});
+    vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
+    let finish!: () => void;
+    vi.mocked(api.backupVault).mockReturnValue(new Promise<void>((r) => (finish = r)));
+    const first = renderAt("/settings?tab=vault");
+    fireEvent.click(screen.getByRole("button", { name: "Backup" }));
+    await waitFor(() => expect(api.backupVault).toHaveBeenCalled());
+    first.unmount();
+    renderAt("/settings?tab=vault");
+    const busy = screen.getByRole("button", { name: "Creating…" }) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("tab", { name: "General" }));
+    expect((screen.getByRole("button", { name: "Language" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish());
+    await waitFor(() => expect((screen.getByRole("button", { name: "Language" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("says an encryption switch is still running when the page comes back without its dialog", async () => {
+    let fail!: (e: unknown) => void;
+    vi.mocked(api.enableEncryption).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    const first = renderAt("/settings?tab=vault");
+    await waitFor(() => expect(screen.getByLabelText("Enable encryption")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Enable encryption"));
+    fireEvent.change(screen.getByPlaceholderText("Password (min 8 characters)"), { target: { value: "hunter2hunter2" } });
+    fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enable Encryption" }));
+    await waitFor(() => expect(api.enableEncryption).toHaveBeenCalled());
+    first.unmount();
+    renderAt("/settings?tab=vault");
+    expect(screen.getByRole("status").textContent).toBe("Encrypting…");
+    expect((screen.getByLabelText("Enable encryption") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => fail("disk full"));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect((screen.getByLabelText("Enable encryption") as HTMLButtonElement).disabled).toBe(false);
+    // The old page is gone, so only a toast can say why.
+    expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Encryption failed: disk full");
+  });
+
+  it("says the same for a switch turning encryption off", async () => {
+    vi.mocked(api.getEncryptionStatus).mockResolvedValue({
+      enabled: true,
+      locked: false,
+      scopes: { activities: true, database: true, photos: true },
+    });
+    act(() => useBusyStore.getState().start("decrypt"));
+    renderAt("/settings?tab=vault");
+    expect(screen.getByRole("status").textContent).toBe("Decrypting…");
+    await waitFor(() => expect((screen.getByLabelText("Disable encryption") as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("unlocks a restore the backend did not start", async () => {
+    vi.mocked(open).mockResolvedValue("/tmp/backup.zip");
+    vi.mocked(api.restoreVault).mockResolvedValue({ restored: false, error: null, preserved_at: null });
+    renderAt("/settings?tab=vault");
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(api.restoreVault).toHaveBeenCalled());
+    await waitFor(() => expect(useBusyStore.getState().running).toEqual({}));
+    expect(api.restartApp).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ restored: true, error: null, preserved_at: null }, "success", "Vault restored. Restarting…"],
+    [
+      { restored: true, error: null, preserved_at: "/v/pre-restore-1" },
+      "success",
+      "Vault restored. Previous vault kept in /v/pre-restore-1. Restarting…",
+    ],
+    [
+      { restored: true, error: "photos/x.jpg: short read", preserved_at: "/v/pre-restore-1" },
+      "warning",
+      "Restore incomplete: photos/x.jpg: short read. Previous vault kept in /v/pre-restore-1. Restarting…",
+    ],
+  ] as const)("says how a restore went, then restarts: %j", async (result, level, text) => {
+    vi.mocked(open).mockResolvedValue("/tmp/backup.zip");
+    vi.mocked(api.restoreVault).mockResolvedValue(result);
+    renderAt("/settings?tab=vault");
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(useToastStore.getState().addToast).toHaveBeenCalledWith(level, text));
+    await waitFor(() => expect(api.restartApp).toHaveBeenCalled(), { timeout: 2000 });
+  });
+
+  it("falls back to a toast when encryption could not be turned off after the user left the tab", async () => {
+    vi.mocked(api.getEncryptionStatus).mockResolvedValue({
+      enabled: true,
+      locked: false,
+      scopes: { activities: true, database: true, photos: true },
+    });
+    let fail!: (e: unknown) => void;
+    vi.mocked(api.disableEncryption).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    renderAt("/settings?tab=vault");
+    await waitFor(() => expect(screen.getByLabelText("Disable encryption")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Disable encryption"));
+    fireEvent.change(screen.getByPlaceholderText("Current password"), { target: { value: "hunter2hunter2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Disable Encryption" }));
+    await waitFor(() => expect(api.disableEncryption).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("tab", { name: "About" }));
+    await act(async () => fail("wrong password"));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith(
+        "error",
+        "Disabling encryption failed: wrong password",
+      ),
+    );
+  });
+
+  it("asks for a long enough password in the words of the language", async () => {
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      renderAt("/settings?tab=vault");
+      await waitFor(() => expect(screen.getByLabelText("Включить шифрование")).toBeTruthy());
+      fireEvent.click(screen.getByLabelText("Включить шифрование"));
+      fireEvent.change(screen.getByPlaceholderText("Пароль (не меньше 8 символов)"), { target: { value: "short" } });
+      fireEvent.change(screen.getByPlaceholderText("Повторите пароль"), { target: { value: "short" } });
+      fireEvent.click(screen.getByRole("button", { name: "Включить шифрование" }));
+      expect(await screen.findByText("Пароль должен быть не короче 8 символов.")).toBeTruthy();
+      expect(api.enableEncryption).not.toHaveBeenCalled();
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("reports a data source import that failed outright or for some files", async () => {
@@ -601,11 +856,17 @@ describe("SettingsPage tabs", () => {
       let finish!: () => void;
       vi.mocked(api.backupVault).mockReturnValue(new Promise<void>((r) => (finish = r)));
       renderAt("/settings?tab=vault");
-      fireEvent.click(screen.getByRole("button", { name: /Backup/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Создать копию" }));
       await waitFor(() => expect(progress).toBeDefined());
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith(
+        "info",
+        expect.stringMatching(/^Создание резервной копии… 0\s%$/),
+        undefined,
+        true,
+      );
       progress!({ payload: { processed: 1.5 * 1048576, total: 12345 * 1048576 } });
       expect(useToastStore.getState().updateToast).toHaveBeenCalledWith("t1", {
-        message: "Creating backup… 0% (2/12\xa0345 MB)",
+        message: expect.stringMatching(/^Создание резервной копии… 0\s% \(2\/12\xa0345 МБ\)$/),
       });
       await act(async () => finish());
     } finally {

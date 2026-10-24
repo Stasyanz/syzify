@@ -5,9 +5,10 @@ import { api } from "../../lib/tauri";
 import type { MonitoringDeleted, MonitoringSummary } from "../../lib/types";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
+import { useBusy, useBusyStore } from "../../stores/busyStore";
 import { dateOfDayKey } from "../../lib/calendar";
 import { errorText } from "../../lib/errors";
-import { formatDateTime } from "../../lib/i18n";
+import { formatDateTime, useT, type Translator } from "../../lib/i18n";
 
 const INPUT =
   "text-sm bg-card border border-border-2 rounded-[9px] px-2.5 py-1.5 outline-none focus:border-accent";
@@ -17,51 +18,57 @@ export function longDate(key: string): string {
   return formatDateTime(dateOfDayKey(key), { year: "numeric", month: "short", day: "numeric" });
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 /** The summary line under "Monitoring data". */
-export function describeSummary(s: MonitoringSummary): string {
+export function describeSummary(s: MonitoringSummary, translate: Translator): string {
   if (s.days === 0 || !s.first_date || !s.last_date) {
-    return "No Garmin monitoring data stored";
+    return translate("settings.monitoring.none");
   }
   const span =
     s.first_date === s.last_date
       ? longDate(s.first_date)
       : `${longDate(s.first_date)} – ${longDate(s.last_date)}`;
-  return `${plural(s.days, "day")} of Garmin monitoring (${span}) · ${plural(s.files, "file")}`;
+  return translate("settings.monitoring.summary", {
+    days: translate("common.days", { count: s.days }),
+    span,
+    files: translate("common.files", { count: s.files }),
+  });
 }
 
 /** Why a range cannot be deleted, or null when it can. */
-export function rangeProblem(from: string, to: string): string | null {
+export function rangeProblem(from: string, to: string, translate: Translator): string | null {
   const iso = /^\d{4}-\d{2}-\d{2}$/;
-  if (!iso.test(from) || !iso.test(to)) return "Pick both dates";
-  if (to < from) return "The end date is before the start date";
+  if (!iso.test(from) || !iso.test(to)) return translate("settings.monitoring.pickBoth");
+  if (to < from) return translate("settings.monitoring.endBeforeStart");
   return null;
 }
 
-export function deleteMessage(from: string, to: string): string {
-  const span = from === to ? `on ${longDate(from)}` : `from ${longDate(from)} to ${longDate(to)}`;
-  return (
-    `Delete the monitoring data ${span}?\n\n` +
-    "Night heart rate, stress, steps and the other readings of those days are removed. " +
-    "Monitor files that cover only those days are removed too and can be imported again; " +
-    "a file that also covers a kept day stays, and its deleted part will not come back on re-import.\n\n" +
-    "Earlier backup archives are not touched. If a watch folder still holds these files, " +
-    "the next scan imports them again."
-  );
+export function deleteMessage(from: string, to: string, translate: Translator): string {
+  const question =
+    from === to
+      ? translate("settings.monitoring.deleteOne", { date: longDate(from) })
+      : translate("settings.monitoring.deleteRange", { from: longDate(from), to: longDate(to) });
+  return `${question}\n\n${translate("settings.monitoring.deleteBody")}`;
 }
 
 /** Level and text of the toast after a delete. Files count what was really
  * removed; a refusal by the OS is said out loud, never folded into success. */
-export function deleteToast(r: MonitoringDeleted): ["success" | "info" | "warning", string] {
+export function deleteToast(r: MonitoringDeleted, translate: Translator): ["success" | "info" | "warning", string] {
   const done =
     r.days === 0 && r.files === 0
-      ? "No monitoring data in that range"
-      : `Deleted ${plural(r.days, "day")} of monitoring and ${plural(r.files, "file")}`;
+      ? translate("settings.monitoring.nothingInRange")
+      : translate("settings.monitoring.deleted", {
+          days: translate("common.days", { count: r.days }),
+          files: translate("common.files", { count: r.files }),
+        });
   if (r.failed > 0) {
     return [
       "warning",
-      `${done} · ${plural(r.failed, "file")} could not be removed (${r.error ?? "unknown error"}) — try again later`,
+      translate("settings.monitoring.notRemoved", {
+        done,
+        count: r.failed,
+        // Inside parentheses mid-sentence: the lower-case form.
+        error: r.error ?? translate("settings.monitoring.unknownError"),
+      }),
     ];
   }
   return [r.days === 0 && r.files === 0 ? "info" : "success", done];
@@ -69,14 +76,16 @@ export function deleteToast(r: MonitoringDeleted): ["success" | "info" | "warnin
 
 /**
  * Settings → Vault → Monitoring data: what the vault holds from the watch's
- * Monitor files, and a date-range delete (ADR 0002, privacy).
+ * Monitor files, and a date-range delete (ADR 0002, privacy). The delete's
+ * busy flag lives in the busy store, so a remount keeps the button locked.
  */
 export function MonitoringData() {
+  const t = useT();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [busy, setBusy] = useState(false);
+  const busy = useBusy("monitoringDelete");
 
   // Under the "monitoring" prefix so an import invalidates it too.
   const { data: summary } = useQuery({
@@ -99,43 +108,44 @@ export function MonitoringData() {
 
   // The stored span, when there is one — what the inputs are bounded by.
   const span = first && last && summary && summary.days > 0 ? { min: first, max: last } : null;
-  const problem = rangeProblem(from, to);
+  const problem = rangeProblem(from, to, t);
 
   // Reachable only through the enabled button: no span or a bad range
   // keeps it disabled, and the backend re-checks the order anyway.
   async function handleDelete() {
     const confirmed = await confirmDialog({
-      title: "Delete monitoring data",
-      message: deleteMessage(from, to),
-      confirmLabel: "Delete",
+      title: t("settings.monitoring.deleteTitle"),
+      message: deleteMessage(from, to, t),
+      confirmLabel: t("common.delete"),
       danger: true,
     });
     if (!confirmed) return;
-    setBusy(true);
+    const ops = useBusyStore.getState();
+    ops.start("monitoringDelete");
     try {
       const { days, files, failed, error } = await api.deleteMonitoringRange(from, to);
-      addToast(...deleteToast({ days, files, failed, error }));
+      addToast(...deleteToast({ days, files, failed, error }, t));
       queryClient.invalidateQueries({ queryKey: ["monitoring"] });
       queryClient.invalidateQueries({ queryKey: ["recovery"] });
     } catch (e) {
-      addToast("error", `Delete failed: ${errorText(e)}`);
+      addToast("error", t("settings.monitoring.deleteFailed", { error: errorText(e) }));
     } finally {
-      setBusy(false);
+      ops.finish("monitoringDelete");
     }
   }
 
   return (
     <div className="set-row">
       <div className="flex-1 min-w-0">
-        <div className="sl">Monitoring data</div>
-        <div className="sd">{summary ? describeSummary(summary) : "…"}</div>
+        <div className="sl">{t("settings.monitoring.title")}</div>
+        <div className="sd">{summary ? describeSummary(summary, t) : "…"}</div>
         {span && (
           <div className="flex flex-wrap items-center gap-2 mt-2.5 text-xs text-muted">
             <label className="flex items-center gap-1.5">
-              From
+              {t("settings.monitoring.from")}
               <input
                 type="date"
-                aria-label="Delete from"
+                aria-label={t("settings.monitoring.deleteFrom")}
                 className={INPUT}
                 value={from}
                 min={span.min}
@@ -144,10 +154,10 @@ export function MonitoringData() {
               />
             </label>
             <label className="flex items-center gap-1.5">
-              to
+              {t("settings.monitoring.to")}
               <input
                 type="date"
-                aria-label="Delete to"
+                aria-label={t("settings.monitoring.deleteTo")}
                 className={INPUT}
                 value={to}
                 min={span.min}
@@ -165,7 +175,7 @@ export function MonitoringData() {
         className="btn ghost shrink-0"
       >
         <Trash2 size={15} />
-        {busy ? "Deleting…" : "Delete…"}
+        {busy ? t("settings.monitoring.deleting") : t("settings.monitoring.delete")}
       </button>
     </div>
   );

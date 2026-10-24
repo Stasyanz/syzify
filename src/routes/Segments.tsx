@@ -14,6 +14,7 @@ import {
 } from "../lib/format";
 import { SportGlyph } from "../components/brand/SportIcon";
 import { confirmDialog } from "../stores/confirmStore";
+import { formatNumber, useT } from "../lib/i18n";
 
 /** Case-insensitive substring filter over segment names. Client-side by
  * design: the list is user-curated and small, a backend query would only
@@ -30,6 +31,7 @@ export function filterSegments(
 /** The /segments page: every saved segment with rename/delete and an
  * expandable per-segment leaderboard (best effort first, click → activity). */
 export function Segments() {
+  const t = useT();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
@@ -64,9 +66,9 @@ export function Segments() {
 
   const askDelete = async (s: SegmentSummaryRow) => {
     const ok = await confirmDialog({
-      title: "Delete segment",
-      message: `Delete “${s.name}” and all its recorded efforts? This cannot be undone.`,
-      confirmLabel: "Delete",
+      title: t("segments.delete"),
+      message: t("segments.deleteMessage", { name: s.name }),
+      confirmLabel: t("common.delete"),
       danger: true,
     });
     if (ok) remove.mutate(s.id);
@@ -94,20 +96,20 @@ export function Segments() {
             regardless of the title's width (flex justify-between pinned it
             to the right edge). */}
         <div className="sticky top-0 z-10 bg-bg grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-6 pt-3 pb-2">
-          <h2 className="!m-0 text-lg font-bold">Segments</h2>
+          <h2 className="!m-0 text-lg font-bold">{t("segments.title")}</h2>
           <div className="fsearch w-64">
             <Search size={15} />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search segments…"
-              aria-label="Search segments"
+              placeholder={t("segments.searchPlaceholder")}
+              aria-label={t("segments.search")}
             />
             {query && (
               <span
                 className="fsearch-x"
-                title="Clear search"
+                title={t("segments.clearSearch")}
                 onClick={() => setQuery("")}
               >
                 <X size={14} />
@@ -117,21 +119,14 @@ export function Segments() {
         </div>
         <div className="px-6 pb-6 pt-1">
           {isLoading ? (
-            <p className="text-sm text-faint">Loading segments…</p>
+            <p className="text-sm text-faint">{t("segments.loading")}</p>
           ) : !segments || segments.length === 0 ? (
             <div className="dash-card">
-              <p className="text-sm text-muted">
-                No segments yet. Drag-select a section of the elevation chart on
-                an activity, then right-click the selection and choose Save
-                segment — every past and future workout over the same route
-                will be timed against it.
-              </p>
+              <p className="text-sm text-muted">{t("segments.empty")}</p>
             </div>
           ) : filterSegments(segments, query).length === 0 ? (
             <div className="dash-card">
-              <p className="text-sm text-muted">
-                No segments match “{query.trim()}”.
-              </p>
+              <p className="text-sm text-muted">{t("segments.noMatch", { query: query.trim() })}</p>
             </div>
           ) : (
             <div className="dash-card">
@@ -140,16 +135,16 @@ export function Segments() {
               <table className="w-full text-sm table-fixed">
                 <thead>
                   <tr className="text-faint text-xs uppercase tracking-wide">
-                    <th className="w-6 pb-2" aria-label="Expand" />
-                    <th className="font-semibold pb-2 text-left">Segment</th>
-                    <th className="font-semibold pb-2 text-right w-24">Distance</th>
-                    <th className="font-semibold pb-2 text-right w-20">Grade</th>
-                    <th className="font-semibold pb-2 text-right w-20">Efforts</th>
+                    <th className="w-6 pb-2" aria-label={t("segments.col.expand")} />
+                    <th className="font-semibold pb-2 text-left">{t("segments.col.segment")}</th>
+                    <th className="font-semibold pb-2 text-right w-24">{t("common.distance")}</th>
+                    <th className="font-semibold pb-2 text-right w-20">{t("segments.col.grade")}</th>
+                    <th className="font-semibold pb-2 text-right w-20">{t("segments.col.efforts")}</th>
                     {showPower && (
-                      <th className="font-semibold pb-2 text-right w-20">Power</th>
+                      <th className="font-semibold pb-2 text-right w-20">{t("common.power")}</th>
                     )}
-                    <th className="font-semibold pb-2 text-right w-20">Best</th>
-                    <th className="w-16 pb-2" aria-label="Actions" />
+                    <th className="font-semibold pb-2 text-right w-20">{t("segments.col.best")}</th>
+                    <th className="w-16 pb-2" aria-label={t("segments.col.actions")} />
                   </tr>
                 </thead>
                 <tbody>
@@ -208,6 +203,7 @@ function SegmentRows({
   onDelete: () => void;
   renameError: string | null;
 }) {
+  const t = useT();
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <>
@@ -239,14 +235,14 @@ function SegmentRows({
               </span>
               <button
                 className="text-faint hover:text-ink"
-                aria-label="Save name"
+                aria-label={t("segments.saveName")}
                 onClick={onEditSubmit}
               >
                 <Check size={15} />
               </button>
               <button
                 className="text-faint hover:text-ink"
-                aria-label="Cancel rename"
+                aria-label={t("segments.cancelRename")}
                 onClick={onEditCancel}
               >
                 <X size={15} />
@@ -264,7 +260,7 @@ function SegmentRows({
         <td className="py-2 text-right tabular-nums">
           {s.avg_grade_pct != null ? formatGrade(s.avg_grade_pct) : "--"}
         </td>
-        <td className="py-2 text-right tabular-nums">{s.effort_count}</td>
+        <td className="py-2 text-right tabular-nums">{formatNumber(s.effort_count)}</td>
         {showPower && (
           <td className="py-2 text-right tabular-nums">
             {formatPower(s.best_effort_power_w)}
@@ -275,14 +271,14 @@ function SegmentRows({
           <span className="inline-flex gap-2" onClick={(e) => e.stopPropagation()}>
             <button
               className="text-faint hover:text-ink"
-              aria-label="Rename segment"
+              aria-label={t("segments.rename")}
               onClick={onEditStart}
             >
               <Pencil size={14} />
             </button>
             <button
               className="text-faint hover:text-red-600"
-              aria-label="Delete segment"
+              aria-label={t("segments.delete")}
               onClick={onDelete}
             >
               <Trash2 size={14} />
@@ -302,6 +298,7 @@ function LeaderboardRows({
   segment: SegmentSummaryRow;
   showPower: boolean;
 }) {
+  const t = useT();
   const navigate = useNavigate();
   const { data: efforts, isLoading } = useQuery({
     queryKey: ["segment-leaderboard", segment.id],
@@ -312,7 +309,7 @@ function LeaderboardRows({
     return (
       <tr>
         <td colSpan={showPower ? 8 : 7} className="py-2 pl-8 text-xs text-faint">
-          Loading efforts…
+          {t("segments.loadingEfforts")}
         </td>
       </tr>
     );
@@ -321,7 +318,7 @@ function LeaderboardRows({
     return (
       <tr>
         <td colSpan={showPower ? 8 : 7} className="py-2 pl-8 text-xs text-faint">
-          No efforts yet — ride or run this route and import the workout.
+          {t("segments.noEfforts")}
         </td>
       </tr>
     );
@@ -333,16 +330,16 @@ function LeaderboardRows({
           key={e.id}
           className="cursor-pointer border-t border-border/50 bg-card-2/40 text-xs hover:bg-card-2"
           onClick={() => navigate(`/activity/${e.activity_id}`)}
-          title="Open activity"
+          title={t("segments.openActivity")}
         >
           <td />
           <td className="py-1.5 pl-6 truncate">
             <span className="inline-flex items-center gap-1.5">
               {e.rank === 1 && efforts.length > 1 && (
-                <Trophy size={11} className="text-accent-2" aria-label="Best effort" />
+                <Trophy size={11} className="text-accent-2" aria-label={t("segments.bestEffort")} />
               )}
               <span className="tabular-nums text-faint">{e.rank != null ? `#${e.rank}` : "—"}</span>
-              <span className="font-medium">{e.activity_title ?? "Untitled"}</span>
+              <span className="font-medium">{e.activity_title ?? t("segments.untitled")}</span>
               <span className="text-faint">{formatDate(e.start_time)}</span>
             </span>
           </td>

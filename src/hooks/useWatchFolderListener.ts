@@ -5,6 +5,7 @@ import { useToastStore } from "../stores/toastStore";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 import { formatImportSummary } from "../lib/importSummary";
 import { errorText } from "../lib/errors";
+import { useT } from "../lib/i18n";
 
 /**
  * Offers new workout files from the watch folders and device volumes:
@@ -20,6 +21,11 @@ export function useWatchFolderListener(vaultOpen: boolean) {
   const addToast = useToastStore((s) => s.addToast);
   const addToastRef = useRef(addToast);
   addToastRef.current = addToast;
+  // The language's `t`, read when a toast is written: the listener and the
+  // catch-up hold `offerFiles` from the first render.
+  const t = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
 
   // One way in for files, whether the watcher saw them arrive or the
   // launch catch-up found them waiting.
@@ -40,16 +46,10 @@ export function useWatchFolderListener(vaultOpen: boolean) {
         try {
           const result = await api.importFiles(files);
           invalidateActivityData(queryClient);
-          const summary = formatImportSummary(result, { auto: true });
-          addToastRef.current(
-            summary.level,
-            summary.text
-          );
+          const summary = formatImportSummary(result, { auto: true }, tRef.current);
+          addToastRef.current(summary.level, summary.text);
         } catch (e) {
-          addToastRef.current(
-            "error",
-            `Auto-import failed: ${errorText(e)}`
-          );
+          addToastRef.current("error", tRef.current("import.watch.autoFailed", { error: errorText(e) }));
         }
       } else {
         // Ask mode: accumulate pending files
@@ -106,10 +106,7 @@ export function useWatchFolderListener(vaultOpen: boolean) {
       .catchUpWatchFiles()
       .then(offerFiles)
       .catch((e) => {
-        addToastRef.current(
-          "error",
-          `Could not check for new files: ${errorText(e)}`
-        );
+        addToastRef.current("error", tRef.current("import.watch.catchUpFailed", { error: errorText(e) }));
       });
   }, [vaultOpen, offerFiles]);
 
@@ -119,15 +116,15 @@ export function useWatchFolderListener(vaultOpen: boolean) {
     try {
       const result = await api.importFiles(pendingFiles);
       invalidateActivityData(queryClient);
-      const summary = formatImportSummary(result);
+      const summary = formatImportSummary(result, {}, t);
       addToast(summary.level, summary.text);
       setPendingFiles([]);
     } catch (e) {
-      addToast("error", `Import failed: ${errorText(e)}`);
+      addToast("error", t("common.importFailed", { error: errorText(e) }));
     } finally {
       setImporting(false);
     }
-  }, [pendingFiles, queryClient, addToast]);
+  }, [pendingFiles, queryClient, addToast, t]);
 
   const handleDismiss = useCallback(() => {
     setPendingFiles([]);

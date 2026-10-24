@@ -3,8 +3,9 @@ import { create } from "zustand";
 export interface ConfirmOptions {
   title: string;
   message: string;
-  /** Confirm button label (default "Confirm"). */
+  /** Confirm button label; the host says `common.confirm` without one. */
   confirmLabel?: string;
+  /** Cancel button label; the host says `common.cancel` without one. */
   cancelLabel?: string;
   /** Red confirm button — destructive actions (delete, uninstall). */
   danger?: boolean;

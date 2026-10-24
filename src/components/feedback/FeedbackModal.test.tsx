@@ -6,6 +6,7 @@ import { useFeedbackStore } from "../../stores/feedbackStore";
 import { useToastStore } from "../../stores/toastStore";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../../lib/contact";
 import { copyText } from "../../lib/clipboard";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
@@ -41,7 +42,7 @@ describe("FeedbackModal", () => {
   it("sends a valid message via mailto and closes", async () => {
     openModal();
 
-    fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion..."), {
+    fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion…"), {
       target: { value: "This is a long enough message" },
     });
     fireEvent.click(screen.getByText("Send"));
@@ -63,7 +64,7 @@ describe("FeedbackModal", () => {
     it(`says why the email client did not open with ${kind}`, async () => {
       vi.mocked(openUrl).mockRejectedValueOnce(rejection);
       openModal();
-      fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion..."), {
+      fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion…"), {
         target: { value: "This is a long enough message" },
       });
       fireEvent.click(screen.getByText("Send"));
@@ -81,7 +82,7 @@ describe("FeedbackModal", () => {
   it("rejects a message shorter than 10 characters and does not open mail client", async () => {
     openModal();
 
-    fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion..."), {
+    fireEvent.change(screen.getByPlaceholderText("Describe the issue or suggestion…"), {
       target: { value: "short" },
     });
     fireEvent.click(screen.getByText("Send"));
@@ -123,5 +124,56 @@ describe("FeedbackModal", () => {
     const link = screen.getByText("Open an issue") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(GITHUB_ISSUES_URL);
     expect(link.getAttribute("href")).toMatch(/\/issues$/);
+  });
+
+  describe("in Russian (#235)", () => {
+    afterEach(() => useLanguageStore.getState().setPref("system"));
+
+    it("speaks the interface language, while the email keeps its English subject", async () => {
+      useLanguageStore.getState().setPref("ru");
+      openModal();
+      expect(screen.getByText("Отправить отзыв")).toBeTruthy();
+      expect(screen.getByText("Сообщение об ошибке")).toBeTruthy();
+      // The address and the link sit inside their sentences.
+      expect(screen.getByText(CONTACT_EMAIL).parentElement!.textContent).toContain("Нет почтового клиента? Напишите на");
+      expect(screen.getByText("Создайте issue").parentElement!.textContent).toBe("Удобнее GitHub? Создайте issue");
+      const box = screen.getByPlaceholderText("Опишите проблему или предложение…");
+      fireEvent.change(box, { target: { value: "short" } });
+      fireEvent.click(screen.getByText("Отправить"));
+      expect(await screen.findByText("Сообщение слишком короткое: минимум 10 символов")).toBeTruthy();
+      fireEvent.change(box, { target: { value: "x".repeat(1501) } });
+      expect(screen.getByRole("status").textContent).toBe("Максимум 1500 символов");
+      fireEvent.change(box, { target: { value: "Достаточно длинное сообщение" } });
+      fireEvent.click(screen.getByText("Отправить"));
+      await waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(openUrl).mock.calls[0][0]).toContain(encodeURIComponent("[Bug Report] Feedback from Syzify"));
+      expect(useToastStore.getState().toasts.slice(-1)[0].message).toBe("Почтовый клиент открыт — отправьте письмо");
+    });
+
+    it("says the copy outcomes and a refused email client in the interface language", async () => {
+      useLanguageStore.getState().setPref("ru");
+      vi.mocked(copyText).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      vi.mocked(openUrl).mockRejectedValueOnce("no handler for mailto");
+      openModal();
+      fireEvent.click(screen.getByLabelText("Скопировать адрес"));
+      await waitFor(() => expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("Адрес скопирован"));
+      fireEvent.click(screen.getByLabelText("Скопировать адрес"));
+      await waitFor(() =>
+        expect(useToastStore.getState().toasts.map((t) => t.message)).toContain(
+          "Не удалось скопировать — выделите адрес вручную",
+        ),
+      );
+      fireEvent.change(screen.getByPlaceholderText("Опишите проблему или предложение…"), {
+        target: { value: "Достаточно длинное сообщение" },
+      });
+      fireEvent.click(screen.getByText("Отправить"));
+      await waitFor(() =>
+        expect(useToastStore.getState().toasts.map((t) => t.message)).toContain(
+          "Не удалось открыть почтовый клиент: no handler for mailto",
+        ),
+      );
+      fireEvent.click(screen.getByLabelText("Закрыть"));
+      expect(screen.queryByText("Отправить отзыв")).toBeNull();
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_SCOPES, unencryptedParts } from "./encryptionScopes";
+import { translate, type Translator } from "./i18n";
 
 describe("encryption scopes", () => {
   it("turning encryption on covers raw files, the database and photos, and cannot be narrowed", () => {
@@ -23,5 +24,14 @@ describe("encryption scopes", () => {
     [{ activities: true, database: false, photos: true }, ["the database"]],
   ])("names what a vault encrypted with %j leaves readable", (scopes, parts) => {
     expect(unencryptedParts(scopes)).toEqual(parts);
+  });
+
+  it("names the scopes in the language it is given", () => {
+    const ru: Translator = (key, ...args) => translate("ru", key, ...args);
+    expect(unencryptedParts({ activities: false, database: false, photos: false }, ru)).toEqual([
+      "исходные файлы (тренировки и мониторинг)",
+      "база данных",
+      "фото",
+    ]);
   });
 });

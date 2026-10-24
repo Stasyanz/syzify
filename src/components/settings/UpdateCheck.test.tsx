@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import type { UpdateCheck as UpdateCheckResult } from "../../lib/types";
+import { useLanguageStore } from "../../lib/i18n";
+import { useBusyStore } from "../../stores/busyStore";
 import { UpdateCheck } from "./UpdateCheck";
 
 vi.mock("../../lib/tauri", () => ({
@@ -26,12 +28,17 @@ function result(over: Partial<UpdateCheckResult> = {}): UpdateCheckResult {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useLanguageStore.getState().setPref("system");
+  // An install that never resolves stays running in the store.
+  useBusyStore.setState({ running: {}, lastError: {} });
+});
 beforeEach(() => vi.clearAllMocks());
 
 function renderRow() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={qc}>
       <UpdateCheck />
     </QueryClientProvider>,
@@ -122,8 +129,9 @@ describe("UpdateCheck", () => {
     renderRow();
     fireEvent.click(screen.getByText("Check for updates"));
     fireEvent.click(await screen.findByText("Install and restart"));
-    expect(await screen.findByText(/bad signature/)).toBeTruthy();
+    expect(await screen.findByText("Update install failed: bad signature")).toBeTruthy();
     expect(screen.getByText("Install and restart")).toBeTruthy();
+    expect(useBusyStore.getState().running).toEqual({});
   });
 
   it("surfaces a failed check", async () => {
@@ -131,5 +139,101 @@ describe("UpdateCheck", () => {
     renderRow();
     fireEvent.click(screen.getByText("Check for updates"));
     expect(await screen.findByText(/offline/)).toBeTruthy();
+  });
+
+  it("says Checking… while the check runs", async () => {
+    mocked.checkForUpdates.mockReturnValue(new Promise(() => {}));
+    renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    const busy = await screen.findByText("Checking…");
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows an Error's words alone (#182)", async () => {
+    mocked.checkForUpdates.mockRejectedValue(new Error("offline"));
+    renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    expect(await screen.findByText("offline")).toBeTruthy();
+  });
+
+  it("keeps the install and its progress across a remount (#235)", async () => {
+    mocked.checkForUpdates.mockResolvedValue(result({ update_available: true, latest_version: "0.2.0" }));
+    type ProgressEvent = { payload: { downloaded: number; total: number | null } };
+    let handler: ((e: ProgressEvent) => void) | undefined;
+    vi.mocked(listen).mockImplementationOnce(async (_event, cb) => {
+      handler = cb as unknown as (e: ProgressEvent) => void;
+      return () => {};
+    });
+    mocked.installUpdate.mockReturnValue(new Promise(() => {}));
+    const first = renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    await screen.findByText(/installing…/);
+    // A language change remounts the row: the check result is gone, the
+    // download is not — no Check button to start a second one.
+    first.unmount();
+    renderRow();
+    expect(screen.getByText("Installing…")).toBeTruthy();
+    expect(screen.queryByText("Check for updates")).toBeNull();
+    act(() => handler!({ payload: { downloaded: 50, total: 200 } }));
+    expect(await screen.findByText("Installing… 25%")).toBeTruthy();
+  });
+
+  it("ends the install without an error if the backend ever returns instead of restarting", async () => {
+    mocked.checkForUpdates.mockResolvedValue(result({ update_available: true, latest_version: "0.2.0" }));
+    mocked.installUpdate.mockResolvedValue(undefined);
+    renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    await waitFor(() => expect(mocked.installUpdate).toHaveBeenCalled());
+    expect(await screen.findByText("Install and restart")).toBeTruthy();
+    expect(useBusyStore.getState()).toMatchObject({ running: {}, lastError: {} });
+  });
+
+  it("still says why an install failed after a remount, until the next install starts", async () => {
+    mocked.checkForUpdates.mockResolvedValue(result({ update_available: true, latest_version: "0.2.0" }));
+    let fail!: (e: unknown) => void;
+    mocked.installUpdate.mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    const first = renderRow();
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    await screen.findByText(/installing…/);
+    first.unmount();
+    renderRow();
+    await act(async () => fail("bad signature"));
+    expect(await screen.findByText("bad signature")).toBeTruthy();
+    expect(screen.getByText("Check for updates")).toBeTruthy();
+    // A new install clears it.
+    mocked.installUpdate.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.click(screen.getByText("Check for updates"));
+    fireEvent.click(await screen.findByText("Install and restart"));
+    await screen.findByText(/installing…/);
+    expect(screen.queryByText("bad signature")).toBeNull();
+  });
+
+  it("speaks Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    mocked.checkForUpdates.mockResolvedValue(
+      result({ update_available: true, latest_version: "0.2.0", release_url: "https://example.com/v0.2.0" }),
+    );
+    mocked.installUpdate.mockReturnValue(new Promise(() => {}));
+    renderRow();
+    const check = screen.getByText("Проверить обновления");
+    expect(check.getAttribute("data-tip")).toBe("Обращается к api.github.com");
+    fireEvent.click(check);
+    const install = await screen.findByText("Установить и перезапустить");
+    expect(install.parentElement?.textContent).toBe("Доступна новая версия 0.2.0 — Установить и перезапустить");
+    fireEvent.click(install);
+    await waitFor(() =>
+      expect(screen.getByText("0.2.0").parentElement?.textContent).toBe("Доступна новая версия 0.2.0 — установка…"),
+    );
+  });
+
+  it("answers an up-to-date check in Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    mocked.checkForUpdates.mockResolvedValue(result());
+    renderRow();
+    fireEvent.click(screen.getByText("Проверить обновления"));
+    expect(await screen.findByText("Установлена последняя версия")).toBeTruthy();
   });
 });

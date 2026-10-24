@@ -78,7 +78,7 @@ describe("DashboardPage at midnight", () => {
       vi.advanceTimersByTime(60_000);
     });
     // Data stayed on screen while refetching, the widgets were not remounted.
-    expect(queryByText("Loading dashboard...")).toBeNull();
+    expect(queryByText("Loading dashboard…")).toBeNull();
     getByText("August 2026");
     await waitFor(() => expect(api.getDashboardData).toHaveBeenCalledTimes(2));
   });

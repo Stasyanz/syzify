@@ -125,68 +125,43 @@ export function untranslatedIn(fileName: string, text: string): string[] {
   return found;
 }
 
-/**
- * How many English strings each file not yet translated still shows. Each
- * stage of #237 moves screens out: a count must match exactly, so a file
- * half done is held to what is left (a new English string in its
- * translated half fails), and a drop is written down here. The epic ends
- * with an empty map. A file not listed must show no English of its own.
+/*
+ * Every screen is translated since #235: the map of files not yet
+ * translated and the list of English kept by hand went empty and were
+ * removed. What this scanner sees is JSX text, the shown attributes and
+ * properties above and the shown arguments of a toast, a confirm, an alert.
+ * What it does NOT see: a `return "Text"` in a helper, a string kept in a
+ * const and shown later, a template string built outside JSX. The tables of
+ * names that exist today map to message keys (`satisfies Record<…,
+ * MessageKey>`), so English in them would not compile — but only those
+ * tables; a new helper with English in it passes this test, and review is
+ * what catches it.
  */
-const NOT_YET_TRANSLATED: Record<string, number> = {
-  "components/feedback/FeedbackModal.tsx": 21,
-  "components/import/ImportDialog.tsx": 6,
-  "components/import/ImportProgressOverlay.tsx": 1,
-  "components/plugins/PluginWidget.tsx": 8,
-  "components/settings/Garage.tsx": 87,
-  "components/settings/LegalModal.tsx": 1,
-  "components/settings/MonitoringData.tsx": 10,
-  "components/settings/PluginRegistry.tsx": 33,
-  "components/settings/UpdateCheck.tsx": 6,
-  "components/settings/VaultLocation.tsx": 18,
-  "components/settings/WatchFolders.tsx": 30,
-  "components/ui/ConfirmDialog.tsx": 2,
-  "components/ui/DateField.tsx": 5,
-  "components/ui/Toast.tsx": 1,
-  "hooks/useDropImport.ts": 6,
-  "hooks/useWatchFolderListener.ts": 1,
-  "lib/importSummary.ts": 2,
-  "lib/settingsTabs.ts": 5,
-  "routes/PluginPage.tsx": 3,
-  "routes/Segments.tsx": 27,
-  "routes/Settings.tsx": 58,
-};
-
-/**
- * English the scanner cannot see — tables of names (sports, zones) and
- * strings a function returns. Kept by hand: each stage that translates one
- * takes it off, and the epic ends with this empty too.
- */
-const TRACKED_BY_HAND: string[] = [
-  "lib/errors.ts", // "Unknown error"
-  "lib/gear.ts", // the Garage's rule summary and sensor names: "profile", "sensor", "Sensor"
-  "lib/importSummary.ts", // "Imported", "Nothing imported"
-  "stores/confirmStore.ts", // the default confirm label
-];
 
 describe("interface strings (#237)", () => {
   const files = sources(SRC).map((f) => [relative(SRC, f), untranslatedIn(f, readFileSync(f, "utf8"))] as const);
 
-  it("come from the dictionaries outside the files not yet translated", () => {
+  it("look at the whole interface, not an empty or a wrong directory", () => {
+    expect(files.length).toBeGreaterThan(100);
+    const names = files.map(([f]) => f);
+    expect(names).toContain("routes/Settings.tsx");
+    expect(names).toContain("components/settings/Garage.tsx");
+    expect(names.some((f) => f.startsWith("locales/") || /\.test\.tsx?$/.test(f))).toBe(false);
+  });
+
+  it("would catch English in a real screen: the Garage without its i18n-ignore", () => {
+    const source = readFileSync(join(SRC, "components/settings/Garage.tsx"), "utf8");
+    const line = source.split("\n").findIndex((l) => l.includes('"Pegasus 41"'));
+    expect(line).toBeGreaterThan(-1);
+    const bare = source.replace(/\/\/ i18n-ignore/g, "");
+    expect(untranslatedIn("Garage.tsx", bare)).toEqual([`${line + 1}: Pegasus 41`]);
+  });
+
+  it("come from the dictionaries in every file", () => {
     const offenders = files
-      .filter(([f, found]) => found.length > 0 && !(f in NOT_YET_TRANSLATED))
+      .filter(([, found]) => found.length > 0)
       .flatMap(([f, found]) => found.map((s) => `${f}:${s}`));
     expect(offenders).toEqual([]);
-  });
-
-  it("are counted exactly in the files not yet translated", () => {
-    const counts = Object.fromEntries(
-      files.filter(([f]) => f in NOT_YET_TRANSLATED).map(([f, found]) => [f, found.length]),
-    );
-    expect(counts).toEqual(NOT_YET_TRANSLATED);
-  });
-
-  it("are tracked by hand only in files that exist", () => {
-    expect(TRACKED_BY_HAND.filter((f) => !files.some(([g]) => g === f))).toEqual([]);
   });
 
   /** A component that calls the module-level `t` renders once in the

@@ -1,4 +1,6 @@
 import type { EncryptionScopes } from "./types";
+import { t, type Translator } from "./i18n";
+import type { MessageKey } from "../locales/types";
 
 /** What turning encryption on covers: all three scopes (#209). A route lives
  * both in its raw file and, point by point, in the database, so encrypting
@@ -16,16 +18,17 @@ export const ALL_SCOPES: Readonly<EncryptionScopes> = Object.freeze({
  * added to the type without a name here a compile error, not a vault that
  * reads as fully encrypted. */
 const SCOPE_NAMES = {
-  activities: "raw files (activities and monitoring)",
-  database: "the database",
-  photos: "photos",
-} as const satisfies Record<keyof EncryptionScopes, string>;
+  activities: "settings.vault.scope.activities",
+  database: "settings.vault.scope.database",
+  photos: "settings.vault.scope.photos",
+} as const satisfies Record<keyof EncryptionScopes, MessageKey>;
 
-/** The scopes of an encrypted vault that are still readable on disk. Empty
- * for a vault encrypted since #209; non-empty for one encrypted earlier, when
- * the scopes were ticked one by one. */
-export function unencryptedParts(scopes: EncryptionScopes): string[] {
+/** The scopes of an encrypted vault that are still readable on disk, named
+ * in the interface language. Empty for a vault encrypted since #209;
+ * non-empty for one encrypted earlier, when the scopes were ticked one by
+ * one. */
+export function unencryptedParts(scopes: EncryptionScopes, translate: Translator = t): string[] {
   return (Object.keys(SCOPE_NAMES) as (keyof typeof SCOPE_NAMES)[])
     .filter((scope) => !scopes[scope])
-    .map((scope) => SCOPE_NAMES[scope]);
+    .map((scope) => translate(SCOPE_NAMES[scope]));
 }

@@ -5,6 +5,7 @@ import type { ViewSpec } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { PluginViewRenderer } from "./PluginViewRenderer";
 import { errorText } from "../../lib/errors";
+import { useT } from "../../lib/i18n";
 
 // Renders one plugin's contribution at `point`, isolated: a plugin that errors
 // shows an inline error card and never takes down the surrounding page.
@@ -39,6 +40,8 @@ export function PluginWidget({
   context?: string;
   followContinue?: boolean;
 }) {
+  // The host's chrome around the view; the view's own text is the plugin's.
+  const t = useT();
   const { data: initial, error, isLoading } = useQuery({
     queryKey: ["pluginView", pluginId, point, context],
     queryFn: () => api.renderPluginView(pluginId, point, context),
@@ -143,9 +146,9 @@ export function PluginWidget({
         <span className="text-[10px] uppercase tracking-wider text-faint">{name}</span>
       </div>
       {isLoading ? (
-        <p className="text-xs text-faint">Loading…</p>
+        <p className="text-xs text-faint">{t("common.loading")}</p>
       ) : error ? (
-        <p className="text-xs text-red-600">Plugin error: {errorText(error)}</p>
+        <p className="text-xs text-red-600">{t("plugins.widget.error", { error: errorText(error) })}</p>
       ) : spec ? (
         <>
           <PluginViewRenderer
@@ -158,7 +161,7 @@ export function PluginWidget({
           {(busy || continuing) && (
             <div className="flex items-center gap-3 mt-2">
               <p className="text-xs text-faint">
-                {continuing ? `Working… round ${rounds}` : "Working…"}
+                {continuing ? t("plugins.widget.workingRound", { round: rounds }) : t("plugins.widget.working")}
               </p>
               {/* On the sync page the first round may take the whole budget:
                   Stop is there from the start. */}
@@ -167,18 +170,18 @@ export function PluginWidget({
                   onClick={onStop}
                   className="px-2 py-0.5 rounded text-xs font-medium border border-border-2 text-muted hover:bg-card"
                 >
-                  Stop
+                  {t("plugins.widget.stop")}
                 </button>
               )}
             </div>
           )}
           {capped && (
             <p className="text-xs text-faint mt-2">
-              Stopped after {MAX_CONTINUE_ROUNDS} rounds — press the button again to go on.
+              {t("plugins.widget.capped", { count: MAX_CONTINUE_ROUNDS })}
             </p>
           )}
           {actionError && (
-            <p className="text-xs text-red-600 mt-2">Plugin error: {actionError}</p>
+            <p className="text-xs text-red-600 mt-2">{t("plugins.widget.error", { error: actionError })}</p>
           )}
         </>
       ) : null}

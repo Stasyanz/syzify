@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { errorText } from "./errors";
+import { useLanguageStore } from "./i18n";
 
 describe("errorText", () => {
   it("reads the bare string a Tauri command rejects with", () => {
@@ -23,5 +24,15 @@ describe("errorText", () => {
     expect(errorText(undefined)).toBe("Unknown error");
     expect(errorText(null)).toBe("Unknown error");
     expect(errorText(42)).toBe("42");
+  });
+
+  it("says its own fallback in the interface language, and the backend's text as it is (#235)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(errorText(undefined)).toBe("Неизвестная ошибка");
+      expect(errorText("Gear not found: g-1")).toBe("Gear not found: g-1");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

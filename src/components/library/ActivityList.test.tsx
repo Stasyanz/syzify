@@ -52,7 +52,7 @@ describe("ActivityList Load more", () => {
   it("keeps the loaded rows mounted while the next page fetches", async () => {
     // First page resolves immediately; the Load more page hangs until we
     // release it — the window where the list used to unmount into
-    // "Loading activities..." and dump the scroll position.
+    // "Loading activities…" and dump the scroll position.
     let releaseSecondPage!: (v: ActivitySummary[]) => void;
     vi.mocked(api.getActivities)
       .mockResolvedValueOnce(page(20))

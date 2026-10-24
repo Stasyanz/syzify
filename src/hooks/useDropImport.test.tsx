@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { renderHook, act, cleanup, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -44,6 +44,7 @@ vi.mock("../stores/toastStore", () => ({
 }));
 
 import { useDropImport } from "./useDropImport";
+import { useLanguageStore } from "../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -219,6 +220,63 @@ describe("useDropImport on an activity page", () => {
     expect(addToast).toHaveBeenCalledWith(
       "warning",
       expect.stringContaining("JPG, PNG, WebP or HEIC")
+    );
+  });
+
+  it("counts the photos it added, as the gallery's button does", async () => {
+    const { fire } = await renderDropImport("/activity/act-1");
+    fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Added 1 photo"));
+  });
+
+  it("says nothing when a drop attached, skipped and failed nothing", async () => {
+    attachPhotos.mockResolvedValueOnce({ attached: [], skipped: [], failed: [] });
+    const { fire } = await renderDropImport("/activity/act-1");
+    fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    await waitFor(() => expect(attachPhotos).toHaveBeenCalled());
+    await act(async () => {});
+    expect(addToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDropImport in Russian (#235)", () => {
+  beforeEach(() => useLanguageStore.getState().setPref("ru"));
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("says every warning in the interface language", async () => {
+    const page = await renderDropImport("/activity/act-1");
+    page.fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });
+    page.fire({ type: "drop", paths: ["/a/notes.txt"], position: pos });
+    cleanup();
+    const library = await renderDropImport("/library");
+    library.fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    library.fire({ type: "drop", paths: ["/a/notes.txt"], position: pos });
+    expect(addToast.mock.calls).toEqual([
+      ["warning", "Чтобы импортировать тренировки, перетащите их за пределами страницы тренировки"],
+      ["warning", "К тренировке можно добавить только изображения JPG, PNG, WebP или HEIC"],
+      ["warning", "Чтобы добавить фото, перетащите их на страницу тренировки"],
+      ["warning", "Файлы тренировок не найдены (GPX, FIT, TCX)"],
+    ]);
+  });
+
+  it("sums up an import and an attach, and a refusal, in the interface language", async () => {
+    const library = await renderDropImport("/library");
+    library.fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Импортировано: 1 тренировка"));
+    importFiles.mockRejectedValueOnce("The vault is locked");
+    library.fire({ type: "drop", paths: ["/a/ride.fit"], position: pos });
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Импорт не удался: The vault is locked"));
+    cleanup();
+    attachPhotos.mockResolvedValueOnce({ attached: ["p1", "p2"], skipped: ["d"], failed: [] });
+    const page = await renderDropImport("/activity/act-1");
+    page.fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith("success", "Добавлено 2 фото, пропущен 1 дубликат"),
+    );
+    attachPhotos.mockRejectedValueOnce("The vault is locked");
+    page.fire({ type: "drop", paths: ["/a/1.jpg"], position: pos });
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith("error", "Не удалось добавить фото: The vault is locked"),
     );
   });
 });

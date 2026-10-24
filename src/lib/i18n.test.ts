@@ -25,6 +25,7 @@ import { en } from "../locales/en";
 import { ru } from "../locales/ru";
 import { it as itMessages } from "../locales/it";
 import type { PluralMessage } from "../locales/types";
+import { useBusyStore } from "../stores/busyStore";
 
 const DICTIONARIES: Record<Language, Record<string, string | PluralMessage>> = { en, ru, it: itMessages };
 
@@ -312,6 +313,8 @@ describe("the dictionaries", () => {
       "unlock.password", "dashboard.records.sprint", "dashboard.volume.title",
       // "Multisport", Coggan's VO2 max as Italian coaching writes it, a segment's PR.
       "activity.header.multisport", "activity.zones.power.vo2max", "activity.segments.pr",
+      // "Garage" and "Plugin" are Italian words too (the glossary of #237).
+      "settings.tab.garage", "plugins.page.fallbackName", "settings.garage.title",
     ],
   };
 
@@ -413,6 +416,54 @@ describe("the language store", () => {
       window.dispatchEvent(new Event("languagechange"));
     });
     expect(currentLanguage()).toBe("en");
+  });
+
+  it("holds a change of the system's languages while a long operation runs, then follows it (#235)", () => {
+    const stop = initLanguage();
+    const busy = useBusyStore.getState();
+    try {
+      act(() => busy.start("backup"));
+      act(() => busy.start("watchScan"));
+      useSystemLanguages(["ru-RU"]);
+      act(() => {
+        window.dispatchEvent(new Event("languagechange"));
+        window.dispatchEvent(new Event("languagechange"));
+      });
+      expect(currentLanguage()).toBe("en");
+      // One of two ends: still waiting; progress is no reason to switch.
+      act(() => busy.finish("backup"));
+      act(() => busy.progress("watchScan", 50));
+      expect(currentLanguage()).toBe("en");
+      // The system changed again meanwhile: the latest one is taken.
+      useSystemLanguages(["it-IT"]);
+      act(() => busy.finish("watchScan"));
+      expect(currentLanguage()).toBe("it");
+      expect(document.documentElement.lang).toBe("it");
+      // Waiting ended with it: a later operation does not switch anything.
+      useSystemLanguages(["ru-RU"]);
+      act(() => busy.start("backup"));
+      act(() => busy.finish("backup"));
+      expect(currentLanguage()).toBe("it");
+    } finally {
+      stop();
+      useBusyStore.setState({ running: {}, lastError: {} });
+    }
+  });
+
+  it("drops a held change when the listener is removed", () => {
+    const stop = initLanguage();
+    try {
+      act(() => useBusyStore.getState().start("vaultMove"));
+      useSystemLanguages(["ru-RU"]);
+      act(() => {
+        window.dispatchEvent(new Event("languagechange"));
+      });
+      stop();
+      act(() => useBusyStore.getState().finish("vaultMove"));
+      expect(currentLanguage()).toBe("en");
+    } finally {
+      useBusyStore.setState({ running: {}, lastError: {} });
+    }
   });
 
   it("marks <html lang> at start with the language already chosen", () => {

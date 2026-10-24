@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GearItem } from "./types";
 import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel, wearState, wearTip, wornItems, WEAR_COLORS, WEAR_WARN } from "./gear";
-import { useLanguageStore } from "./i18n";
+import { translate, useLanguageStore, type Translator } from "./i18n";
 
 const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => ({
   id,
@@ -52,9 +52,48 @@ describe("rule labels", () => {
 
   it("names a sensor from its maker and model, else its type and serial", () => {
     expect(sensorLabel(assioma)).toBe("Favero Electronics Assioma Duo (bike power)");
-    expect(sensorLabel(typed)).toBe("Bike Speed 222");
+    // Sentence case, as every label of the interface (#235).
+    expect(sensorLabel(typed)).toBe("Bike speed 222");
     expect(sensorLabel(bare)).toBe("Sensor 111");
     expect(sensorLabel({ ...assioma, device_type: null })).toBe("Favero Electronics Assioma Duo");
+    // A kind the interface has no name for reads as its own words.
+    expect(sensorLabel({ ...typed, device_type: "bike_aero" })).toBe("Bike aero 222");
+    expect(sensorLabel({ ...typed, device_type: "constructor" })).toBe("Constructor 222");
+  });
+
+  it("names the BLE kinds and both ANT+ lights as the kind they are, and no bare type number", () => {
+    expect(sensorLabel({ ...typed, device_type: "footpod" })).toBe("Foot pod 222");
+    expect(sensorLabel({ ...typed, device_type: "stride_speed_distance" })).toBe("Foot pod 222");
+    expect(sensorLabel({ ...typed, device_type: "bike_trainer" })).toBe("Fitness equipment 222");
+    expect(sensorLabel({ ...typed, device_type: "bike_light_main" })).toBe("Bike light 222");
+    expect(sensorLabel({ ...typed, device_type: "bike_light_shared" })).toBe("Bike light 222");
+    // A kind the FIT profile has no name for arrives as its number: never "7 555".
+    expect(sensorLabel({ ...typed, serial: "555", device_type: "7" })).toBe("Sensor 555");
+    expect(sensorLabel({ ...assioma, device_type: "7" })).toBe("Favero Electronics Assioma Duo");
+    const ru: Translator = (key, ...args) => translate("ru", key, ...args);
+    expect(sensorLabel({ ...typed, serial: "555", device_type: "7" }, ru)).toBe("Датчик 555");
+  });
+
+  it("names a sensor's kind and the rules in the language it is given", () => {
+    const ru: Translator = (key, ...args) => translate("ru", key, ...args);
+    expect(sensorLabel(assioma, ru)).toBe("Favero Electronics Assioma Duo (измеритель мощности)");
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(sensorLabel(typed, ru)).toBe("Датчик скорости 222");
+      expect(sensorLabel(bare, ru)).toBe("Датчик 111");
+      expect(
+        rulesSummary(
+          [
+            { kind: "profile_name", value: "ROAD" },
+            { kind: "sensor_serial", value: "3632674300" },
+          ],
+          { profiles: [], sensors: [assioma] },
+          ru,
+        ),
+      ).toBe("профиль ROAD · датчик Favero Electronics Assioma Duo (измеритель мощности)");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("summarises an item's rules, naming a sensor the vault knows and showing the serial of one it does not", () => {

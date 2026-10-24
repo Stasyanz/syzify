@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useT } from "../../lib/i18n";
 
 interface ImportProgress {
   current: number;
@@ -8,6 +9,7 @@ interface ImportProgress {
 }
 
 export function ImportProgressOverlay() {
+  const t = useT();
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -43,7 +45,7 @@ export function ImportProgressOverlay() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6 space-y-3">
         <h3 className="text-sm font-semibold text-ink">
-          Importing activities...
+          {t("import.progress.title")}
         </h3>
         <div className="w-full bg-card-2 rounded-full h-2.5 overflow-hidden">
           <div
@@ -54,7 +56,7 @@ export function ImportProgressOverlay() {
         <div className="flex items-center justify-between text-xs text-muted">
           <span className="truncate max-w-[200px]">{progress.filename}</span>
           <span className="shrink-0 ml-2">
-            {progress.current} / {progress.total}
+            {t("import.progress.count", { current: progress.current, total: progress.total })}
           </span>
         </div>
       </div>

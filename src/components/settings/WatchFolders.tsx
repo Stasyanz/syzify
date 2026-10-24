@@ -1,22 +1,26 @@
-import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, RefreshCw, Eye, Trash2, X } from "lucide-react";
 import { api } from "../../lib/tauri";
-import type { ScanPreview } from "../../lib/types";
 import { useToastStore } from "../../stores/toastStore";
+import { useBusy, useBusyStore } from "../../stores/busyStore";
+import { useWatchPreviewStore } from "../../stores/watchPreviewStore";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatImportSummary } from "../../lib/importSummary";
 import { Toggle } from "../ui/Toggle";
 import { errorText } from "../../lib/errors";
+import { useRichT, useT } from "../../lib/i18n";
 
 /**
  * Settings → Vault → Watch folders: the folders scanned for new workout and
  * monitoring files, a Preview of what is new, Import Now, and the
  * auto-import switch. Every change restarts the background watcher so it
- * follows the list.
+ * follows the list. Scanning and previewing are flags of the busy store, so
+ * a remount mid-scan keeps the buttons locked.
  */
 export function WatchFolders() {
+  const t = useT();
+  const rt = useRichT();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
 
@@ -29,9 +33,16 @@ export function WatchFolders() {
     queryFn: () => api.getSetting("watch_auto_import"),
   });
 
-  const [scanning, setScanning] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [preview, setPreview] = useState<ScanPreview | null>(null);
+  const scanning = useBusy("watchScan");
+  const previewing = useBusy("watchPreview");
+  // In a store: a preview that ends while the section is unmounted is still
+  // shown when it comes back.
+  const preview = useWatchPreviewStore((s) => s.preview);
+  const setPreview = useWatchPreviewStore((s) => s.setPreview);
+  // Not cleared on unmount: under StrictMode a dev double-mount runs a fake
+  // cleanup that would wipe the very preview the return should show. A
+  // stale one goes by what makes it stale — a new Preview, a scan, a change
+  // of the folder list — or by its close button.
 
   async function foldersChanged() {
     queryClient.invalidateQueries({ queryKey: ["watchFolders"] });
@@ -42,7 +53,7 @@ export function WatchFolders() {
     try {
       await api.restartWatcher();
     } catch (e) {
-      addToast("warning", `Folder list saved, but watching could not restart: ${errorText(e)}`);
+      addToast("warning", t("settings.watch.restartFailed", { error: errorText(e) }));
     }
   }
 
@@ -53,7 +64,7 @@ export function WatchFolders() {
       await api.addWatchFolder(selected);
       await foldersChanged();
     } catch (e) {
-      addToast("error", `Could not add folder: ${errorText(e)}`);
+      addToast("error", t("settings.watch.addFailed", { error: errorText(e) }));
     }
   }
 
@@ -62,7 +73,7 @@ export function WatchFolders() {
       await api.removeWatchFolder(id);
       await foldersChanged();
     } catch (e) {
-      addToast("error", `Could not remove folder: ${errorText(e)}`);
+      addToast("error", t("settings.watch.removeFailed", { error: errorText(e) }));
     }
   }
 
@@ -75,38 +86,40 @@ export function WatchFolders() {
       await api.setSetting("watch_auto_import", next);
       queryClient.invalidateQueries({ queryKey: ["setting", "watch_auto_import"] });
     } catch (e) {
-      addToast("error", `Could not change auto-import: ${errorText(e)}`);
+      addToast("error", t("settings.watch.autoImportFailed", { error: errorText(e) }));
     }
   }
 
   async function handlePreview() {
-    setPreviewing(true);
+    const ops = useBusyStore.getState();
+    ops.start("watchPreview");
     setPreview(null);
     try {
       setPreview(await api.previewWatchFolders());
     } catch (e) {
-      addToast("error", `Preview failed: ${errorText(e)}`);
+      addToast("error", t("settings.watch.previewFailed", { error: errorText(e) }));
     } finally {
-      setPreviewing(false);
+      ops.finish("watchPreview");
     }
   }
 
   async function handleScan() {
-    setScanning(true);
+    const ops = useBusyStore.getState();
+    ops.start("watchScan");
     setPreview(null);
     try {
       const result = await api.scanWatchFolders();
       if (result.import_result) {
-        const summary = formatImportSummary(result.import_result);
+        const summary = formatImportSummary(result.import_result, {}, t);
         addToast(summary.level, summary.text);
         invalidateActivityData(queryClient);
       } else {
-        addToast("info", "No new files in the watch folders.");
+        addToast("info", t("settings.watch.noNewFiles"));
       }
     } catch (e) {
-      addToast("error", `Import failed: ${errorText(e)}`);
+      addToast("error", t("common.importFailed", { error: errorText(e) }));
     } finally {
-      setScanning(false);
+      ops.finish("watchScan");
     }
   }
 
@@ -117,15 +130,13 @@ export function WatchFolders() {
     <>
       <div className="set-row">
         <div>
-          <div className="sl">Watch folders</div>
-          <div className="sd">
-            Folders scanned for new workout and monitoring files (GPX, FIT, TCX)
-          </div>
+          <div className="sl">{t("settings.watch.title")}</div>
+          <div className="sd">{t("settings.watch.hint")}</div>
         </div>
         <div className="flex gap-2 shrink-0">
           <button onClick={handleAddFolder} className="btn ghost">
             <FolderOpen size={15} />
-            Add Folder
+            {t("settings.watch.add")}
           </button>
           <button
             onClick={handlePreview}
@@ -133,7 +144,7 @@ export function WatchFolders() {
             className="btn ghost"
           >
             <Eye size={15} className={previewing ? "animate-pulse" : ""} />
-            {previewing ? "Scanning…" : "Preview"}
+            {previewing ? t("settings.watch.scanning") : t("settings.watch.preview")}
           </button>
           <button
             onClick={handleScan}
@@ -141,7 +152,7 @@ export function WatchFolders() {
             className="btn primary"
           >
             <RefreshCw size={15} className={scanning ? "animate-spin" : ""} />
-            {scanning ? "Importing…" : "Import Now"}
+            {scanning ? t("settings.watch.importing") : t("settings.watch.importNow")}
           </button>
         </div>
       </div>
@@ -157,8 +168,8 @@ export function WatchFolders() {
                   <button
                     onClick={() => handleRemove(wf.id)}
                     className="set-path-add danger"
-                    data-tip="Remove"
-                    aria-label={`Remove ${wf.path}`}
+                    data-tip={t("settings.watch.remove")}
+                    aria-label={t("settings.watch.removePath", { path: wf.path })}
                   >
                     <Trash2 size={15} />
                   </button>
@@ -171,8 +182,14 @@ export function WatchFolders() {
             <div className="bg-card-2 rounded-[9px] p-3 space-y-2" data-testid="scan-preview">
               <div className="flex items-center justify-between gap-2 text-xs text-muted">
                 <span>
-                  {preview.total_files} file{preview.total_files !== 1 ? "s" : ""} found,{" "}
-                  <strong style={{ color: "var(--good)" }}>{preview.new_files} new</strong>
+                  {rt("settings.watch.found", {
+                    count: preview.total_files,
+                    fresh: (
+                      <strong style={{ color: "var(--good)" }}>
+                        {t("settings.watch.new", { count: preview.new_files })}
+                      </strong>
+                    ),
+                  })}
                 </span>
                 <div className="flex items-center gap-2">
                   {preview.new_files > 0 && (
@@ -181,14 +198,17 @@ export function WatchFolders() {
                       disabled={busy}
                       className="btn primary !px-2.5 !py-1 !text-xs"
                     >
-                      {scanning ? "Importing…" : "Import All New"}
+                      {/* A scan clears the preview as it starts, and none
+                          opens while one runs: this button never says
+                          Importing… — the one above does. */}
+                      {t("settings.watch.importAllNew")}
                     </button>
                   )}
                   <button
                     onClick={() => setPreview(null)}
                     className="iconbtn"
-                    data-tip="Close preview"
-                    aria-label="Close preview"
+                    data-tip={t("settings.watch.closePreview")}
+                    aria-label={t("settings.watch.closePreview")}
                   >
                     <X size={14} />
                   </button>
@@ -207,7 +227,7 @@ export function WatchFolders() {
                             f.is_new ? "bg-accent-soft text-accent-2" : "bg-card text-muted"
                           }`}
                         >
-                          {f.is_new ? "NEW" : "IMPORTED"}
+                          {f.is_new ? t("settings.watch.badgeNew") : t("settings.watch.badgeImported")}
                         </span>
                         <span className="text-muted truncate">{f.filename}</span>
                       </div>
@@ -222,19 +242,19 @@ export function WatchFolders() {
 
       <div className="set-row">
         <div>
-          <div className="sl">Auto-import new files</div>
+          <div className="sl">{t("settings.watch.autoImport")}</div>
           <div className="sd">
             {autoImportPending
               ? "…"
               : autoImport === "auto"
-                ? "Files the watch folders receive are imported right away"
-                : "You are asked before files the watch folders receive are imported"}
+                ? t("settings.watch.autoOn")
+                : t("settings.watch.autoOff")}
           </div>
         </div>
         <Toggle
           on={autoImport === "auto"}
           onToggle={handleToggleAutoImport}
-          ariaLabel="Auto-import new files"
+          ariaLabel={t("settings.watch.autoImport")}
         />
       </div>
     </>

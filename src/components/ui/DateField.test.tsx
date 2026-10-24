@@ -95,10 +95,25 @@ describe("DateField", () => {
       const field = screen.getByRole("button", { name: /Purchased/ });
       expect(field.textContent).toContain("10 янв. 2026 г.");
       fireEvent.click(field);
-      expect(screen.getByLabelText("Month").textContent).toBe("Январь");
+      expect(screen.getByLabelText("Месяц").textContent).toBe("Январь");
+      expect(screen.getByLabelText("Год").textContent).toBe("2026");
       expect(Array.from(document.querySelectorAll(".dp-dow"), (el) => el.textContent)).toEqual([
         "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс",
       ]);
+      // The popover's own chrome speaks the language too (#235).
+      expect(screen.getByLabelText("Предыдущий месяц")).toBeTruthy();
+      expect(screen.getByLabelText("Следующий месяц")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Очистить" })).toBeTruthy();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("says Any in the interface language without a value (#235)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      renderIt();
+      expect(screen.getByRole("button", { name: /Purchased/ }).textContent).toContain("Любая");
     } finally {
       useLanguageStore.getState().setPref("system");
     }

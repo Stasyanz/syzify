@@ -16,7 +16,8 @@ import { kindSports, odometerM, rulesSummary, sensorLabel, wearFraction, wearSta
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatDistance, formatDurationHM, formatElevation } from "../../lib/format";
 import { useUnits, isImperial, distanceUnit, unitLabel, M_PER_MILE } from "../../lib/units";
-import { formatDateTime } from "../../lib/i18n";
+import { formatDateTime, formatNumber, useRichT, useT, type Translator } from "../../lib/i18n";
+import type { MessageKey } from "../../locales/types";
 import { useToastStore } from "../../stores/toastStore";
 import { confirmDialog } from "../../stores/confirmStore";
 import { Select } from "../ui/Select";
@@ -28,11 +29,17 @@ import { errorText } from "../../lib/errors";
 /** How far back the purchase-date picker's year list reaches. */
 export const PURCHASE_YEARS_BACK = 25;
 
-export const GEAR_KINDS: { id: GearKind; label: string }[] = [
-  { id: "bike", label: "Bike" },
-  { id: "shoes", label: "Shoes" },
-  { id: "other", label: "Other" },
-];
+/** The kinds, each with the key of its name. */
+export const GEAR_KINDS = [
+  { id: "bike", labelKey: "activity.gear.kind.bike" },
+  { id: "shoes", labelKey: "activity.gear.kind.shoes" },
+  { id: "other", labelKey: "settings.garage.kind.other" },
+] as const satisfies readonly { id: GearKind; labelKey: MessageKey }[];
+
+/** Sport names for a sentence of `translate`'s language: "Run, Ride". */
+function sportList(sports: SportType[], translate: Translator): string {
+  return sports.map((s) => sportLabel(s, s, translate)).join(", ");
+}
 
 export { kindSports, odometerM, wearFraction, wearTip };
 
@@ -73,6 +80,8 @@ function formatDay(iso: string): string {
  */
 export function Garage() {
   useUnits();
+  const t = useT();
+  const rt = useRichT();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const { data: items = [], isPending, error } = useQuery({ queryKey: ["gear"], queryFn: () => api.listGear() });
@@ -87,19 +96,22 @@ export function Garage() {
   const applyRules = useMutation({
     mutationFn: async () => {
       const ok = await confirmDialog({
-        title: "Apply the rules to the history?",
-        message: "Every activity without gear that a profile or sensor rule matches goes on that item — including ones you took off their gear by hand. Activities on gear and multisport events are left alone.",
-        confirmLabel: "Apply",
+        title: t("settings.garage.applyTitle"),
+        message: t("settings.garage.applyMessage"),
+        confirmLabel: t("settings.garage.apply"),
       });
       if (!ok) return null;
       return api.applyGearRules();
     },
     onSuccess: (n) => {
       if (n == null) return;
-      addToast(n > 0 ? "success" : "info", n > 0 ? `Rules put ${n} activit${n === 1 ? "y" : "ies"} on their gear` : "Nothing to assign: no unassigned activity matches a rule");
+      addToast(
+        n > 0 ? "success" : "info",
+        n > 0 ? t("settings.garage.applied", { count: n }) : t("settings.garage.applyNothing"),
+      );
       if (n > 0) invalidateActivityData(queryClient);
     },
-    onError: (e: unknown) => addToast("error", `Could not apply the rules: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("settings.garage.applyFailed", { error: errorText(e) })),
   });
 
   const changed = () => queryClient.invalidateQueries({ queryKey: ["gear"] });
@@ -107,15 +119,17 @@ export function Garage() {
   const retire = useMutation({
     mutationFn: ({ id, retired }: { id: string; retired: boolean }) => api.setGearRetired(id, retired),
     onSuccess: changed,
-    onError: (e: unknown) => addToast("error", `Could not update gear: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("settings.garage.updateFailed", { error: errorText(e) })),
   });
 
   /** The sentence the quick action offers: the item's default sports,
-   * from its purchase date on (all time without one). */
+   * from its purchase date on (all time without one) — the sport names in
+   * the sentence's own language. */
   function historyOffer(item: GearItem): string {
-    const sports = item.default_for.map((s) => sportLabel(s)).join(", ");
-    const since = item.purchased_at ? ` since ${formatDay(item.purchased_at + "T00:00:00")}` : "";
-    return `Assign to all ${sports} activities${since}`;
+    const sports = sportList(item.default_for, t);
+    return item.purchased_at
+      ? t("settings.garage.assignAllSince", { sports, date: formatDay(item.purchased_at + "T00:00:00") })
+      : t("settings.garage.assignAll", { sports });
   }
 
   // A mutation, so a second press while one runs is inert (the backend
@@ -124,8 +138,8 @@ export function Garage() {
     mutationFn: async (item: GearItem) => {
       const ok = await confirmDialog({
         title: `${historyOffer(item)}?`,
-        message: "Only activities without gear are touched. Multisport events are left alone.",
-        confirmLabel: "Assign",
+        message: t("settings.garage.assignMessage"),
+        confirmLabel: t("settings.garage.assign"),
       });
       if (!ok) return null;
       return { item, n: await api.assignGearHistory(item.id) };
@@ -133,23 +147,23 @@ export function Garage() {
     onSuccess: (done) => {
       if (!done) return;
       const { item, n } = done;
-      addToast(n > 0 ? "success" : "info", n > 0 ? `${item.name} assigned to ${n} activit${n === 1 ? "y" : "ies"}` : "Nothing to assign: every matching activity already has gear");
+      addToast(
+        n > 0 ? "success" : "info",
+        n > 0 ? t("library.filter.bulkDone", { name: item.name, count: n }) : t("settings.garage.assignNothing"),
+      );
       // The activity pages and the library show the gear too; the Garage's
       // own totals are among the activity-derived queries this refreshes.
       invalidateActivityData(queryClient);
     },
-    onError: (e: unknown) => addToast("error", `Could not assign gear: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("library.filter.bulkFailed", { error: errorText(e) })),
   });
 
   async function remove(item: GearItem) {
     const n = item.stats.activities;
     const ok = await confirmDialog({
-      title: `Delete ${item.name}?`,
-      message:
-        n > 0
-          ? `${n} activit${n === 1 ? "y" : "ies"} will keep their data and lose this gear. This cannot be undone.`
-          : "This cannot be undone.",
-      confirmLabel: "Delete",
+      title: t("settings.garage.deleteTitle", { name: item.name }),
+      message: n > 0 ? t("settings.garage.deleteMessage", { count: n }) : t("common.cannotUndo"),
+      confirmLabel: t("common.delete"),
       danger: true,
     });
     if (!ok) return;
@@ -157,7 +171,7 @@ export function Garage() {
       await api.deleteGear(item.id);
       changed();
     } catch (e) {
-      addToast("error", `Could not delete gear: ${errorText(e)}`);
+      addToast("error", t("settings.garage.deleteFailed", { error: errorText(e) }));
     }
   }
 
@@ -165,31 +179,31 @@ export function Garage() {
     <section className="card">
       <div className="set-row">
         <div>
-          <div className="sl">Garage</div>
-          <div className="sd">Your bikes, shoes and other gear, with the mileage their activities add up to</div>
+          <div className="sl">{t("settings.garage.title")}</div>
+          <div className="sd">{t("settings.garage.hint")}</div>
         </div>
         <div className="flex shrink-0 gap-2">
           {anyRules && (
             <button onClick={() => applyRules.mutate()} disabled={applyRules.isPending} className="btn ghost" data-testid="apply-rules">
               <Wand2 size={15} />
-              {applyRules.isPending ? "Applying…" : "Apply rules"}
+              {applyRules.isPending ? t("settings.garage.applying") : t("settings.garage.applyRules")}
             </button>
           )}
           <button onClick={() => setEditing("new")} className="btn primary">
             <Plus size={15} />
-            Add gear
+            {t("settings.garage.add")}
           </button>
         </div>
       </div>
 
       {error != null && (
         <p className="sd pb-4" style={{ color: "var(--danger)" }} role="alert">
-          Could not load the garage: {errorText(error)}
+          {t("settings.garage.loadFailed", { error: errorText(error) })}
         </p>
       )}
 
       {!isPending && !error && items.length === 0 && (
-        <p className="sd pb-4">Nothing here yet. Add a bike or a pair of shoes to start counting their mileage.</p>
+        <p className="sd pb-4">{t("settings.garage.empty")}</p>
       )}
 
       {items.length > 0 && (
@@ -213,7 +227,9 @@ export function Garage() {
                       <span className="text-sm font-semibold text-ink">{item.name}</span>
                       {detail && <span className="text-xs text-muted">{detail}</span>}
                       {retired && (
-                        <span className="rounded-md bg-card px-1.5 py-0.5 text-[11px] font-semibold text-faint">Retired</span>
+                        <span className="rounded-md bg-card px-1.5 py-0.5 text-[11px] font-semibold text-faint">
+                          {t("settings.garage.retired")}
+                        </span>
                       )}
                     </div>
                     {item.stats.activities === 0 ? (
@@ -223,29 +239,31 @@ export function Garage() {
                       <div className="mt-1 text-xs text-muted">
                         {item.initial_distance_m > 0 && (
                           <span>
-                            <span className="font-num text-ink">{formatDistance(item.initial_distance_m)}</span> before Syzify ·{" "}
+                            {rt("settings.garage.beforeSyzify", {
+                              distance: <span className="font-num text-ink">{formatDistance(item.initial_distance_m)}</span>,
+                            })}
+                            {" · "}
                           </span>
                         )}
-                        No activities yet
+                        {t("settings.garage.noActivities")}
                       </div>
                     ) : (
                       <div className="mt-1 text-xs text-muted">
                         <span className="font-num text-ink">{formatDistance(odometerM(item))}</span>
                         {item.initial_distance_m > 0 && (
-                          <span> ({formatDistance(item.stats.distance_m)} in Syzify)</span>
+                          <span> {t("settings.garage.inSyzify", { distance: formatDistance(item.stats.distance_m) })}</span>
                         )}
                         <span> · {formatDurationHM(item.stats.duration_s)}</span>
                         <span> · {formatElevation(item.stats.elev_gain_m)}</span>
-                        <span>
-                          {" "}
-                          · {item.stats.activities} activit{item.stats.activities === 1 ? "y" : "ies"}
-                        </span>
-                        {item.stats.last_used && <span> · last used {formatDay(item.stats.last_used)}</span>}
+                        <span> · {t("common.activities", { count: item.stats.activities })}</span>
+                        {item.stats.last_used && (
+                          <span> · {t("settings.garage.lastUsed", { date: formatDay(item.stats.last_used) })}</span>
+                        )}
                       </div>
                     )}
                     {item.default_for.length > 0 && (
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
-                        <span>Default for {item.default_for.map((s) => sportLabel(s)).join(", ")}</span>
+                        <span>{t("settings.garage.defaultFor", { sports: sportList(item.default_for, t) })}</span>
                         {!retired && (
                           // The way the history gets its gear: one click
                           // instead of a library filter (#165).
@@ -263,7 +281,7 @@ export function Garage() {
                     )}
                     {item.rules.length > 0 && (
                       <div className="mt-1 text-xs text-faint" data-testid="gear-rules">
-                        Auto-assign by {rulesSummary(item.rules, candidates)}
+                        {t("settings.garage.autoAssignBy", { rules: rulesSummary(item.rules, candidates, t) })}
                       </div>
                     )}
                     {wear != null && (
@@ -296,23 +314,25 @@ export function Garage() {
                     <button
                       onClick={() => setEditing(item)}
                       className="set-path-add"
-                      data-tip="Edit"
-                      aria-label={`Edit ${item.name}`}
+                      data-tip={t("common.edit")}
+                      aria-label={t("settings.garage.editItem", { name: item.name })}
                     >
                       <Pencil size={15} />
                     </button>
                     <button
                       onClick={() => retire.mutate({ id: item.id, retired: !retired })}
                       className="btn ghost !px-2.5 !py-1 !text-xs"
-                      aria-label={`${retired ? "Bring back" : "Retire"} ${item.name}`}
+                      aria-label={t(retired ? "settings.garage.bringBackItem" : "settings.garage.retireItem", {
+                        name: item.name,
+                      })}
                     >
-                      {retired ? "Bring back" : "Retire"}
+                      {retired ? t("settings.garage.bringBack") : t("settings.garage.retire")}
                     </button>
                     <button
                       onClick={() => remove(item)}
                       className="set-path-add danger"
-                      data-tip="Delete"
-                      aria-label={`Delete ${item.name}`}
+                      data-tip={t("common.delete")}
+                      aria-label={t("settings.garage.deleteItem", { name: item.name })}
                     >
                       <Trash2 size={15} />
                     </button>
@@ -353,6 +373,7 @@ export function GearModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const today = useToday();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -412,21 +433,24 @@ export function GearModal({
       else await api.createGear(input);
     },
     onSuccess: () => {
-      addToast("success", item ? "Gear updated" : "Gear added");
+      addToast("success", item ? t("settings.garage.updated") : t("settings.garage.added"));
       onSaved();
     },
-    onError: (e: unknown) => addToast("error", `Could not save gear: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("settings.garage.saveFailed", { error: errorText(e) })),
   });
 
-  const sportOptions = kindSports(kind).map((s) => ({ value: s, label: sportLabel(s) }));
+  const sportOptions = kindSports(kind).map((s) => ({ value: s, label: sportLabel(s, s, t) }));
   // A rule's value the vault has not seen (set elsewhere, files gone) stays
   // offered so the save keeps it.
   const profileOptions = [
-    ...(candidates?.profiles ?? []).map((p) => ({ value: p.value, label: `${p.value} (${p.count})` })),
+    ...(candidates?.profiles ?? []).map((p) => ({ value: p.value, label: `${p.value} (${formatNumber(p.count)})` })),
     ...ruleProfiles.filter((v) => !candidates?.profiles.some((p) => p.value === v)).map((v) => ({ value: v, label: v })),
   ];
   const sensorOptions = [
-    ...(candidates?.sensors ?? []).map((s) => ({ value: s.serial, label: `${sensorLabel(s)} · ${s.serial} (${s.count})` })),
+    ...(candidates?.sensors ?? []).map((s) => ({
+      value: s.serial,
+      label: `${sensorLabel(s, t)} · ${s.serial} (${formatNumber(s.count)})`,
+    })),
     ...ruleSensors.filter((v) => !candidates?.sensors.some((s) => s.serial === v)).map((v) => ({ value: v, label: v })),
   ];
   const rulesOffered = profileOptions.length > 0 || sensorOptions.length > 0;
@@ -435,101 +459,102 @@ export function GearModal({
     // No backdrop-click close (app-wide modal policy): closing is explicit.
     // The overlay scrolls: in a window at the minimum height the calendar
     // popover reaches below the fold, and a fixed overlay would hide it.
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/30 py-6" role="dialog" aria-modal="true" aria-label={item ? "Edit gear" : "Add gear"}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/30 py-6" role="dialog" aria-modal="true" aria-label={item ? t("settings.garage.editTitle") : t("settings.garage.add")}>
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-md mx-4 my-auto p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{item ? "Edit gear" : "Add gear"}</h2>
-          <button onClick={onClose} className="text-faint hover:text-muted" aria-label="Close">
+          <h2 className="text-lg font-semibold">{item ? t("settings.garage.editTitle") : t("settings.garage.add")}</h2>
+          <button onClick={onClose} className="text-faint hover:text-muted" aria-label={t("common.close")}>
             <X size={18} />
           </button>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs text-muted block mb-1">Kind</label>
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.kind")}</label>
             <Select
-              ariaLabel="Kind"
+              ariaLabel={t("settings.garage.kind")}
               className="w-full"
               value={kind}
               onChange={(v) => changeKind(v as GearKind)}
-              options={GEAR_KINDS.map((k) => ({ value: k.id, label: k.label, icon: <GearKindIcon kind={k.id} size={14} /> }))}
+              options={GEAR_KINDS.map((k) => ({ value: k.id, label: t(k.labelKey), icon: <GearKindIcon kind={k.id} size={14} /> }))}
             />
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Name</label>
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.name")}</label>
             <input
               type="text"
               value={name}
               // By code point, not UTF-16 unit: a cut surrogate pair would
               // reach the backend as a lone surrogate it cannot decode.
               onChange={(e) => setName(Array.from(e.target.value).slice(0, MAX_GEAR_NAME_LENGTH).join(""))}
-              placeholder={kind === "shoes" ? "Pegasus 41" : "Road bike"}
-              aria-label="Name"
+              // A shoe's example is a model name, the same in every language.
+              placeholder={kind === "shoes" ? "Pegasus 41" : t("settings.garage.namePlaceholder")} // i18n-ignore
+              aria-label={t("settings.garage.name")}
               className="w-full text-sm border border-border rounded px-3 py-2"
             />
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Brand</label>
-            <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} aria-label="Brand" className="w-full text-sm border border-border rounded px-3 py-2" />
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.brand")}</label>
+            <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} aria-label={t("settings.garage.brand")} className="w-full text-sm border border-border rounded px-3 py-2" />
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Model</label>
-            <input type="text" value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" className="w-full text-sm border border-border rounded px-3 py-2" />
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.model")}</label>
+            <input type="text" value={model} onChange={(e) => setModel(e.target.value)} aria-label={t("settings.garage.model")} className="w-full text-sm border border-border rounded px-3 py-2" />
           </div>
           {/* The app's own calendar, as in the library filters; the field
               carries its label itself. A purchase is never in the future. */}
           <div className="flex items-end">
             <DateField
-              label="Purchased"
+              label={t("settings.garage.purchased")}
               value={purchasedAt || undefined}
               onChange={(iso) => setPurchasedAt(iso ?? "")}
               max={todayIso}
               drop="down"
               yearSpan={[today.getFullYear() - PURCHASE_YEARS_BACK, today.getFullYear()]}
-              placeholder="Not set"
+              placeholder={t("settings.garage.notSet")}
             />
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Mileage before Syzify ({unit})</label>
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.initial", { unit })}</label>
             <input
               type="text"
               inputMode="decimal"
               value={initial}
               onChange={(e) => setInitial(e.target.value)}
               placeholder="0"
-              aria-label={`Mileage before Syzify (${unit})`}
+              aria-label={t("settings.garage.initial", { unit })}
               aria-invalid={initialField.invalid || undefined}
               className="w-full text-sm border border-border rounded px-3 py-2"
             />
-            {initialField.invalid && <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>Enter a number</p>}
+            {initialField.invalid && <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>{t("settings.garage.enterNumber")}</p>}
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Replace at ({unit}, optional)</label>
+            <label className="text-xs text-muted block mb-1">{t("settings.garage.limitOptional", { unit })}</label>
             <input
               type="text"
               inputMode="decimal"
               value={limit}
               onChange={(e) => setLimit(e.target.value)}
               placeholder={kind === "shoes" ? "800" : ""}
-              aria-label={`Replace at (${unit})`}
+              aria-label={t("settings.garage.limit", { unit })}
               aria-invalid={limitField.invalid || undefined}
               className="w-full text-sm border border-border rounded px-3 py-2"
             />
-            {limitField.invalid && <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>Enter a number</p>}
+            {limitField.invalid && <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>{t("settings.garage.enterNumber")}</p>}
           </div>
           {retired ? (
-            <p className="self-end text-xs text-faint">Retired gear is no default for any sport. Bring it back first.</p>
+            <p className="self-end text-xs text-faint">{t("settings.garage.retiredNoDefault")}</p>
           ) : (
             <div>
-              <label className="text-xs text-muted block mb-1">Default for</label>
+              <label className="text-xs text-muted block mb-1">{t("settings.garage.defaultForLabel")}</label>
               <Select
                 multiple
-                ariaLabel="Default for"
+                ariaLabel={t("settings.garage.defaultForLabel")}
                 className="w-full"
                 values={defaultFor}
                 onChange={(v) => setDefaultFor(v as SportType[])}
                 options={sportOptions}
-                placeholder="No sport"
+                placeholder={t("settings.garage.noSport")}
               />
             </div>
           )}
@@ -540,44 +565,44 @@ export function GearModal({
           // bike — the profile it was recorded under, the paired sensors.
           <div className="grid grid-cols-2 gap-3" data-testid="gear-rules-form">
             <div className="col-span-2 text-xs text-muted">
-              Auto-assign new activities when…
-              {retired && <span className="text-faint"> (asleep while the gear is retired)</span>}
+              {t("settings.garage.rulesIntro")}
+              {retired && <span className="text-faint"> {t("settings.garage.rulesAsleep")}</span>}
             </div>
             <div>
-              <label className="text-xs text-muted block mb-1">The profile is</label>
+              <label className="text-xs text-muted block mb-1">{t("settings.garage.profileIs")}</label>
               <Select
                 multiple
-                ariaLabel="Profile is"
+                ariaLabel={t("settings.garage.profileIsLabel")}
                 className="w-full"
                 values={ruleProfiles}
                 onChange={setRuleProfiles}
                 options={profileOptions}
-                placeholder="Any profile"
+                placeholder={t("settings.garage.anyProfile")}
               />
             </div>
             <div>
-              <label className="text-xs text-muted block mb-1">A sensor is paired</label>
+              <label className="text-xs text-muted block mb-1">{t("settings.garage.sensorPaired")}</label>
               <Select
                 multiple
-                ariaLabel="Sensor is paired"
+                ariaLabel={t("settings.garage.sensorPairedLabel")}
                 className="w-full"
                 values={ruleSensors}
                 onChange={setRuleSensors}
                 options={sensorOptions}
-                placeholder="Any sensor"
+                placeholder={t("settings.garage.anySensor")}
               />
             </div>
           </div>
         )}
 
         <div>
-          <label className="text-xs text-muted block mb-1">Notes</label>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} aria-label="Notes" className="w-full text-sm border border-border rounded px-3 py-2" />
+          <label className="text-xs text-muted block mb-1">{t("common.notes")}</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} aria-label={t("common.notes")} className="w-full text-sm border border-border rounded px-3 py-2" />
         </div>
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="text-sm px-4 py-2 text-muted hover:text-ink">
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -585,7 +610,7 @@ export function GearModal({
             disabled={save.isPending || !name.trim() || invalid}
             className="text-sm px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent-2 disabled:opacity-50"
           >
-            {save.isPending ? "Saving..." : "Save"}
+            {save.isPending ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </div>

@@ -1,13 +1,16 @@
+import type { MessageKey } from "../locales/types";
+
 /** The Settings page sections. The active one lives in the URL
  * (`/settings?tab=vault`) so other pages can link straight to a section and
- * the sidebar's `/settings` match keeps working; no param means General. */
+ * the sidebar's `/settings` match keeps working; no param means General.
+ * `labelKey` is the key of the tab's name, read when the strip renders. */
 export const SETTINGS_TABS = [
-  { id: "general", label: "General" },
-  { id: "vault", label: "Vault" },
-  { id: "garage", label: "Garage" },
-  { id: "plugins", label: "Plugins" },
-  { id: "about", label: "About" },
-] as const;
+  { id: "general", labelKey: "settings.tab.general" },
+  { id: "vault", labelKey: "settings.tab.vault" },
+  { id: "garage", labelKey: "settings.tab.garage" },
+  { id: "plugins", labelKey: "settings.tab.plugins" },
+  { id: "about", labelKey: "settings.tab.about" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 

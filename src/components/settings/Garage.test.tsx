@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GearItem } from "../../lib/types";
 import { useUnitsStore, M_PER_MILE } from "../../lib/units";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -512,5 +513,131 @@ describe("Garage", () => {
     await waitFor(() =>
       expect(useToastStore.getState().addToast).toHaveBeenCalledWith("error", "Could not delete gear: database is locked"),
     );
+  });
+});
+
+describe("Garage while a request runs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(confirmDialog).mockReset();
+  });
+  afterEach(cleanup);
+
+  it("says Applying… and Saving…, and opens the dialog before the rule candidates are known", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([{ ...road, rules: [{ kind: "profile_name", value: "ROAD" }] }]);
+    let candidates!: (v: { profiles: never[]; sensors: never[] }) => void;
+    vi.mocked(api.gearRuleCandidates).mockReturnValue(new Promise((r) => (candidates = r)));
+    vi.mocked(api.createGear).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.applyGearRules).mockReturnValue(new Promise(() => {}));
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Add gear" }));
+    const dialog = screen.getByRole("dialog", { name: "Add gear" });
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Gravel" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("button", { name: "Saving…" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByLabelText("Close"));
+    await act(async () => candidates({ profiles: [], sensors: [] }));
+    await waitFor(() => expect(screen.getByTestId("apply-rules")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    expect(await screen.findByText("Applying…")).toBeTruthy();
+  });
+});
+
+describe("Garage in Russian", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(confirmDialog).mockReset();
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.gearRuleCandidates).mockResolvedValue({
+      profiles: [{ value: "ROAD", count: 1169 }],
+      sensors: [{ serial: "3632674300", device_type: "bike_power", manufacturer: "favero_electronics", product: "assioma_duo", count: 169 }],
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useLanguageStore.getState().setPref("system");
+  });
+
+  it("writes the cards, with the sport names inside a Russian sentence", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([
+      { ...road, default_for: ["ride", "run"], rules: [{ kind: "profile_name", value: "ROAD" }, { kind: "sensor_serial", value: "999" }] },
+      { ...road, id: "g-2", name: "Gravel", purchased_at: null, default_for: ["run"], stats: { ...road.stats, activities: 5 } },
+      oldShoes,
+    ]);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(3));
+    const [bike, gravel, retired] = screen.getAllByTestId("gear-card");
+    expect(bike.textContent).toContain("1050,00 км (50,00 км в Syzify)");
+    expect(bike.textContent).toContain("2 тренировки");
+    expect(bike.textContent).toContain("По умолчанию для: Велосипед, Бег");
+    expect(bike.textContent).toContain("последний раз");
+    await waitFor(() => expect(within(bike).getByTestId("gear-rules").textContent).toBe("Автоназначение: профиль ROAD · датчик 999"));
+    // Not "Assign to all Бег activities" (#235): the names stand apart.
+    expect(within(bike).getByRole("button", { name: /^Назначить на все тренировки с .+: Велосипед, Бег$/ })).toBeTruthy();
+    expect(within(gravel).getByRole("button", { name: "Назначить на все тренировки: Бег" })).toBeTruthy();
+    expect(gravel.textContent).toContain("5 тренировок");
+    expect(retired.textContent).toContain("300,00 км до Syzify · Тренировок пока нет");
+    expect(retired.textContent).toContain("Списано");
+    expect(within(retired).getByRole("button", { name: "Вернуть «Old shoes»" })).toBeTruthy();
+    expect(within(bike).getByRole("button", { name: "Списать «Road»" })).toBeTruthy();
+    screen.getByText("Гараж");
+    screen.getByRole("button", { name: "Добавить снаряжение" });
+  });
+
+  it("counts in the confirmations and toasts with the forms of the number", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([
+      { ...road, stats: { ...road.stats, activities: 1 }, rules: [{ kind: "profile_name", value: "ROAD" }] },
+      { ...pegasus, stats: { ...pegasus.stats, activities: 5 } },
+    ]);
+    vi.mocked(confirmDialog).mockResolvedValue(false);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Удалить «Road»" }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmDialog).mock.calls[0][0]).toMatchObject({
+      title: "Удалить «Road»?",
+      message: "1 тренировка сохранит свои данные, но лишится этого снаряжения. Это нельзя отменить.",
+      confirmLabel: "Удалить",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Удалить «Pegasus»" }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(confirmDialog).mock.calls[1][0].message).toMatch(/^5 тренировок сохранят/);
+
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    vi.mocked(api.applyGearRules).mockResolvedValueOnce(22);
+    fireEvent.click(screen.getByTestId("apply-rules"));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("success", "Правила назначили снаряжение на 22 тренировки"),
+    );
+    expect(vi.mocked(confirmDialog).mock.calls[2][0]).toMatchObject({
+      title: "Применить правила к истории?",
+      confirmLabel: "Применить",
+    });
+  });
+
+  it("asks for the item in Russian, naming the sensors' kinds", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([road]);
+    renderIt();
+    await waitFor(() => expect(screen.getAllByTestId("gear-card")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Изменить «Road»" }));
+    const dialog = screen.getByRole("dialog", { name: "Изменить снаряжение" });
+    within(dialog).getByLabelText("Название");
+    within(dialog).getByLabelText("Пробег до Syzify (км)");
+    within(dialog).getByLabelText("Заменить через (км)");
+    within(dialog).getByText("Заменить через (км, необязательно)");
+    await waitFor(() => expect(within(dialog).getByTestId("gear-rules-form")).toBeTruthy());
+    fireEvent.click(within(dialog).getByLabelText("Профиль"));
+    // A count of the options is a number of the language: no group for four digits.
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["ROAD (1169)"]);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(within(dialog).getByLabelText("Подключённый датчик"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Favero Electronics Assioma Duo (измеритель мощности) · 3632674300 (169)",
+    ]);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(within(dialog).getByLabelText("Вид"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Велосипед", "Обувь", "Другое"]);
   });
 });

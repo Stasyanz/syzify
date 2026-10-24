@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
-import { useLanguageStore } from "../../lib/i18n";
+import { t, translate, useLanguageStore, type Translator } from "../../lib/i18n";
+import { useBusyStore } from "../../stores/busyStore";
 import {
   MonitoringData,
   deleteMessage,
@@ -31,7 +32,11 @@ function renderBlock() {
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useLanguageStore.getState().setPref("system");
+  useBusyStore.setState({ running: {}, lastError: {} });
+});
 beforeEach(() => {
   vi.clearAllMocks();
   useToastStore.setState({ toasts: [] });
@@ -39,57 +44,83 @@ beforeEach(() => {
 
 describe("wording", () => {
   it("describes what is stored", () => {
-    expect(describeSummary(summary)).toBe(
+    expect(describeSummary(summary, t)).toBe(
       "79 days of Garmin monitoring (Jun 19, 2026 – Sep 5, 2026) · 185 files",
     );
-    expect(describeSummary({ days: 1, first_date: "2026-09-05", last_date: "2026-09-05", files: 1 })).toBe(
+    expect(describeSummary({ days: 1, first_date: "2026-09-05", last_date: "2026-09-05", files: 1 }, t)).toBe(
       "1 day of Garmin monitoring (Sep 5, 2026) · 1 file",
     );
-    expect(describeSummary({ days: 0, first_date: null, last_date: null, files: 0 })).toBe(
+    expect(describeSummary({ days: 0, first_date: null, last_date: null, files: 0 }, t)).toBe(
       "No Garmin monitoring data stored",
     );
   });
 
   it("dates the stored range in the interface language (#232)", () => {
     useLanguageStore.getState().setPref("it");
-    try {
-      expect(describeSummary(summary)).toContain("(19 giu 2026 – 5 set 2026)");
-    } finally {
-      useLanguageStore.getState().setPref("system");
-    }
+    expect(describeSummary(summary, t)).toContain("(19 giu 2026 – 5 set 2026)");
   });
 
   it("refuses a half-filled or inverted range", () => {
-    expect(rangeProblem("", "2026-09-05")).toBe("Pick both dates");
-    expect(rangeProblem("2026-09-06", "2026-09-05")).toBe("The end date is before the start date");
-    expect(rangeProblem("2026-09-05", "2026-09-05")).toBeNull();
+    expect(rangeProblem("", "2026-09-05", t)).toBe("Pick both dates");
+    expect(rangeProblem("2026-09-06", "2026-09-05", t)).toBe("The end date is before the start date");
+    expect(rangeProblem("2026-09-05", "2026-09-05", t)).toBeNull();
   });
 
   it("never folds a refused removal into success", () => {
-    expect(deleteToast({ days: 3, files: 2, failed: 0, error: null })).toEqual([
+    expect(deleteToast({ days: 3, files: 2, failed: 0, error: null }, t)).toEqual([
       "success",
       "Deleted 3 days of monitoring and 2 files",
     ]);
-    expect(deleteToast({ days: 0, files: 0, failed: 0, error: null })).toEqual([
+    expect(deleteToast({ days: 0, files: 0, failed: 0, error: null }, t)).toEqual([
       "info",
       "No monitoring data in that range",
     ]);
     // Files swept from an earlier interrupted delete count even with no days.
-    expect(deleteToast({ days: 0, files: 1, failed: 0, error: null })[1]).toBe(
+    expect(deleteToast({ days: 0, files: 1, failed: 0, error: null }, t)[1]).toBe(
       "Deleted 0 days of monitoring and 1 file",
     );
-    const [level, text] = deleteToast({ days: 1, files: 0, failed: 1, error: "raw/x.fit: busy" });
+    const [level, text] = deleteToast({ days: 1, files: 0, failed: 1, error: "raw/x.fit: busy" }, t);
     expect(level).toBe("warning");
     expect(text).toBe(
       "Deleted 1 day of monitoring and 0 files · 1 file could not be removed (raw/x.fit: busy) — try again later",
     );
-    expect(deleteToast({ days: 1, files: 0, failed: 2, error: null })[1]).toContain("unknown error");
+    expect(deleteToast({ days: 1, files: 0, failed: 2, error: null }, t)[1]).toContain(
+      "2 files could not be removed (unknown error)",
+    );
   });
 
   it("names the span in the confirmation", () => {
-    expect(deleteMessage("2026-09-05", "2026-09-05")).toContain("on Sep 5, 2026?");
-    expect(deleteMessage("2026-08-01", "2026-09-05")).toContain("from Aug 1, 2026 to Sep 5, 2026?");
-    expect(deleteMessage("2026-08-01", "2026-09-05")).toContain("imported again");
+    expect(deleteMessage("2026-09-05", "2026-09-05", t)).toContain("on Sep 5, 2026?");
+    expect(deleteMessage("2026-08-01", "2026-09-05", t)).toContain("from Aug 1, 2026 to Sep 5, 2026?");
+    expect(deleteMessage("2026-08-01", "2026-09-05", t)).toContain("imported again");
+  });
+});
+
+describe("wording in Russian", () => {
+  const ru: Translator = (key, ...args) => translate("ru", key, ...args);
+
+  it("counts days and files with the forms of the number", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect(describeSummary(summary, ru)).toMatch(/^Мониторинг Garmin: 79 дней \(19 июн.+\) · 185 файлов$/);
+    expect(describeSummary({ days: 2, first_date: "2026-09-04", last_date: "2026-09-05", files: 1 }, ru)).toMatch(
+      /^Мониторинг Garmin: 2 дня \(.*\) · 1 файл$/,
+    );
+    expect(deleteToast({ days: 21, files: 3, failed: 0, error: null }, ru)[1]).toBe(
+      "Удалено: мониторинг за 21 день и 3 файла",
+    );
+    expect(deleteToast({ days: 5, files: 0, failed: 5, error: null }, ru)[1]).toBe(
+      "Удалено: мониторинг за 5 дней и 0 файлов · 5 файлов удалить не удалось (неизвестная ошибка) — попробуйте позже",
+    );
+  });
+
+  it("refuses a bad range and asks before a delete in Russian", () => {
+    expect(rangeProblem("", "2026-09-05", ru)).toBe("Выберите обе даты");
+    expect(rangeProblem("2026-09-06", "2026-09-05", ru)).toBe("Конечная дата раньше начальной");
+    expect(deleteMessage("2026-09-05", "2026-09-05", ru)).toMatch(/^Удалить данные мониторинга за .+\?\n\n/);
+    expect(deleteMessage("2026-08-01", "2026-09-05", ru)).toMatch(/^Удалить данные мониторинга с .+ по .+\?/);
+    expect(describeSummary({ days: 0, first_date: null, last_date: null, files: 0 }, ru)).toBe(
+      "Данных мониторинга Garmin нет",
+    );
   });
 });
 
@@ -102,7 +133,8 @@ describe("MonitoringData", () => {
     await screen.findByText(/79 days of Garmin monitoring/);
     const from = screen.getByLabelText("Delete from") as HTMLInputElement;
     const to = screen.getByLabelText("Delete to") as HTMLInputElement;
-    expect([from.value, to.value]).toEqual(["2026-06-19", "2026-09-05"]);
+    // The seeding effect runs after the summary renders: wait for it.
+    await waitFor(() => expect([from.value, to.value]).toEqual(["2026-06-19", "2026-09-05"]));
 
     fireEvent.change(from, { target: { value: "2026-09-03" } });
     fireEvent.click(screen.getByText("Delete…"));
@@ -204,6 +236,49 @@ describe("MonitoringData", () => {
     expect(mocked.deleteMonitoringRange).toHaveBeenCalledTimes(1);
     finish({ days: 1, files: 1, failed: 0, error: null });
     await screen.findByText("Delete…");
+  });
+
+  it("keeps Deleting… across a remount while the request runs (#235)", async () => {
+    mocked.getMonitoringSummary.mockResolvedValue(summary);
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    let finish: (v: { days: number; files: number; failed: number; error: null }) => void = () => {};
+    mocked.deleteMonitoringRange.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const first = renderBlock();
+    await screen.findByText(/79 days/);
+    fireEvent.click(screen.getByText("Delete…"));
+    await screen.findByText("Deleting…");
+    // A language change remounts the app: the new block still says so.
+    first.unmount();
+    renderBlock();
+    const busy = await screen.findByText("Deleting…");
+    expect((busy.closest("button") as HTMLButtonElement).disabled).toBe(true);
+    expect(useBusyStore.getState().running).toEqual({ monitoringDelete: null });
+    finish({ days: 1, files: 1, failed: 0, error: null });
+    await waitFor(() => expect(useBusyStore.getState().running).toEqual({}));
+    await screen.findByText("Delete…");
+  });
+
+  it("speaks Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    mocked.getMonitoringSummary.mockResolvedValue(summary);
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    mocked.deleteMonitoringRange.mockResolvedValue({ days: 1, files: 1, failed: 0, error: null });
+    renderBlock();
+    await screen.findByText(/^Мониторинг Garmin: 79 дней/);
+    screen.getByText("Данные мониторинга");
+    screen.getByLabelText("Удалить с");
+    screen.getByLabelText("Удалить по");
+    fireEvent.click(screen.getByText("Удалить…"));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.map((x) => x.message)).toEqual(["Удалено: мониторинг за 1 день и 1 файл"]),
+    );
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Удаление данных мониторинга", confirmLabel: "Удалить" }),
+    );
   });
 
   it("hides the range and disables the button when nothing is stored", async () => {

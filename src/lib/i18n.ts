@@ -4,6 +4,7 @@ import { en } from "../locales/en";
 import { ru } from "../locales/ru";
 import { it } from "../locales/it";
 import type { MessageKey, Messages, PluralMessage } from "../locales/types";
+import { anyBusy, useBusyStore } from "../stores/busyStore";
 
 export type Language = "en" | "ru" | "it";
 /** What the user picked: a language, or whatever the system prefers. */
@@ -280,11 +281,14 @@ function applyLanguage(language: Language): void {
 /**
  * Mark <html lang> before first paint and keep "system" in step with the
  * OS: a change of the preferred languages while the app runs re-resolves
- * it. Call from main.tsx; returns the listener's removal.
+ * it. A new language remounts the app, so while a long operation of
+ * Settings runs (stores/busyStore.ts) the change waits and is applied once
+ * the last one ends — as the Settings picker waits, locked (#235). Call from
+ * main.tsx; returns the listener's removal.
  */
 export function initLanguage(): () => void {
   applyLanguage(currentLanguage());
-  const onChange = () => {
+  const follow = () => {
     const { pref, language } = useLanguageStore.getState();
     if (pref !== "system") return;
     const next = resolveLanguage("system", systemLanguages());
@@ -292,6 +296,24 @@ export function initLanguage(): () => void {
     applyLanguage(next);
     useLanguageStore.setState({ language: next });
   };
+  // One deferred change at most: when the store goes idle it reads the
+  // system's languages as they are then.
+  let waiting: (() => void) | null = null;
+  const stopWaiting = () => {
+    waiting?.();
+    waiting = null;
+  };
+  const onChange = () => {
+    if (!anyBusy()) return follow();
+    waiting ??= useBusyStore.subscribe((state) => {
+      if (anyBusy(state)) return;
+      stopWaiting();
+      follow();
+    });
+  };
   window.addEventListener("languagechange", onChange);
-  return () => window.removeEventListener("languagechange", onChange);
+  return () => {
+    window.removeEventListener("languagechange", onChange);
+    stopWaiting();
+  };
 }

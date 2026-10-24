@@ -26,10 +26,13 @@ import {
   LANGUAGE_NAMES,
   currentLanguage,
   formatNumber,
+  formatPercent,
   useLanguageStore,
+  useRichT,
   useT,
   type LanguagePref,
 } from "../lib/i18n";
+import { useAnyBusy, useBusy, useBusyStore } from "../stores/busyStore";
 import type { MessageKey } from "../locales/types";
 import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
@@ -62,8 +65,18 @@ const THEME_MODES = [
  * focus back on the picker the keyboard left. */
 let refocusLanguagePicker = false;
 
+/** The shortest encryption password the vault takes. */
+const MIN_PASSWORD_LENGTH = 8;
+
+/** The issue tracker's own name, the same in every language. */
+const GITHUB_ISSUES_NAME = "GitHub Issues";
+
 export function SettingsPage() {
   const t = useT();
+  const rt = useRichT();
+  // A long operation of the page or of a section (a backup, a vault move, a
+  // scan, an update, a monitoring delete) locks the language picker (#235).
+  const anyBusy = useAnyBusy();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const updateToast = useToastStore((s) => s.updateToast);
@@ -170,22 +183,27 @@ export function SettingsPage() {
     enabled: tab === "vault",
   });
 
-  const [clearing, setClearing] = useState(false);
-  const [backingUp, setBackingUp] = useState(false);
-  const [restoring, setRestoring] = useState(false);
+  // The page's own long operations live in the busy store with the
+  // sections' (#235): leaving Settings and coming back while one runs keeps
+  // its indicator and its buttons off.
+  const clearing = useBusy("clearTiles");
+  const backingUp = useBusy("backup");
+  const restoring = useBusy("restore");
+  const encrypting = useBusy("encrypt");
+  const decrypting = useBusy("decrypt");
+  const encBusy = encrypting || decrypting;
 
   // Encryption UI state
   const [showEncryptDialog, setShowEncryptDialog] = useState(false);
   const [encPassword, setEncPassword] = useState("");
   const [encConfirm, setEncConfirm] = useState("");
   const [encError, setEncError] = useState<string | null>(null);
-  const [encBusy, setEncBusy] = useState(false);
   const [showDecryptDialog, setShowDecryptDialog] = useState(false);
   const [decPassword, setDecPassword] = useState("");
   const [decError, setDecError] = useState<string | null>(null);
   // What a vault encrypted before #209 left out; changing scopes in place is
   // a separate op, so the row can only say how to cover the rest.
-  const leftReadable = encryptionStatus?.enabled ? unencryptedParts(encryptionStatus.scopes) : [];
+  const leftReadable = encryptionStatus?.enabled ? unencryptedParts(encryptionStatus.scopes, t) : [];
 
   async function handlePageSizeChange(value: string) {
     await api.setSetting("page_size", value);
@@ -204,53 +222,64 @@ export function SettingsPage() {
   }
 
   async function handleClearCache() {
-    setClearing(true);
+    const ops = useBusyStore.getState();
+    ops.start("clearTiles");
     try {
       await api.clearTileCache();
       refetchCache();
       addToast("success", t("settings.general.cacheCleared"));
+    } catch (e) {
+      addToast("error", t("settings.general.clearCacheFailed", { error: errorText(e) }));
     } finally {
-      setClearing(false);
+      ops.finish("clearTiles");
     }
   }
 
   async function handleBackup() {
     const dest = await save({
       defaultPath: "Syzify_backup.zip",
-      filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
+      filters: [{ name: t("settings.vault.zipFilter"), extensions: ["zip"] }],
     });
     if (!dest) return;
-    setBackingUp(true);
-    const toastId = addToast("info", "Creating backup… 0%", undefined, true);
-    const unlisten = await listen<{ processed: number; total: number }>(
-      "backup:progress",
-      (e) => {
+    const ops = useBusyStore.getState();
+    ops.start("backup");
+    const toastId = addToast(
+      "info",
+      t("settings.vault.backupStarting", { percent: formatPercent(0, 0) }),
+      undefined,
+      true,
+    );
+    // Everything after `start` is inside the try: a listener that cannot
+    // subscribe must not leave the flag (and the language picker) locked.
+    let unlisten = () => {};
+    try {
+      unlisten = await listen<{ processed: number; total: number }>("backup:progress", (e) => {
         const { processed, total } = e.payload;
         const pct = total > 0 ? Math.floor((processed / total) * 100) : 100;
-        const mb = formatNumber(processed / 1048576, 0);
-        const totalMb = formatNumber(total / 1048576, 0);
         updateToast(toastId, {
-          message: `Creating backup… ${pct}% (${mb}/${totalMb} MB)`,
+          message: t("settings.vault.backupProgress", {
+            percent: formatPercent(pct, 0),
+            done: formatNumber(processed / 1048576, 0),
+            total: formatNumber(total / 1048576, 0),
+          }),
         });
-      }
-    );
-    try {
+      });
       await api.backupVault(dest);
       removeToast(toastId);
-      addToast("success", "Vault backup created");
+      addToast("success", t("settings.vault.backupCreated"));
     } catch (e) {
       removeToast(toastId);
-      addToast("error", `Backup failed: ${errorText(e)}`);
+      addToast("error", t("settings.vault.backupFailed", { error: errorText(e) }));
     } finally {
       unlisten();
-      setBackingUp(false);
+      ops.finish("backup");
     }
   }
 
   async function handleRestore() {
     const selected = await open({
       multiple: false,
-      filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
+      filters: [{ name: t("settings.vault.zipFilter"), extensions: ["zip"] }],
     });
     if (!selected) return;
     // Restoring replaces the whole vault, so the app must reboot to reopen
@@ -259,13 +288,15 @@ export function SettingsPage() {
     // restart, exactly like relocate. The replaced data isn't destroyed — it
     // moves into a pre-restore folder inside the vault.
     const confirmed = await confirmDialog({
-      title: "Restore backup",
-      message:
-        "Restore the vault from this backup?\n\nYour current vault will be replaced and the app will restart. The replaced data is kept in a “pre-restore” folder inside the vault until you delete it.",
-      confirmLabel: "Restore",
+      title: t("settings.vault.restoreTitle"),
+      message: t("settings.vault.restoreMessage"),
+      confirmLabel: t("settings.vault.restore"),
     });
     if (!confirmed) return;
-    setRestoring(true);
+    const ops = useBusyStore.getState();
+    // Busy until the restart, like a vault move: the vault is not the live
+    // one any more.
+    ops.start("restore");
     try {
       // `error` here is the backend's own report of a partial extraction,
       // a string by contract — not a caught value.
@@ -273,13 +304,12 @@ export function SettingsPage() {
       // Once the vault was touched the live DB is a placeholder — restart even
       // if extraction failed partway (error set), so the app reopens from disk.
       if (restored) {
-        const kept = preserved_at ? ` Previous vault kept in ${preserved_at}.` : "";
-        addToast(
-          partial ? "warning" : "success",
-          partial
-            ? `Restore incomplete: ${partial}.${kept} Restarting…`
-            : `Vault restored.${kept} Restarting…`
-        );
+        const sentences = [
+          partial ? t("settings.vault.restoreIncomplete", { error: partial }) : t("settings.vault.restored"),
+          preserved_at ? t("settings.vault.restoreKept", { path: preserved_at }) : null,
+          t("settings.vault.restarting"),
+        ];
+        addToast(partial ? "warning" : "success", sentences.filter(Boolean).join(" "));
         // The backend set vault_error ("restart required") the moment the live
         // DB became a placeholder. Refetch it so that if the restart below
         // fails (fire-and-forget, flaky in tauri dev), the blocking
@@ -289,11 +319,14 @@ export function SettingsPage() {
         setTimeout(() => {
           api.restartApp().catch(() => {});
         }, 600);
+      } else {
+        // Nothing was touched: no restart comes, so nothing stays locked.
+        ops.finish("restore");
       }
     } catch (e) {
       // Pre-flight rejection (bad/missing archive) — the live DB is untouched.
-      addToast("error", `Restore failed: ${errorText(e)}`);
-      setRestoring(false);
+      addToast("error", t("settings.vault.restoreFailed", { error: errorText(e) }));
+      ops.finish("restore");
     }
   }
 
@@ -320,25 +353,26 @@ export function SettingsPage() {
 
   async function handleEnableEncryption() {
     setEncError(null);
-    if (encPassword.length < 8) {
-      setEncError("Password must be at least 8 characters.");
+    if (encPassword.length < MIN_PASSWORD_LENGTH) {
+      setEncError(t("settings.vault.passwordTooShort", { count: MIN_PASSWORD_LENGTH }));
       return;
     }
     if (encPassword !== encConfirm) {
-      setEncError("Passwords do not match.");
+      setEncError(t("settings.vault.passwordMismatch"));
       return;
     }
-    setEncBusy(true);
+    const ops = useBusyStore.getState();
+    ops.start("encrypt");
     try {
       await api.enableEncryption(encPassword);
       setShowEncryptDialog(false);
       setEncPassword("");
       setEncConfirm("");
     } catch (e) {
-      setEncError(`Failed: ${errorText(e)}`);
-      if (encryptionDialogGone()) addToast("error", `Encryption failed: ${errorText(e)}`);
+      setEncError(t("settings.vault.encryptFailedInline", { error: errorText(e) }));
+      if (encryptionDialogGone()) addToast("error", t("settings.vault.encryptFailed", { error: errorText(e) }));
     } finally {
-      setEncBusy(false);
+      ops.finish("encrypt");
       // Re-read status on EVERY outcome: a failed transition can settle the
       // vault to LOCKED (backend cleared the key + swapped in a placeholder),
       // and only refreshing encryptionStatus makes the app surface the
@@ -349,16 +383,17 @@ export function SettingsPage() {
 
   async function handleDisableEncryption() {
     setDecError(null);
-    setEncBusy(true);
+    const ops = useBusyStore.getState();
+    ops.start("decrypt");
     try {
       await api.disableEncryption(decPassword);
       setShowDecryptDialog(false);
       setDecPassword("");
     } catch (e) {
-      setDecError(`Wrong password or error: ${errorText(e)}`);
-      if (encryptionDialogGone()) addToast("error", `Disabling encryption failed: ${errorText(e)}`);
+      setDecError(t("settings.vault.decryptFailedInline", { error: errorText(e) }));
+      if (encryptionDialogGone()) addToast("error", t("settings.vault.decryptFailed", { error: errorText(e) }));
     } finally {
-      setEncBusy(false);
+      ops.finish("decrypt");
       refreshAfterCryptoChange();
     }
   }
@@ -381,7 +416,7 @@ export function SettingsPage() {
         <div
           className="seg self-center"
           role="tablist"
-          aria-label="Settings sections"
+          aria-label={t("settings.sections")}
           onKeyDown={onTabKeyDown}
         >
           {SETTINGS_TABS.map((def) => (
@@ -397,7 +432,7 @@ export function SettingsPage() {
               className={tab === def.id ? "on" : ""}
               onClick={() => selectTab(def.id)}
             >
-              {def.label}
+              {t(def.labelKey)}
             </button>
           ))}
         </div>
@@ -434,9 +469,10 @@ export function SettingsPage() {
               <Select
                 ariaLabel={t("settings.general.language")}
                 className="w-40"
-                // The remount a new language brings would cut short an
-                // operation of this page and lose its progress.
-                disabled={clearing || backingUp || restoring || encBusy}
+                // The remount a new language brings would cut short the
+                // indicator of a long operation: every one of them, the
+                // page's and its sections', keeps its flag in the busy store.
+                disabled={anyBusy}
                 value={languagePref}
                 onChange={(v) => chooseLanguage(v as LanguagePref)}
                 options={[
@@ -546,13 +582,13 @@ export function SettingsPage() {
             <VaultLocation />
             <div className="set-row">
               <div className="flex-1">
-                <div className="sl">Encryption</div>
+                <div className="sl">{t("settings.vault.encryption")}</div>
                 <div className="sd">
                   {!encryptionStatus?.enabled
-                    ? "Encrypt raw files (activities and monitoring), the database and photos at rest"
+                    ? t("settings.vault.encryptionOff")
                     : leftReadable.length === 0
-                      ? "Raw files (activities and monitoring), the database and photos are encrypted at rest"
-                      : "Raw files, the database and photos are not all encrypted at rest"}
+                      ? t("settings.vault.encryptionOn")
+                      : t("settings.vault.encryptionPartial")}
                 </div>
                 {leftReadable.length > 0 && (
                   // The way out is disable + enable, and each half can strand
@@ -561,12 +597,7 @@ export function SettingsPage() {
                   // while a pre-restore folder is inside. Say so up front.
                   <div className="sd warn">
                     <AlertTriangle size={13} aria-hidden="true" />
-                    <span>
-                      Not encrypted: {leftReadable.join(", ")}. To cover all three,
-                      back up the vault, then turn encryption off and on again.
-                      The vault is unencrypted in between, and a pre-restore
-                      folder inside it has to be moved out first
-                    </span>
+                    <span>{t("settings.vault.notEncrypted", { parts: leftReadable.join(", ") })}</span>
                   </div>
                 )}
               </div>
@@ -579,33 +610,36 @@ export function SettingsPage() {
                 }
                 ariaLabel={
                   encryptionStatus?.enabled
-                    ? "Disable encryption"
-                    : "Enable encryption"
+                    ? t("settings.vault.disableEncryptionLabel")
+                    : t("settings.vault.enableEncryptionLabel")
                 }
+                disabled={encBusy}
               />
             </div>
+            {/* Back on the tab while a switch runs: its dialog is gone with
+                the old page, the switch is not. */}
+            {encBusy && !showEncryptDialog && !showDecryptDialog && (
+              <p className="sd flex items-center gap-1.5 pb-3" role="status">
+                <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                {encrypting ? t("settings.vault.encrypting") : t("settings.vault.decrypting")}
+              </p>
+            )}
 
             {/* Enable encryption dialog */}
             {showEncryptDialog && (
               <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
-                <p className="text-sm font-semibold text-ink">
-                  Set encryption password
-                </p>
-                <p className="sd">
-                  Raw files (activities and monitoring), the database and photos
-                  will be encrypted. You will need this password to open your
-                  vault, and it cannot be recovered
-                </p>
+                <p className="text-sm font-semibold text-ink">{t("settings.vault.setPassword")}</p>
+                <p className="sd">{t("settings.vault.setPasswordHint")}</p>
                 <input
                   type="password"
-                  placeholder="Password (min 8 characters)"
+                  placeholder={t("settings.vault.passwordPlaceholder", { count: MIN_PASSWORD_LENGTH })}
                   value={encPassword}
                   onChange={(e) => setEncPassword(e.target.value)}
                   className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
                 />
                 <input
                   type="password"
-                  placeholder="Confirm password"
+                  placeholder={t("settings.vault.confirmPassword")}
                   value={encConfirm}
                   onChange={(e) => setEncConfirm(e.target.value)}
                   className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
@@ -618,7 +652,7 @@ export function SettingsPage() {
                     className="btn primary"
                   >
                     {encBusy && <Loader2 size={15} className="animate-spin" />}
-                    {encBusy ? "Encrypting…" : "Enable Encryption"}
+                    {encBusy ? t("settings.vault.encrypting") : t("settings.vault.enableEncryption")}
                   </button>
                   <button
                     onClick={() => {
@@ -629,7 +663,7 @@ export function SettingsPage() {
                     }}
                     className="btn ghost"
                   >
-                    Cancel
+                    {t("common.cancel")}
                   </button>
                 </div>
               </div>
@@ -638,12 +672,10 @@ export function SettingsPage() {
             {/* Disable encryption dialog */}
             {showDecryptDialog && (
               <div className="bg-card-2 rounded-[9px] p-4 space-y-3 mb-3">
-                <p className="text-sm font-semibold text-ink">
-                  Enter password to disable encryption
-                </p>
+                <p className="text-sm font-semibold text-ink">{t("settings.vault.disablePrompt")}</p>
                 <input
                   type="password"
-                  placeholder="Current password"
+                  placeholder={t("settings.vault.currentPassword")}
                   value={decPassword}
                   onChange={(e) => setDecPassword(e.target.value)}
                   className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
@@ -656,7 +688,7 @@ export function SettingsPage() {
                     className="btn danger"
                   >
                     {encBusy && <Loader2 size={15} className="animate-spin" />}
-                    {encBusy ? "Decrypting…" : "Disable Encryption"}
+                    {encBusy ? t("settings.vault.decrypting") : t("settings.vault.disableEncryption")}
                   </button>
                   <button
                     onClick={() => {
@@ -666,7 +698,7 @@ export function SettingsPage() {
                     }}
                     className="btn ghost"
                   >
-                    Cancel
+                    {t("common.cancel")}
                   </button>
                 </div>
               </div>
@@ -674,8 +706,8 @@ export function SettingsPage() {
 
             <div className="set-row">
               <div>
-                <div className="sl">Backup &amp; Restore</div>
-                <div className="sd">Back up or restore your entire vault</div>
+                <div className="sl">{t("settings.vault.backupRestore")}</div>
+                <div className="sd">{t("settings.vault.backupRestoreHint")}</div>
               </div>
               <div className="flex gap-2">
                 <button
@@ -684,7 +716,7 @@ export function SettingsPage() {
                   className="btn ghost"
                 >
                   <Archive size={15} />
-                  {backingUp ? "Creating…" : "Backup"}
+                  {backingUp ? t("settings.vault.creating") : t("settings.vault.backup")}
                 </button>
                 <button
                   onClick={handleRestore}
@@ -692,7 +724,7 @@ export function SettingsPage() {
                   className="btn ghost"
                 >
                   <Upload size={15} />
-                  {restoring ? "Restoring…" : "Restore"}
+                  {restoring ? t("settings.vault.restoring") : t("settings.vault.restore")}
                 </button>
               </div>
             </div>
@@ -723,57 +755,68 @@ export function SettingsPage() {
             <div className="set-row">
               <div>
                 <div className="sl">Syzify</div>
-                <div className="sd">A local-first training vault</div>
+                <div className="sd">{t("settings.about.tagline")}</div>
               </div>
               <div className="flex flex-col items-end gap-0.5">
-                {appVersion && <span className="sd !mt-0">Version {appVersion}</span>}
+                {appVersion && <span className="sd !mt-0">{t("settings.about.version", { version: appVersion })}</span>}
                 <UpdateCheck />
               </div>
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">License</div>
+                <div className="sl">{t("settings.about.license")}</div>
                 <div className="sd">
-                  © 2026 Stanislav Zainullin ·{" "}
-                  <button
-                    onClick={() => setLegalDoc("license")}
-                    className="text-accent-2 hover:underline"
-                  >
-                    AGPL-3.0
-                  </button>{" "}
-                  with the{" "}
-                  <button
-                    onClick={() => setLegalDoc("exception")}
-                    className="text-accent-2 hover:underline"
-                  >
-                    Plugin Exception
-                  </button>{" "}
-                  ·{" "}
+                  {/* The copyright line and the licence's name are names;
+                      the documents themselves stay English (LegalModal). */}
+                  <span translate="no">© 2026 Stanislav Zainullin</span>
+                  {" · "}
+                  {rt("settings.about.licenseLine", {
+                    license: (
+                      <button
+                        onClick={() => setLegalDoc("license")}
+                        className="text-accent-2 hover:underline"
+                        translate="no"
+                      >
+                        AGPL-3.0
+                      </button>
+                    ),
+                    exception: (
+                      <button
+                        onClick={() => setLegalDoc("exception")}
+                        className="text-accent-2 hover:underline"
+                      >
+                        {t("settings.about.pluginException")}
+                      </button>
+                    ),
+                  })}
+                  {" · "}
                   <button
                     onClick={() => setLegalDoc("notices")}
                     className="text-accent-2 hover:underline"
                   >
-                    Third-party notices
+                    {t("settings.about.notices")}
                   </button>
                 </div>
               </div>
             </div>
             <div className="set-row">
               <div>
-                <div className="sl">Feedback</div>
+                <div className="sl">{t("settings.about.feedback")}</div>
                 <div className="sd">
-                  Report a bug or suggest a feature on{" "}
-                  <a
-                    href={GITHUB_ISSUES_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent-2 hover:underline"
-                  >
-                    GitHub Issues
-                  </a>
-                  {CONTACT_EMAIL && (
-                    <>
-                      , or email{" "}
+                  {(() => {
+                    const github = (
+                      <a
+                        href={GITHUB_ISSUES_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent-2 hover:underline"
+                        translate="no"
+                      >
+                        {GITHUB_ISSUES_NAME}
+                      </a>
+                    );
+                    if (!CONTACT_EMAIL) return rt("settings.about.report", { github });
+                    const email = (
                       <a
                         href={`mailto:${CONTACT_EMAIL}`}
                         className="text-accent-2 hover:underline"
@@ -783,14 +826,15 @@ export function SettingsPage() {
                           // schemes, so route it through the opener plugin.
                           e.preventDefault();
                           openUrl(`mailto:${CONTACT_EMAIL}`).catch((err) => {
-                            addToast("error", `Failed to open email client: ${errorText(err)}`);
+                            addToast("error", t("feedback.openFailed", { error: errorText(err) }));
                           });
                         }}
                       >
                         {CONTACT_EMAIL}
                       </a>
-                    </>
-                  )}
+                    );
+                    return rt("settings.about.reportOrEmail", { github, email });
+                  })()}
                 </div>
               </div>
               <div className="flex gap-2">
@@ -799,16 +843,16 @@ export function SettingsPage() {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="iconbtn no-underline"
-                  data-tip="GitHub Issues"
-                  aria-label="GitHub Issues"
+                  data-tip={GITHUB_ISSUES_NAME}
+                  aria-label={GITHUB_ISSUES_NAME}
                 >
                   <Github size={15} />
                 </a>
                 <button
                   onClick={() => useFeedbackStore.getState().open()}
                   className="iconbtn"
-                  data-tip="Send feedback"
-                  aria-label="Send feedback"
+                  data-tip={t("settings.about.sendFeedback")}
+                  aria-label={t("settings.about.sendFeedback")}
                 >
                   <Mail size={15} />
                 </button>

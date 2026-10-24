@@ -7,12 +7,17 @@ import { useToastStore } from "../../stores/toastStore";
 import { Select } from "../ui/Select";
 import { CONTACT_EMAIL, GITHUB_ISSUES_URL } from "../../lib/contact";
 import { copyText } from "../../lib/clipboard";
+import { useRichT, useT } from "../../lib/i18n";
 
 const APP_VERSION = __APP_VERSION__;
 const MAX_MESSAGE_LENGTH = 1500;
+const MIN_MESSAGE_LENGTH = 10;
 
 type Category = "bug" | "feature";
 
+/** The email the developer reads: its subject and the version line stay
+ * English whatever the interface language — they sort the mailbox, the
+ * user's own words are the message. */
 export function buildMailtoUrl(
   to: string,
   category: Category,
@@ -32,6 +37,8 @@ export function buildMailtoUrl(
 }
 
 export function FeedbackModal() {
+  const t = useT();
+  const rt = useRichT();
   const isOpen = useFeedbackStore((s) => s.isOpen);
   const close = useFeedbackStore((s) => s.close);
   const addToast = useToastStore((s) => s.addToast);
@@ -49,8 +56,8 @@ export function FeedbackModal() {
 
   function validate(): boolean {
     const errs: Record<string, string> = {};
-    if (message.trim().length < 10) {
-      errs.message = "Message must be at least 10 characters";
+    if (message.trim().length < MIN_MESSAGE_LENGTH) {
+      errs.message = t("feedback.tooShort", { count: MIN_MESSAGE_LENGTH });
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -62,21 +69,21 @@ export function FeedbackModal() {
     const url = buildMailtoUrl(CONTACT_EMAIL, category, message.trim());
     try {
       await openUrl(url);
-      addToast("info", "Email client opened — please send the email");
+      addToast("info", t("feedback.opened"));
       close();
       setCategory("bug");
       setMessage("");
       setErrors({});
     } catch (err) {
-      addToast("error", `Failed to open email client: ${errorText(err)}`);
+      addToast("error", t("feedback.openFailed", { error: errorText(err) }));
     }
   }
 
   async function handleCopyAddress() {
     if (await copyText(CONTACT_EMAIL)) {
-      addToast("success", "Address copied");
+      addToast("success", t("feedback.copied"));
     } else {
-      addToast("error", "Copy failed — select the address manually");
+      addToast("error", t("feedback.copyFailed"));
     }
   }
 
@@ -91,30 +98,30 @@ export function FeedbackModal() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Send Feedback</h2>
-          <button onClick={handleClose} className="text-faint hover:text-muted">
+          <h2 className="text-lg font-semibold">{t("feedback.title")}</h2>
+          <button onClick={handleClose} className="text-faint hover:text-muted" aria-label={t("common.close")}>
             <X size={18} />
           </button>
         </div>
 
         {/* Category */}
         <div>
-          <label className="text-xs text-muted block mb-1">Category</label>
+          <label className="text-xs text-muted block mb-1">{t("feedback.category")}</label>
           <Select
-            ariaLabel="Category"
+            ariaLabel={t("feedback.category")}
             className="w-full"
             value={category}
             onChange={(v) => setCategory(v as Category)}
             options={[
-              { value: "bug", label: "Bug Report" },
-              { value: "feature", label: "Feature Request" },
+              { value: "bug", label: t("feedback.bug") },
+              { value: "feature", label: t("feedback.feature") },
             ]}
           />
         </div>
 
         {/* Message */}
         <div>
-          <label className="text-xs text-muted block mb-1">Message</label>
+          <label className="text-xs text-muted block mb-1">{t("feedback.message")}</label>
           <textarea
             value={message}
             onChange={(e) => {
@@ -130,7 +137,7 @@ export function FeedbackModal() {
             }}
             rows={4}
             maxLength={MAX_MESSAGE_LENGTH}
-            placeholder="Describe the issue or suggestion..."
+            placeholder={t("feedback.placeholder")}
             className={`w-full text-sm border rounded px-3 py-2 resize-y ${
               limitHit
                 ? "border-red-500"
@@ -141,7 +148,7 @@ export function FeedbackModal() {
           />
           {limitHit ? (
             <p role="status" className="text-xs text-red-500 mt-0.5">
-              Max {MAX_MESSAGE_LENGTH} characters
+              {t("feedback.max", { count: MAX_MESSAGE_LENGTH })}
             </p>
           ) : (
             errors.message && (
@@ -150,9 +157,7 @@ export function FeedbackModal() {
           )}
         </div>
 
-        <p className="text-xs text-faint">
-          You can attach screenshots directly in your email client
-        </p>
+        <p className="text-xs text-faint">{t("feedback.attach")}</p>
 
         {/* Escape hatch for machines with no default mail client:
             Send opens nothing there, so show the address itself. Hidden
@@ -160,14 +165,13 @@ export function FeedbackModal() {
             nothing to show or copy. */}
         {CONTACT_EMAIL && (
           <p className="text-xs text-faint">
-            No email client? Write to{" "}
-            <span className="text-muted">{CONTACT_EMAIL}</span>{" "}
+            {rt("feedback.noClient", { address: <span className="text-muted">{CONTACT_EMAIL}</span> })}{" "}
             <button
               type="button"
               onClick={handleCopyAddress}
               className="align-middle text-faint hover:text-muted"
-              data-tip="Copy address"
-              aria-label="Copy address"
+              data-tip={t("feedback.copyAddress")}
+              aria-label={t("feedback.copyAddress")}
             >
               <Copy size={12} />
             </button>
@@ -175,15 +179,18 @@ export function FeedbackModal() {
         )}
 
         <p className="text-xs text-faint">
-          Prefer GitHub?{" "}
-          <a
-            href={GITHUB_ISSUES_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted hover:underline"
-          >
-            Open an issue
-          </a>
+          {rt("feedback.preferGithub", {
+            link: (
+              <a
+                href={GITHUB_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted hover:underline"
+              >
+                {t("feedback.openIssue")}
+              </a>
+            ),
+          })}
         </p>
 
         {/* Actions */}
@@ -193,14 +200,14 @@ export function FeedbackModal() {
             onClick={handleClose}
             className="text-sm px-4 py-2 text-muted hover:text-ink"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
             onClick={handleSend}
             className="text-sm px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent-2"
           >
-            Send
+            {t("feedback.send")}
           </button>
         </div>
       </div>

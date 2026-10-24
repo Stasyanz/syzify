@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { PluginInfo, ViewSpec } from "../lib/types";
 import { api } from "../lib/tauri";
 import { PluginPage } from "./PluginPage";
+import { useLanguageStore } from "../lib/i18n";
 
 vi.mock("../lib/tauri", () => ({
   api: { getPlugins: vi.fn(), renderPluginView: vi.fn() },
@@ -88,5 +89,23 @@ describe("PluginPage", () => {
     expect(mocked.renderPluginView.mock.calls[0][1]).toBe("sync.source");
     fireEvent.click(screen.getByText("Plugins"));
     await waitFor(() => expect(screen.getByText("PLUGINS LIST /settings?tab=plugins")).toBeTruthy());
+  });
+
+  it("names its own chrome in the interface language, the plugin by its own name (#235)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      mocked.getPlugins.mockResolvedValue([]);
+      mocked.renderPluginView.mockResolvedValue(view(false));
+      renderAt("/plugin/com.test.gone/sync");
+      // A plugin the registry does not list: the page says what it is.
+      expect(screen.getByRole("heading").textContent).toBe("Плагин · Синхронизация");
+      expect(screen.getByText("Плагины")).toBeTruthy();
+      cleanup();
+      mocked.getPlugins.mockResolvedValue([info]);
+      renderAt("/plugin/com.test.sync");
+      await waitFor(() => expect(screen.getByRole("heading").textContent).toBe("Garmin"));
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

@@ -186,7 +186,7 @@ describe("location suggestions", () => {
   it("asks only after a pause and three characters, lists the hits, and a keyboard pick saves the coordinates", async () => {
     vi.mocked(api.searchLocations).mockResolvedValue([mahmutlar, bursa]);
     const { getByPlaceholderText, getByRole, queryByRole, getByText } = renderModal();
-    const input = getByPlaceholderText("City, address...");
+    const input = getByPlaceholderText("City, address…");
 
     // Two characters: no request, whatever the pause.
     type(input, "ma");
@@ -244,7 +244,7 @@ describe("location suggestions", () => {
       .mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
       .mockImplementationOnce(() => new Promise((r) => (resolveSecond = r)));
     const { getByPlaceholderText, getByRole, queryByRole, getByText } = renderModal();
-    const input = getByPlaceholderText("City, address...");
+    const input = getByPlaceholderText("City, address…");
 
     type(input, "mah");
     type(input, "mahm");
@@ -296,7 +296,7 @@ describe("location suggestions", () => {
         <EditActivityModal activity={saved} onClose={() => {}} onSaved={() => {}} onDeleted={() => {}} />
       </QueryClientProvider>,
     );
-    const input = getByPlaceholderText("City, address...") as HTMLInputElement;
+    const input = getByPlaceholderText("City, address…") as HTMLInputElement;
     expect(input.value).toBe("Mahmutlar");
     // Opening the modal on a saved name asks nothing.
     await new Promise((r) => setTimeout(r, 30));
@@ -322,7 +322,7 @@ describe("location suggestions", () => {
       .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
       .mockImplementationOnce(() => new Promise((r) => (resolveSecond = r)));
     const { getByPlaceholderText, getByRole, queryByLabelText } = renderModal();
-    const input = getByPlaceholderText("City, address...");
+    const input = getByPlaceholderText("City, address…");
     // Nothing spins during the debounce — only once the request is out.
     vi.useFakeTimers();
     fireEvent.change(input, { target: { value: "mah" } });
@@ -352,7 +352,7 @@ describe("location suggestions", () => {
   it("says 'No matches' under the field for an empty answer, and drops it on the next keystroke", async () => {
     vi.mocked(api.searchLocations).mockResolvedValueOnce([]).mockResolvedValueOnce([bursa]);
     const { getByPlaceholderText, queryByText, getByRole } = renderModal();
-    const input = getByPlaceholderText("City, address...");
+    const input = getByPlaceholderText("City, address…");
     type(input, "cebeci 6 sitesi");
     await waitFor(() => expect(queryByText(/No matches/)).not.toBeNull());
     expect(addToast).not.toHaveBeenCalled();
@@ -369,7 +369,7 @@ describe("location suggestions", () => {
   it("warns once when the search fails, shows no list, and warns again only after a search got through", async () => {
     vi.mocked(api.searchLocations).mockRejectedValue(new Error("Nominatim request failed"));
     const { getByPlaceholderText, queryByRole, queryByText } = renderModal();
-    const input = getByPlaceholderText("City, address...");
+    const input = getByPlaceholderText("City, address…");
     type(input, "mah");
     await waitFor(() => expect(addToast).toHaveBeenCalledTimes(1));
     expect(addToast).toHaveBeenCalledWith("warning", expect.stringContaining("no network"));

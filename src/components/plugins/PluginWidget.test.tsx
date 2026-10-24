@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ViewSpec } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { MAX_CONTINUE_ROUNDS, PluginWidget } from "./PluginWidget";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: { renderPluginView: vi.fn() },
@@ -203,6 +204,45 @@ describe("PluginWidget continue loop", () => {
     await act(async () => pending[2](withButton(round(3, true))));
     await waitFor(() => expect(screen.getByText("Working… round 1")).toBeTruthy());
     expect(mocked.renderPluginView).toHaveBeenCalledTimes(5);
+  });
+
+  it("speaks the interface language around the plugin's view, which stays as the plugin wrote it (#235)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const pending: Array<(spec: ViewSpec) => void> = [];
+      let fail = false;
+      mocked.renderPluginView.mockImplementation((_id, _point, ctx) => {
+        if (!JSON.parse(ctx).action) return Promise.resolve(status);
+        if (fail) return Promise.reject("vault busy");
+        return new Promise<ViewSpec>((resolve) => pending.push(resolve));
+      });
+      renderWidget(true);
+      expect(screen.getByText("Загрузка…")).toBeTruthy();
+      fireEvent.click(await screen.findByText("Sync now"));
+      await waitFor(() => expect(pending).toHaveLength(1));
+      expect(screen.getByText("Выполняется…")).toBeTruthy();
+      await act(async () => pending[0](round(1, true)));
+      await waitFor(() => expect(screen.getByText("Выполняется… шаг 1")).toBeTruthy());
+      expect(screen.getByText("Syncing step 1 of 3…")).toBeTruthy();
+      fireEvent.click(screen.getByText("Остановить"));
+      fail = true;
+      await act(async () => pending[1]({ ...status, continue: null }));
+      fireEvent.click(await screen.findByText("Sync now"));
+      expect(await screen.findByText("Ошибка плагина: vault busy")).toBeTruthy();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("says a widget that cannot render in the interface language (#235)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      mocked.renderPluginView.mockRejectedValueOnce("plugin is disabled");
+      renderWidget(false);
+      expect(await screen.findByText("Ошибка плагина: plugin is disabled")).toBeTruthy();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("stops at the round cap and says so", async () => {

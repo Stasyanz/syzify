@@ -7,31 +7,41 @@ import type { EncryptionStatus, PluginInfo } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { errorText } from "../../lib/errors";
+import { useRichT, useT, type Translator } from "../../lib/i18n";
+import type { MessageKey } from "../../locales/types";
 
-// Human-readable label for a raw permission string.
-function permissionLabel(perm: string): string {
-  if (perm.startsWith("net:host=")) return `Network: ${perm.slice("net:host=".length)}`;
-  const map: Record<string, string> = {
-    "read:activities": "Read activities",
-    "read:trackpoints": "Read track points",
-    "read:hrv": "Read HRV",
-    "read:laps": "Read laps",
-    "read:dashboard": "Read dashboard",
-    "data:own": "Private storage",
-    "data:secret": "Stores secrets (tokens)",
-    "import:files": "Import files into the vault (can tell whether a file is already there)",
-    "gear:write": "Change the gear of any activity (put it on an item, move it, or take it off)",
-  };
-  return map[perm] ?? perm;
+/** The message of each permission the host knows; an unknown one is shown
+ * as the raw string the manifest asks for. */
+const PERMISSION_LABELS = {
+  "read:activities": "settings.plugins.perm.readActivities",
+  "read:trackpoints": "settings.plugins.perm.readTrackpoints",
+  "read:hrv": "settings.plugins.perm.readHrv",
+  "read:laps": "settings.plugins.perm.readLaps",
+  "read:dashboard": "settings.plugins.perm.readDashboard",
+  "data:own": "settings.plugins.perm.dataOwn",
+  "data:secret": "settings.plugins.perm.dataSecret",
+  "import:files": "settings.plugins.perm.importFiles",
+  "gear:write": "settings.plugins.perm.gearWrite",
+} as const satisfies Record<string, MessageKey>;
+
+/** Human-readable label for a raw permission string. Own keys only: a
+ * manifest asking for "constructor" is shown as it asked. */
+export function permissionLabel(perm: string, translate: Translator): string {
+  if (perm.startsWith("net:host=")) {
+    return translate("settings.plugins.perm.network", { host: perm.slice("net:host=".length) });
+  }
+  return Object.prototype.hasOwnProperty.call(PERMISSION_LABELS, perm)
+    ? translate(PERMISSION_LABELS[perm as keyof typeof PERMISSION_LABELS])
+    : perm;
 }
 
 /** The note under a plugin holding `data:secret` while the vault is not
  * encrypted: its tokens sit in the clear until encryption is on. `sealed`
  * is the host's own predicate — any encrypted scope, not the mere presence
  * of a lock — and `null` while it is still unknown (nothing is shown then). */
-export function secretsDisclosure(permissions: string[], sealed: boolean | null): string | null {
+export function secretsDisclosure(permissions: string[], sealed: boolean | null, translate: Translator): string | null {
   if (sealed !== false || !permissions.includes("data:secret")) return null;
-  return "Secrets are stored unencrypted until vault encryption is on (Settings → Vault → Encryption).";
+  return translate("settings.plugins.secretsUnencrypted");
 }
 
 /** Whether plugin secrets are sealed, from the encryption status: any scope
@@ -46,6 +56,8 @@ export function secretsSealed(status: EncryptionStatus | undefined, failed: bool
  * review permissions, open a plugin's page or sync. Plugins install disabled
  * and every network host they ask for is listed on their card. */
 export function PluginRegistry() {
+  const t = useT();
+  const rt = useRichT();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
@@ -76,7 +88,7 @@ export function PluginRegistry() {
     try {
       await installFromDialog();
     } catch (e) {
-      addToast("error", `Install failed: ${errorText(e)}`);
+      addToast("error", t("settings.plugins.installFailed", { error: errorText(e) }));
     }
   }
 
@@ -84,9 +96,9 @@ export function PluginRegistry() {
     const path = await open({
       multiple: false,
       filters: [
-        { name: "Plugin", extensions: ["syzify-ext", "json"] },
-        { name: "Signed package", extensions: ["syzify-ext"] },
-        { name: "Manifest (unsigned)", extensions: ["json"] },
+        { name: t("plugins.page.fallbackName"), extensions: ["syzify-ext", "json"] },
+        { name: t("settings.plugins.signedPackage"), extensions: ["syzify-ext"] },
+        { name: t("settings.plugins.unsignedManifest"), extensions: ["json"] },
       ],
     });
     if (!path || typeof path !== "string") return;
@@ -95,7 +107,7 @@ export function PluginRegistry() {
       ? await api.installPluginFromPackage(path)
       : await api.installPluginFromFile(path);
     await refresh();
-    addToast("success", `Installed “${info.name}”. Review its access, then enable it.`);
+    addToast("success", t("settings.plugins.installed", { name: info.name }));
   }
 
   async function handleToggle(plugin: PluginInfo) {
@@ -103,49 +115,56 @@ export function PluginRegistry() {
       await api.setPluginEnabled(plugin.id, !plugin.enabled);
       await refresh();
     } catch (e) {
-      addToast("error", `Could not ${plugin.enabled ? "disable" : "enable"}: ${errorText(e)}`);
+      addToast(
+        "error",
+        t(plugin.enabled ? "settings.plugins.disableFailed" : "settings.plugins.enableFailed", {
+          error: errorText(e),
+        }),
+      );
     }
   }
 
   async function handleUninstall(plugin: PluginInfo) {
     const ok = await confirmDialog({
-      title: "Uninstall plugin",
-      message: `Uninstall “${plugin.name}”? Its stored data will be removed too.`,
-      confirmLabel: "Uninstall",
+      title: t("settings.plugins.uninstallTitle"),
+      message: t("settings.plugins.uninstallMessage", { name: plugin.name }),
+      confirmLabel: t("settings.plugins.uninstall"),
       danger: true,
     });
     if (!ok) return;
     try {
       await api.uninstallPlugin(plugin.id);
       await refresh();
-      addToast("success", `Uninstalled “${plugin.name}”.`);
+      addToast("success", t("settings.plugins.uninstalled", { name: plugin.name }));
     } catch (e) {
-      addToast("error", `Uninstall failed: ${errorText(e)}`);
+      addToast("error", t("settings.plugins.uninstallFailed", { error: errorText(e) }));
     }
   }
 
   return (
     <section className="card">
       <div className="flex items-center justify-between gap-4">
-        <p className="sd !mt-0">
-          Plugins extend Syzify locally. They run with only the access you grant and
-          are disabled until you turn them on. No plugin can reach the network unless
-          its requested hosts are shown below.
-        </p>
+        <p className="sd !mt-0">{t("settings.plugins.intro")}</p>
         <button onClick={handleInstall} className="btn primary shrink-0">
           <Plus size={15} />
-          Install plugin
+          {t("settings.plugins.install")}
         </button>
       </div>
       <div className="mt-4">
         {isLoading ? (
-          <p className="text-sm text-faint">Loading…</p>
+          <p className="text-sm text-faint">{t("common.loading")}</p>
         ) : plugins.length === 0 ? (
           <div className="border border-dashed border-border rounded-lg p-8 text-center">
             <Puzzle size={28} className="text-faint mx-auto mb-2" />
-            <p className="text-sm text-muted">No plugins installed yet.</p>
+            <p className="text-sm text-muted">{t("settings.plugins.empty")}</p>
             <p className="text-xs text-faint mt-1">
-              Install a <code className="font-mono">plugin.json</code> manifest to get started.
+              {rt("settings.plugins.emptyHint", {
+                file: (
+                  <code className="font-mono" translate="no">
+                    plugin.json
+                  </code>
+                ),
+              })}
             </p>
           </div>
         ) : (
@@ -156,36 +175,41 @@ export function PluginRegistry() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-ink truncate">{p.name}</span>
-                      <span className="text-xs text-faint">v{p.version}</span>
+                      {/* "v1.2.0" reads the same in every language. */}
+                      <span className="text-xs text-faint" translate="no">
+                        v{p.version}
+                      </span>
                       {p.enabled ? (
                         <span className="text-[10px] uppercase tracking-wide font-semibold text-green-700 bg-green-100 px-1.5 py-0.5 rounded">
-                          Enabled
+                          {t("settings.plugins.enabled")}
                         </span>
                       ) : (
                         <span className="text-[10px] uppercase tracking-wide font-semibold text-muted bg-border px-1.5 py-0.5 rounded">
-                          Disabled
+                          {t("settings.plugins.disabled")}
                         </span>
                       )}
                       {p.signed ? (
                         <span
-                          title={`Self-signed package — integrity verified, but the author is self-asserted (not vetted). Key ${p.key_fingerprint ?? "?"}`}
+                          title={t("settings.plugins.selfSignedTip", { key: p.key_fingerprint ?? "?" })}
                           className="text-[10px] uppercase tracking-wide font-semibold text-muted flex items-center gap-0.5"
                         >
-                          <Fingerprint size={11} /> Self-signed
+                          <Fingerprint size={11} /> {t("settings.plugins.selfSigned")}
                           {p.key_fingerprint && (
                             <span className="font-mono normal-case text-faint">· {p.key_fingerprint.slice(0, 8)}</span>
                           )}
                         </span>
                       ) : (
                         <span
-                          title="Unsigned dev sideload — integrity not verified"
+                          title={t("settings.plugins.unsignedTip")}
                           className="text-[10px] uppercase tracking-wide font-semibold text-amber-600"
                         >
-                          Unsigned
+                          {t("settings.plugins.unsigned")}
                         </span>
                       )}
                     </div>
-                    {p.author && <p className="text-xs text-faint mt-0.5">by {p.author}</p>}
+                    {p.author && (
+                      <p className="text-xs text-faint mt-0.5">{t("settings.plugins.by", { author: p.author })}</p>
+                    )}
                     {p.description && (
                       <p className="text-sm text-muted mt-1">{p.description}</p>
                     )}
@@ -196,7 +220,7 @@ export function PluginRegistry() {
                         onClick={() => navigate(`/plugin/${p.id}`)}
                         className="px-3 py-1 rounded text-xs font-medium border border-border-2 text-ink hover:bg-card-2"
                       >
-                        Open
+                        {t("common.open")}
                       </button>
                     )}
                     {p.enabled && p.contributes.includes("sync.source") && (
@@ -204,7 +228,7 @@ export function PluginRegistry() {
                         onClick={() => navigate(`/plugin/${p.id}/sync`)}
                         className="px-3 py-1 rounded text-xs font-medium border border-border-2 text-ink hover:bg-card-2"
                       >
-                        Sync
+                        {t("settings.plugins.sync")}
                       </button>
                     )}
                     <button
@@ -215,12 +239,12 @@ export function PluginRegistry() {
                           : "bg-accent text-accent-ink hover:bg-accent-2"
                       }`}
                     >
-                      {p.enabled ? "Disable" : "Enable"}
+                      {p.enabled ? t("settings.plugins.disable") : t("settings.plugins.enable")}
                     </button>
                     <button
                       onClick={() => handleUninstall(p)}
-                      aria-label="Uninstall"
-                      data-tip="Uninstall"
+                      aria-label={t("settings.plugins.uninstall")}
+                      data-tip={t("settings.plugins.uninstall")}
                       className="p-1.5 rounded text-faint hover:text-red-600 hover:bg-red-50"
                     >
                       <Trash2 size={15} />
@@ -237,17 +261,17 @@ export function PluginRegistry() {
                           key={perm}
                           className="text-[11px] text-muted bg-card border border-border px-1.5 py-0.5 rounded"
                         >
-                          {permissionLabel(perm)}
+                          {permissionLabel(perm, t)}
                         </span>
                       ))}
                     </div>
                   </div>
                 )}
 
-                {secretsDisclosure(p.permissions, sealed) && (
+                {secretsDisclosure(p.permissions, sealed, t) && (
                   <div className="flex items-start gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
                     <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-                    <div className="text-xs">{secretsDisclosure(p.permissions, sealed)}</div>
+                    <div className="text-xs">{secretsDisclosure(p.permissions, sealed, t)}</div>
                   </div>
                 )}
 
@@ -255,7 +279,7 @@ export function PluginRegistry() {
                   <div className="flex items-start gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
                     <Globe size={14} className="mt-0.5 shrink-0" />
                     <div className="text-xs">
-                      <span className="font-medium">Connects to: </span>
+                      <span className="font-medium">{t("settings.plugins.connectsTo")} </span>
                       {p.network_hosts.join(", ")}
                     </div>
                   </div>

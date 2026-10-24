@@ -3,10 +3,11 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { useLocation, matchPath } from "react-router";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
-import { formatImportSummary } from "../lib/importSummary";
+import { formatAttachSummary, formatImportSummary } from "../lib/importSummary";
 import { isImagePath, isImportablePath } from "../lib/fileTypes";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 import { errorText } from "../lib/errors";
+import { useT } from "../lib/i18n";
 
 export type DropKind = "workout" | "photo";
 
@@ -16,6 +17,7 @@ export type DropKind = "workout" | "photo";
 /// activity page attaches photos to that activity, every other page imports
 /// workout files.
 export function useDropImport() {
+  const t = useT();
   const [dragging, setDragging] = useState(false);
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
@@ -28,11 +30,11 @@ export function useDropImport() {
     mutationFn: (paths: string[]) => api.importFiles(paths),
     onSuccess: (data) => {
       invalidateActivityData(queryClient);
-      const { level, text } = formatImportSummary(data);
+      const { level, text } = formatImportSummary(data, {}, t);
       addToast(level, text);
     },
     onError: (error: unknown) => {
-      addToast("error", `Import failed: ${errorText(error)}`);
+      addToast("error", t("common.importFailed", { error: errorText(error) }));
     },
   });
 
@@ -41,29 +43,27 @@ export function useDropImport() {
       api.attachPhotos(args.activityId, args.paths),
     onSuccess: (res, args) => {
       queryClient.invalidateQueries({ queryKey: ["photos", args.activityId] });
-      const parts: string[] = [];
-      if (res.attached.length) parts.push(`Added ${res.attached.length}`);
-      if (res.skipped.length) parts.push(`skipped ${res.skipped.length} duplicates`);
-      if (res.failed.length) parts.push(`${res.failed.length} failed`);
-      if (parts.length)
-        addToast(res.failed.length > 0 ? "warning" : "success", parts.join(", "));
+      const summary = formatAttachSummary(res, t);
+      if (summary) addToast(summary.level, summary.text);
     },
-    onError: (e: unknown) => addToast("error", `Failed to attach photos: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("activity.photos.attachFailed", { error: errorText(e) })),
   });
 
   // The Tauri listener is subscribed once; refs carry the latest route and
-  // callbacks into it.
+  // callbacks — and the language's `t` — into it.
   const refs = useRef({
     activityId,
     import: importMutation.mutate,
     attach: attachMutation.mutate,
     addToast,
+    t,
   });
   refs.current = {
     activityId,
     import: importMutation.mutate,
     attach: attachMutation.mutate,
     addToast,
+    t,
   };
 
   useEffect(() => {
@@ -97,15 +97,9 @@ export function useDropImport() {
               if (images.length > 0) {
                 refs.current.attach({ activityId, paths: images });
               } else if (p.paths.some(isImportablePath)) {
-                refs.current.addToast(
-                  "warning",
-                  "To import workouts, drop them outside the activity page"
-                );
+                refs.current.addToast("warning", refs.current.t("import.drop.workoutsOutside"));
               } else if (p.paths.length > 0) {
-                refs.current.addToast(
-                  "warning",
-                  "Only JPG, PNG, WebP or HEIC images can be added to an activity"
-                );
+                refs.current.addToast("warning", refs.current.t("import.drop.imagesOnly"));
               }
               return;
             }
@@ -114,9 +108,11 @@ export function useDropImport() {
             if (valid.length === 0) {
               refs.current.addToast(
                 "warning",
-                p.paths.length > 0 && p.paths.every(isImagePath)
-                  ? "To add photos, drop them on an activity page"
-                  : "No workout files found (GPX, FIT, TCX)"
+                refs.current.t(
+                  p.paths.length > 0 && p.paths.every(isImagePath)
+                    ? "import.drop.photosOnActivity"
+                    : "import.drop.noWorkouts",
+                ),
               );
               return;
             }

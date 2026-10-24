@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, Info, AlertTriangle, X } from "lucide-react";
 import { useToastStore, type Toast } from "../../stores/toastStore";
+import { useT } from "../../lib/i18n";
 
 const toastTypeClass = {
   success: "t-success",
@@ -21,6 +22,7 @@ const defaultDuration: Record<string, number> = {
 };
 
 function ToastItem({ toast }: { toast: Toast }) {
+  const t = useT();
   const removeToast = useToastStore((s) => s.removeToast);
   const [visible, setVisible] = useState(false);
 
@@ -49,7 +51,7 @@ function ToastItem({ toast }: { toast: Toast }) {
         <Icon size={17} />
       </span>
       <p className="toast-msg">{toast.message}</p>
-      <button onClick={() => removeToast(toast.id)} className="toast-x" aria-label="Dismiss">
+      <button onClick={() => removeToast(toast.id)} className="toast-x" aria-label={t("common.dismiss")}>
         <X size={14} />
       </button>
     </div>

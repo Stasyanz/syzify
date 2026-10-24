@@ -1,6 +1,7 @@
 import { SPORT_TYPES, type GearItem, type GearKind, type GearRule, type RuleCandidates, type SportType } from "./types";
 import { formatDistance } from "./format";
-import { t } from "./i18n";
+import { capitalize, t, type Translator } from "./i18n";
+import type { MessageKey } from "../locales/types";
 
 /** The sports an item of a kind is offered to be the default for — and
  * the kinds an activity of a sport is offered in Edit Activity. Offered,
@@ -42,23 +43,55 @@ function words(raw: string | null | undefined): string {
     .join(" ");
 }
 
+/** The sensor kinds a file names, as the interface says them: FIT's
+ * `antplus_device_type` and `ble_device_type` by the names the parser
+ * (fitparser's profile) writes, a BLE kind under the ANT+ one it is. Any
+ * other named kind reads as its own words. */
+const SENSOR_TYPES = {
+  heart_rate: "gear.sensor.type.heartRate",
+  bike_power: "gear.sensor.type.bikePower",
+  bike_speed_cadence: "gear.sensor.type.bikeSpeedCadence",
+  bike_speed: "gear.sensor.type.bikeSpeed",
+  bike_cadence: "gear.sensor.type.bikeCadence",
+  stride_speed_distance: "gear.sensor.type.stride",
+  footpod: "gear.sensor.type.stride",
+  fitness_equipment: "gear.sensor.type.fitnessEquipment",
+  bike_trainer: "gear.sensor.type.fitnessEquipment",
+  bike_radar: "gear.sensor.type.bikeRadar",
+  bike_light_main: "gear.sensor.type.bikeLight",
+  bike_light_shared: "gear.sensor.type.bikeLight",
+  shifting: "gear.sensor.type.shifting",
+} as const satisfies Record<string, MessageKey>;
+
+/** A sensor kind in lower case, as it reads after a name: "bike power".
+ * Empty for a kind the profile has no name for — the parser writes its bare
+ * number ("7"), which says nothing to the user. */
+function sensorType(raw: string, translate: Translator): string {
+  if (Object.prototype.hasOwnProperty.call(SENSOR_TYPES, raw)) {
+    return translate(SENSOR_TYPES[raw as keyof typeof SENSOR_TYPES]);
+  }
+  return /^\d+$/.test(raw) ? "" : words(raw).toLowerCase();
+}
+
 /** How a sensor is named to the user: "Favero Electronics Assioma Duo
- * (power meter)", falling back to its type and serial. */
-export function sensorLabel(sensor: RuleCandidates["sensors"][number]): string {
+ * (bike power)", falling back to its type and serial. The maker and the
+ * model are names and stay as the file has them; the kind and the word
+ * "Sensor" speak `translate`'s language. */
+export function sensorLabel(sensor: RuleCandidates["sensors"][number], translate: Translator = t): string {
   const name = [words(sensor.manufacturer), words(sensor.product)].filter(Boolean).join(" ");
-  const type = sensor.device_type ? words(sensor.device_type).toLowerCase() : "";
+  const type = sensor.device_type ? sensorType(sensor.device_type, translate) : "";
   if (name) return type ? `${name} (${type})` : name;
-  return type ? `${words(type)} ${sensor.serial}` : `Sensor ${sensor.serial}`;
+  return type ? `${capitalize(type)} ${sensor.serial}` : translate("gear.sensor.unnamed", { serial: sensor.serial });
 }
 
 /** The one-line summary of an item's rules for its card: "profile ROAD ·
- * sensor Favero Electronics Assioma Duo (power meter)". */
-export function rulesSummary(rules: GearRule[], candidates: RuleCandidates | undefined): string {
+ * sensor Favero Electronics Assioma Duo (bike power)". */
+export function rulesSummary(rules: GearRule[], candidates: RuleCandidates | undefined, translate: Translator = t): string {
   return rules
     .map((r) => {
-      if (r.kind === "profile_name") return `profile ${r.value}`;
+      if (r.kind === "profile_name") return translate("gear.rule.profile", { value: r.value });
       const sensor = candidates?.sensors.find((s) => s.serial === r.value);
-      return `sensor ${sensor ? sensorLabel(sensor) : r.value}`;
+      return translate("gear.rule.sensor", { name: sensor ? sensorLabel(sensor, translate) : r.value });
     })
     .join(" · ");
 }

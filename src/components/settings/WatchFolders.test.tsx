@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ImportResult } from "../../lib/types";
 
@@ -29,16 +30,20 @@ import { WatchFolders } from "./WatchFolders";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useLanguageStore } from "../../lib/i18n";
+import { useBusyStore } from "../../stores/busyStore";
+import { useWatchPreviewStore } from "../../stores/watchPreviewStore";
 
 const garmin = { id: 1, path: "/Volumes/GARMIN/GARMIN/Activity" };
 let qc: QueryClient;
-function renderIt() {
+function renderIt({ strict = false } = {}) {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const tree = (
     <QueryClientProvider client={qc}>
       <WatchFolders />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  return render(strict ? <StrictMode>{tree}</StrictMode> : tree);
 }
 
 describe("WatchFolders", () => {
@@ -48,7 +53,12 @@ describe("WatchFolders", () => {
     vi.mocked(api.getSetting).mockResolvedValue("ask");
     vi.mocked(api.restartWatcher).mockResolvedValue(undefined);
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    useLanguageStore.getState().setPref("system");
+    useBusyStore.setState({ running: {}, lastError: {} });
+    useWatchPreviewStore.setState({ preview: null });
+  });
 
   it("lists the watched folders and the ask-first switch", async () => {
     renderIt();
@@ -196,5 +206,93 @@ describe("WatchFolders", () => {
     fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("error", "Import failed: vault locked by a backup"));
     expect(toast).not.toHaveBeenCalledWith("error", expect.stringMatching(/Error:/));
+  });
+
+  it("keeps Importing… and both buttons locked across a remount while a scan runs (#235)", async () => {
+    let finish!: (v: { new_files: string[]; import_result: null }) => void;
+    vi.mocked(api.scanWatchFolders).mockReturnValue(new Promise((r) => (finish = r)));
+    const first = renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Import Now/ }));
+    await screen.findByRole("button", { name: /Importing…/ });
+    first.unmount();
+    renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    expect((screen.getByRole("button", { name: /Importing…/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Preview/ }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish({ new_files: [], import_result: null }));
+    await screen.findByRole("button", { name: /Import Now/ });
+    expect(useBusyStore.getState().running).toEqual({});
+  });
+
+  // Under StrictMode, as main.tsx renders the app: its dev double-mount runs
+  // a cleanup that must not wipe the preview the return shows.
+  it("shows a preview that finished while the section was away, under StrictMode too (#235)", async () => {
+    const result = {
+      total_files: 3,
+      new_files: 2,
+      folders: [{ folder: garmin.path, files: [{ path: "/a/1.fit", filename: "1.fit", is_new: true }] }],
+    };
+    let finish!: (v: typeof result) => void;
+    vi.mocked(api.previewWatchFolders).mockReturnValue(new Promise((r) => (finish = r)));
+    const first = renderIt({ strict: true });
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    await screen.findByRole("button", { name: /Scanning…/ });
+    // Another tab while the walk runs; it ends meanwhile.
+    first.unmount();
+    await act(async () => finish(result));
+    const back = renderIt({ strict: true });
+    await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
+    expect(screen.getByText("2 new").parentElement?.textContent).toBe("3 files found, 2 new");
+    // Still there after another visit; it goes when the user closes it.
+    back.unmount();
+    renderIt({ strict: true });
+    await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Close preview"));
+    expect(screen.queryByTestId("scan-preview")).toBeNull();
+    expect(useWatchPreviewStore.getState().preview).toBeNull();
+  });
+
+  it("hands a scan started from the preview to the Import Now button's Importing…", async () => {
+    vi.mocked(api.previewWatchFolders).mockResolvedValue({
+      total_files: 1,
+      new_files: 1,
+      folders: [{ folder: garmin.path, files: [{ path: "/a/1.fit", filename: "1.fit", is_new: true }] }],
+    });
+    vi.mocked(api.scanWatchFolders).mockReturnValue(new Promise(() => {}));
+    renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Import All New" }));
+    const busy = await screen.findByRole("button", { name: "Importing…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("scan-preview")).toBeNull();
+    expect((screen.getByRole("button", { name: /Preview/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("speaks Russian, counting the files found with the forms of the number", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.previewWatchFolders).mockResolvedValue({
+      total_files: 5,
+      new_files: 2,
+      folders: [{ folder: garmin.path, files: [{ path: "/a/1.fit", filename: "1.fit", is_new: true }] }],
+    });
+    vi.mocked(api.scanWatchFolders).mockResolvedValue({ new_files: [], import_result: null });
+    renderIt();
+    await waitFor(() => expect(screen.getByText(garmin.path)).toBeTruthy());
+    screen.getByText("Папки наблюдения");
+    screen.getByText(/^Перед импортом файлов/);
+    expect(screen.getByLabelText("Импортировать новые файлы автоматически")).toBeTruthy();
+    screen.getByLabelText(`Убрать ${garmin.path}`);
+    fireEvent.click(screen.getByRole("button", { name: "Просмотр" }));
+    await waitFor(() => expect(screen.getByTestId("scan-preview")).toBeTruthy());
+    expect(screen.getByText("2 новых").parentElement?.textContent).toBe("Найдено 5 файлов, 2 новых");
+    screen.getByText("НОВЫЙ");
+    fireEvent.click(screen.getByRole("button", { name: "Импортировать" }));
+    await waitFor(() =>
+      expect(useToastStore.getState().addToast).toHaveBeenCalledWith("info", "В папках наблюдения нет новых файлов."),
+    );
   });
 });

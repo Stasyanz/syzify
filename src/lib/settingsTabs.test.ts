@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { SETTINGS_TABS, nextSettingsTab, settingsPath, settingsTabFrom } from "./settingsTabs";
+import { translate } from "./i18n";
 
 describe("settingsTabFrom", () => {
   it("names every tab and falls back to General otherwise", () => {
@@ -21,6 +22,18 @@ describe("settingsPath", () => {
       const query = new URL(settingsPath(t.id), "http://x").searchParams.get("tab");
       expect(settingsTabFrom(query)).toBe(t.id);
     }
+  });
+});
+
+describe("SETTINGS_TABS", () => {
+  it("names each tab by a message, in the order of the tab bar", () => {
+    expect(SETTINGS_TABS.map((tab) => [tab.id, translate("en", tab.labelKey), translate("ru", tab.labelKey)])).toEqual([
+      ["general", "General", "Общие"],
+      ["vault", "Vault", "Хранилище"],
+      ["garage", "Garage", "Гараж"],
+      ["plugins", "Plugins", "Плагины"],
+      ["about", "About", "О программе"],
+    ]);
   });
 });
 

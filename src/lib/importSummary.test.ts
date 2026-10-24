@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { formatImportSummary } from "./importSummary";
-import type { ImportResult } from "./types";
-import { useLanguageStore } from "./i18n";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { formatAttachSummary, formatImportSummary } from "./importSummary";
+import type { AttachPhotosResult, ImportResult } from "./types";
+import { translate, useLanguageStore, type Translator } from "./i18n";
 
 const base: ImportResult = {
   imported: 0,
@@ -113,5 +113,83 @@ describe("formatImportSummary", () => {
 
   it("handles an empty result", () => {
     expect(formatImportSummary(base)).toEqual({ level: "info", text: "Nothing imported" });
+  });
+
+  describe("in Russian (#235)", () => {
+    beforeEach(() => useLanguageStore.getState().setPref("ru"));
+    afterEach(() => useLanguageStore.getState().setPref("system"));
+
+    it("counts activities, days and files in the forms each number takes", () => {
+      expect(formatImportSummary({ ...base, imported: 1 }).text).toBe("Импортировано: 1 тренировка");
+      expect(formatImportSummary({ ...base, imported: 3 }).text).toBe("Импортировано: 3 тренировки");
+      expect(formatImportSummary({ ...base, imported: 5, skipped: 2 }).text).toBe(
+        "Импортировано: 5 тренировок, пропущено 2 (дубликаты)",
+      );
+      expect(formatImportSummary({ ...base, imported: 21 }, { auto: true }).text).toBe("Автоимпорт: 21 тренировка");
+      expect(formatImportSummary({ ...base, skipped: 1 }).text).toBe("Ничего нового: 1 файл уже импортирован");
+      expect(formatImportSummary({ ...base, skipped: 185 }).text).toBe("Ничего нового: 185 файлов уже импортированы");
+      expect(formatImportSummary({ ...base, monitoring_files: 2 }).text).toBe("Импортировано: 2 файла мониторинга");
+      expect(formatImportSummary({ ...base, skipped: 1, failed: [{ path: "a", reason: "x" }] }).text).toBe(
+        "Ничего не импортировано, пропущен 1 (дубликат), 1 файл с ошибкой",
+      );
+      expect(formatImportSummary(base).text).toBe("Ничего не импортировано");
+    });
+
+    it("says the monitoring days, the night and the advice in one language", () => {
+      const r = {
+        ...base,
+        imported: 2,
+        monitoring_files: 5,
+        monitoring_days: 5,
+        monitoring_range: ["2026-09-01", "2026-09-05"] as [string, string],
+        skipped: 3,
+      };
+      expect(formatImportSummary(r).text).toBe(
+        "Импортировано: 2 тренировки и мониторинг за 5 дней (1 сент. – 5 сент., ночи на 5 сент. пока нет — синхронизируйте часы после пробуждения), пропущено 3 (дубликаты)",
+      );
+      const night = { ...r, imported: 0, monitoring_days: 1, monitoring_range: ["2026-09-05", "2026-09-05"] as [string, string], monitoring_night: true };
+      expect(formatImportSummary(night, { auto: true }).text).toBe(
+        "Автоимпорт: мониторинг за 1 день (5 сент., ночь на 5 сент. учтена), пропущено 3 файла (уже импортированы)",
+      );
+      const noNight = { ...night, monitoring_night: false, skipped: 0 };
+      expect(formatImportSummary(noNight, { auto: true }).text).toBe(
+        "Автоимпорт: мониторинг за 1 день (5 сент., ночи на 5 сент. пока нет)",
+      );
+    });
+
+    it("takes the caller's language over the one in use", () => {
+      const english: Translator = (key, ...args) => translate("en", key, ...args);
+      expect(formatImportSummary({ ...base, imported: 2 }, {}, english).text).toBe("Imported 2 activities");
+    });
+  });
+});
+
+describe("formatAttachSummary", () => {
+  const photo = { id: "p" } as AttachPhotosResult["attached"][number];
+
+  it("is nothing when nothing happened", () => {
+    expect(formatAttachSummary({ attached: [], skipped: [], failed: [] })).toBeNull();
+  });
+
+  it("counts what was added, skipped and failed, the first part opening the sentence", () => {
+    expect(formatAttachSummary({ attached: [photo, photo], skipped: ["a"], failed: [] })).toEqual({
+      level: "success",
+      text: "Added 2 photos, skipped 1 duplicate",
+    });
+    expect(formatAttachSummary({ attached: [], skipped: ["a", "b"], failed: [{ path: "c", reason: "x" }] })).toEqual({
+      level: "warning",
+      text: "Skipped 2 duplicates, 1 failed",
+    });
+  });
+
+  it("speaks the interface language (#235)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(formatAttachSummary({ attached: [photo], skipped: ["a", "b", "c", "d", "e"], failed: [] })?.text).toBe(
+        "Добавлено 1 фото, пропущено 5 дубликатов",
+      );
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

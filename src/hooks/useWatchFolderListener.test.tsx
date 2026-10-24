@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { useWatchFolderListener } from "./useWatchFolderListener";
+import { useLanguageStore } from "../lib/i18n";
 
 vi.mock("../lib/tauri", () => ({
   api: { getSetting: vi.fn(), importFiles: vi.fn(), catchUpWatchFiles: vi.fn() },
@@ -198,6 +199,56 @@ describe("useWatchFolderListener", () => {
       await waitFor(() => expect(api.catchUpWatchFiles).toHaveBeenCalled());
       await act(async () => {});
       expect(api.catchUpWatchFiles).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("in Russian (#235)", () => {
+    afterEach(() => useLanguageStore.getState().setPref("system"));
+    const result = {
+      imported: 2,
+      skipped: 0,
+      failed: [],
+      monitoring_files: 0,
+      monitoring_days: 0,
+      monitoring_night: false,
+      monitoring_range: null,
+    };
+
+    it("writes the toast in the language of the moment it is shown, not of the subscription", async () => {
+      vi.mocked(api.getSetting).mockResolvedValue("auto");
+      vi.mocked(api.importFiles).mockResolvedValueOnce(result).mockRejectedValueOnce("vault locked");
+      const { fire } = await mount();
+      act(() => useLanguageStore.getState().setPref("ru"));
+      await fire(["/w/ride.fit"]);
+      expect(lastToast()).toMatchObject({ type: "success", message: "Автоимпорт: 2 тренировки" });
+      await fire(["/w/run.fit"]);
+      expect(lastToast()).toMatchObject({ type: "error", message: "Автоимпорт не удался: vault locked" });
+    });
+
+    it("sums up and refuses a confirmed import in the interface language", async () => {
+      useLanguageStore.getState().setPref("ru");
+      vi.mocked(api.getSetting).mockResolvedValue(null);
+      vi.mocked(api.importFiles).mockResolvedValueOnce(result).mockRejectedValueOnce("vault locked");
+      const { hook, fire } = await mount();
+      await fire(["/w/ride.fit"]);
+      await act(async () => hook.result.current.handleImport());
+      expect(lastToast()).toMatchObject({ type: "success", message: "Импортировано: 2 тренировки" });
+      await fire(["/w/run.fit"]);
+      await act(async () => hook.result.current.handleImport());
+      expect(lastToast()).toMatchObject({ type: "error", message: "Импорт не удался: vault locked" });
+    });
+
+    it("says why the launch check failed in the interface language", async () => {
+      useLanguageStore.getState().setPref("ru");
+      vi.mocked(api.catchUpWatchFiles).mockRejectedValue("The vault is locked");
+      const hook = mountClosed();
+      hook.rerender({ open: true });
+      await waitFor(() =>
+        expect(lastToast()).toMatchObject({
+          type: "error",
+          message: "Не удалось проверить новые файлы: The vault is locked",
+        }),
+      );
     });
   });
 });

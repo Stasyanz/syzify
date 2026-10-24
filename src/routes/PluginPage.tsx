@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "../lib/tauri";
 import { PluginWidget } from "../components/plugins/PluginWidget";
 import { settingsPath } from "../lib/settingsTabs";
+import { useT } from "../lib/i18n";
 
 /** The full-page contribution points and the export each maps to. */
 export type PagePoint = "route.planner" | "sync.source";
@@ -14,6 +15,8 @@ export type PagePoint = "route.planner" | "sync.source";
 // planner the user approved as a page must not gain rounds of network time
 // without asking.
 export function PluginPage({ point = "route.planner" }: { point?: PagePoint }) {
+  // The host's own chrome only: what the plugin's view says is the plugin's.
+  const t = useT();
   const { pluginId } = useParams<{ pluginId: string }>();
   const navigate = useNavigate();
 
@@ -30,11 +33,13 @@ export function PluginPage({ point = "route.planner" }: { point?: PagePoint }) {
           onClick={() => navigate(settingsPath("plugins"))}
           className="flex items-center gap-1 text-sm text-faint hover:text-muted"
         >
-          <ArrowLeft size={14} /> Plugins
+          <ArrowLeft size={14} /> {t("settings.tab.plugins")}
         </button>
         <h1 className="text-2xl font-bold text-ink">
-          {plugin?.name ?? "Plugin"}
-          {point === "sync.source" && <span className="text-faint font-normal"> · Sync</span>}
+          {plugin?.name ?? t("plugins.page.fallbackName")}
+          {point === "sync.source" && (
+            <span className="text-faint font-normal"> · {t("plugins.page.sync")}</span>
+          )}
         </h1>
         {pluginId && (
           <PluginWidget

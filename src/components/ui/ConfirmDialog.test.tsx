@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConfirmDialogHost } from "./ConfirmDialog";
 import { confirmDialog, useConfirmStore } from "../../stores/confirmStore";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -50,5 +51,18 @@ describe("ConfirmDialogHost", () => {
 
     fireEvent.click(await waitFor(() => screen.getByText("Confirm")));
     await expect(second).resolves.toBe(true);
+  });
+
+  it("labels its default buttons in the interface language (#235)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      render(<ConfirmDialogHost />);
+      const p = confirmDialog({ title: "T", message: "M" });
+      await waitFor(() => screen.getByText("Подтвердить"));
+      fireEvent.click(screen.getByText("Отмена"));
+      await expect(p).resolves.toBe(false);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

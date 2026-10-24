@@ -9,7 +9,8 @@ import { useToastStore } from "../../stores/toastStore";
 import type { Photo } from "../../lib/types";
 import { photoUrl } from "./photoUrl";
 import { errorText } from "../../lib/errors";
-import { capitalize, formatNumber, useT } from "../../lib/i18n";
+import { formatNumber, useT } from "../../lib/i18n";
+import { formatAttachSummary } from "../../lib/importSummary";
 
 interface Props {
   activityId: string;
@@ -37,14 +38,8 @@ export function PhotoGallery({ activityId, onShare }: Props) {
     mutationFn: (paths: string[]) => api.attachPhotos(activityId, paths),
     onSuccess: (res) => {
       invalidate();
-      const parts: string[] = [];
-      if (res.attached.length) parts.push(t("activity.photos.added", { count: res.attached.length }));
-      if (res.skipped.length) parts.push(t("activity.photos.skipped", { count: res.skipped.length }));
-      if (res.failed.length) parts.push(t("activity.photos.failed", { count: res.failed.length }));
-      const tone = res.failed.length > 0 ? "warning" : "success";
-      // The parts after the first are written in lower case; whichever
-      // comes first opens the sentence.
-      if (parts.length) addToast(tone, capitalize(parts.join(", ")));
+      const summary = formatAttachSummary(res, t);
+      if (summary) addToast(summary.level, summary.text);
     },
     onError: (e: unknown) => addToast("error", t("activity.photos.attachFailed", { error: errorText(e) })),
   });
