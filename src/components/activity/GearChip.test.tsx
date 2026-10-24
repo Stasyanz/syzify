@@ -12,6 +12,7 @@ vi.mock("../../stores/toastStore", () => ({
 
 import { GearChip, gearChipVisible, gearPlaceholder, gearTip } from "./GearChip";
 import { api } from "../../lib/tauri";
+import { t, useLanguageStore } from "../../lib/i18n";
 
 const road: GearItem = {
   id: "g-road",
@@ -181,12 +182,48 @@ describe("GearChip", () => {
   });
 
   it("names the kind a sport takes, and plain gear where it takes anything", () => {
-    expect(gearPlaceholder("ride")).toEqual({ kind: "bike", label: "Bike" });
-    expect(gearPlaceholder("mountain_bike")).toEqual({ kind: "bike", label: "Bike" });
-    expect(gearPlaceholder("run")).toEqual({ kind: "shoes", label: "Shoes" });
-    expect(gearPlaceholder("hike")).toEqual({ kind: "shoes", label: "Shoes" });
-    expect(gearPlaceholder("swim")).toEqual({ kind: "other", label: "Gear" });
-    expect(gearPlaceholder("ski")).toEqual({ kind: "other", label: "Gear" });
+    expect(gearPlaceholder("ride", t)).toEqual({ kind: "bike", label: "Bike" });
+    expect(gearPlaceholder("mountain_bike", t)).toEqual({ kind: "bike", label: "Bike" });
+    expect(gearPlaceholder("run", t)).toEqual({ kind: "shoes", label: "Shoes" });
+    expect(gearPlaceholder("hike", t)).toEqual({ kind: "shoes", label: "Shoes" });
+    expect(gearPlaceholder("swim", t)).toEqual({ kind: "other", label: "Gear" });
+    expect(gearPlaceholder("ski", t)).toEqual({ kind: "other", label: "Gear" });
+  });
+
+  describe("in Russian (#234)", () => {
+    beforeEach(() => useLanguageStore.getState().setPref("ru"));
+    afterEach(() => useLanguageStore.getState().setPref("system"));
+
+    it("names the kind a sport takes", () => {
+      expect(gearPlaceholder("ride", t).label).toBe("Велосипед");
+      expect(gearPlaceholder("run", t).label).toBe("Обувь");
+      expect(gearPlaceholder("swim", t).label).toBe("Снаряжение");
+    });
+
+    it("asks for the kind and names the item it is on", async () => {
+      renderIt({ gearId: null, sport: "run" });
+      await waitFor(() => expect(screen.getByTestId("gear-chip").textContent).toBe("Обувь"));
+      expect(screen.getByTestId("gear-chip").getAttribute("aria-label")).toBe("Выбрать обувь");
+      expect(screen.getByTestId("gear-chip").getAttribute("data-tip")).toBe("Обувь не выбрана — выберите");
+      cleanup();
+      renderIt({ gearId: "g-old" });
+      await waitFor(() => expect(screen.getByTestId("gear-chip").textContent).toBe("Old road"));
+      expect(screen.getByTestId("gear-chip").getAttribute("aria-label")).toBe("Снаряжение: Old road (Canyon Ultimate)");
+      fireEvent.click(screen.getByTestId("gear-chip"));
+      expect(screen.getByRole("menu").getAttribute("aria-label")).toBe("Снаряжение");
+      expect(menuItems()).toEqual(["Без снаряжения", "Road", "Gravel", "Old road (снаряжение списано)"]);
+    });
+
+    it("says a refusal", async () => {
+      vi.mocked(api.setActivityGear).mockRejectedValueOnce("Верните снаряжение");
+      renderIt({ gearId: "g-road" });
+      await waitFor(() => expect(screen.getByTestId("gear-chip").textContent).toBe("Road"));
+      fireEvent.click(screen.getByTestId("gear-chip"));
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Gravel" }));
+      await waitFor(() =>
+        expect(addToast).toHaveBeenCalledWith("error", "Снаряжение не изменено: Верните снаряжение"),
+      );
+    });
   });
 
   it("tells the header whether it will show", () => {

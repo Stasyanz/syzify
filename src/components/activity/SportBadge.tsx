@@ -7,14 +7,16 @@ import { useToastStore } from "../../stores/toastStore";
 import { SportIcon, SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
 import { sportLabel, SPORT_TYPES } from "../../lib/types";
+import { useT } from "../../lib/i18n";
 
 /** The sport icon in the activity header, and the menu to change the
  * sport behind it. Its own file so the refusal path has a test (#174). */
 export function SportBadge({ activityId, sportType, onChanged }: { activityId: string; sportType: string; onChanged: () => void }) {
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const label = sportLabel(sportType);
+  const label = sportLabel(sportType, t("common.activity"), t);
 
   useEffect(() => {
     if (!open) return;
@@ -29,7 +31,7 @@ export function SportBadge({ activityId, sportType, onChanged }: { activityId: s
     mutationFn: (newSport: string) =>
       api.updateActivity(activityId, { sport_type: newSport }),
     onSuccess: () => {
-      addToast("success", "Sport type updated");
+      addToast("success", t("activity.sport.updated"));
       onChanged();
       setOpen(false);
     },
@@ -40,7 +42,7 @@ export function SportBadge({ activityId, sportType, onChanged }: { activityId: s
     <div className="relative shrink-0" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        title={`${label} — change sport`}
+        title={t("activity.sport.changeTip", { sport: label })}
         className="block rounded-xl hover:opacity-90 transition-opacity"
       >
         <SportIcon sport={sportType} size={40} />
@@ -63,7 +65,7 @@ export function SportBadge({ activityId, sportType, onChanged }: { activityId: s
                 >
                   <SportGlyph sport={st} size={13} />
                 </span>
-                <span className="truncate">{sportLabel(st)}</span>
+                <span className="truncate">{sportLabel(st, st, t)}</span>
                 {isSel && <Check size={14} className="ml-auto shrink-0" />}
               </button>
             );

@@ -15,7 +15,8 @@ import { GearKindIcon } from "./GearChip";
 import { gearChoicesFor } from "../../lib/gear";
 import { useToastStore } from "../../stores/toastStore";
 import { errorText } from "../../lib/errors";
-import { useLanguageStore } from "../../lib/i18n";
+import { useLanguageStore, useT } from "../../lib/i18n";
+import { unitLabel } from "../../lib/units";
 
 interface Props {
   activity: Activity;
@@ -60,6 +61,7 @@ export function EditActivityModal({
   focusFtp = false,
 }: Props) {
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   // Sport names sort in the language they are written in.
   const language = useLanguageStore((s) => s.language);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -144,7 +146,7 @@ export function EditActivityModal({
         // not an error): say so once, and keep the list away.
         if (!searchWarned.current) {
           searchWarned.current = true;
-          addToast("warning", "Location suggestions unavailable: no network or the geocoding service is down.");
+          addToast("warning", t("activity.edit.suggestionsDown"));
         }
         found = [];
       } else {
@@ -163,7 +165,7 @@ export function EditActivityModal({
       setSearching(false);
       setNoMatches(false);
     };
-  }, [locationText, picked, locationDirty, addToast]);
+  }, [locationText, picked, locationDirty, addToast, t]);
 
   // Click outside the field and its list closes the list.
   useEffect(() => {
@@ -214,7 +216,7 @@ export function EditActivityModal({
           await api.setActivityGear(activity.id, gear === NO_GEAR ? null : gear);
         } catch (err) {
           gearRefused = true;
-          addToast("error", `Gear not changed: ${errorText(err)}`);
+          addToast("error", t("activity.gear.notChanged", { error: errorText(err) }));
         }
       }
 
@@ -229,7 +231,7 @@ export function EditActivityModal({
             await api.setActivityFtp(activity.id, ftp);
           } catch (err) {
             ftpRefused = true;
-            addToast("error", `FTP not changed: ${errorText(err)}`);
+            addToast("error", t("activity.edit.ftpNotChanged", { error: errorText(err) }));
           }
         }
       }
@@ -250,10 +252,7 @@ export function EditActivityModal({
           // failed lookup does — and says that the map point, if the
           // activity had one, is still the old one.
           if (locationText.trim() && !result.geocoded && !result.geocoding_off) {
-            addToast(
-              "warning",
-              "Could not geocode location (network issue). Saved as text; the map point is unchanged.",
-            );
+            addToast("warning", t("activity.edit.geocodeFailed"));
           }
         }
       }
@@ -262,23 +261,33 @@ export function EditActivityModal({
     onSuccess: ({ ftpRefused, gearRefused }) => {
       // The last toast on screen must not read as "everything saved"
       // when the FTP or the gear was refused a moment earlier.
-      const unchanged = [ftpRefused && "FTP", gearRefused && "gear"].filter(Boolean).join(" and ");
-      addToast("success", unchanged ? `Activity updated (${unchanged} unchanged)` : "Activity updated");
+      addToast(
+        "success",
+        t(
+          ftpRefused && gearRefused
+            ? "activity.edit.updatedBothUnchanged"
+            : ftpRefused
+              ? "activity.edit.updatedFtpUnchanged"
+              : gearRefused
+                ? "activity.edit.updatedGearUnchanged"
+                : "activity.edit.updated",
+        ),
+      );
       onSaved();
     },
     onError: (err: unknown) => {
-      addToast("error", `Failed to update: ${errorText(err)}`);
+      addToast("error", t("activity.edit.updateFailed", { error: errorText(err) }));
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteActivity(activity.id),
     onSuccess: () => {
-      addToast("success", "Activity deleted");
+      addToast("success", t("activity.edit.deleted"));
       onDeleted();
     },
     onError: (err: unknown) => {
-      addToast("error", `Failed to delete: ${errorText(err)}`);
+      addToast("error", t("activity.edit.deleteFailed", { error: errorText(err) }));
     },
   });
 
@@ -288,27 +297,27 @@ export function EditActivityModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Edit Activity</h2>
-          <button onClick={onClose} className="text-faint hover:text-muted">
+          <h2 className="text-lg font-semibold">{t("activity.edit.title")}</h2>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-faint hover:text-muted">
             <X size={18} />
           </button>
         </div>
 
         {/* Title */}
         <div>
-          <label className="text-xs text-muted block mb-1">Title</label>
+          <label className="text-xs text-muted block mb-1">{t("activity.edit.titleLabel")}</label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value.slice(0, MAX_TITLE_LENGTH))}
-            placeholder="Activity title"
+            placeholder={t("activity.title.label")}
             className="w-full text-sm border border-border rounded px-3 py-2"
           />
         </div>
 
         {/* Location */}
         <div>
-          <label className="text-xs text-muted block mb-1">Location</label>
+          <label className="text-xs text-muted block mb-1">{t("activity.edit.location")}</label>
           <div ref={locationBoxRef} className="relative">
             <MapPin size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
             {searching && (
@@ -316,7 +325,7 @@ export function EditActivityModal({
               // starting; a bare SVG with a label would not be read.
               <span
                 role="status"
-                aria-label="Searching locations"
+                aria-label={t("activity.edit.searching")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint"
               >
                 <Loader2 size={14} className="animate-spin" />
@@ -331,7 +340,7 @@ export function EditActivityModal({
                 setLocationDirty(true);
               }}
               onKeyDown={onLocationKeyDown}
-              placeholder="City, address..."
+              placeholder={t("activity.edit.locationPlaceholder")}
               role="combobox"
               aria-expanded={listOpen}
               aria-controls="location-suggestions"
@@ -342,7 +351,7 @@ export function EditActivityModal({
               <ul
                 id="location-suggestions"
                 role="listbox"
-                aria-label="Location suggestions"
+                aria-label={t("activity.edit.suggestions")}
                 className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border border-border bg-card py-1 shadow-lg"
               >
                 {hits.map((hit, i) => (
@@ -370,7 +379,7 @@ export function EditActivityModal({
           </div>
           {noMatches && (
             <p role="status" className="mt-1 text-xs text-muted">
-              No matches — try a town or a street name, without house numbers.
+              {t("activity.edit.noMatches")}
             </p>
           )}
         </div>
@@ -379,7 +388,7 @@ export function EditActivityModal({
         {hasPower && (
           <div>
             <label className="text-xs text-muted block mb-1" htmlFor="activity-ftp">
-              FTP (W)
+              FTP ({unitLabel("W")})
             </label>
             <input
               id="activity-ftp"
@@ -390,32 +399,30 @@ export function EditActivityModal({
               step={1}
               value={ftpText}
               onChange={(e) => setFtpText(e.target.value)}
-              placeholder="e.g. 238"
+              placeholder={t("activity.edit.ftpPlaceholder", { value: "238" })}
               autoFocus={focusFtp && canCorrectFtp}
               disabled={!canCorrectFtp}
               className="w-full text-sm border border-border rounded px-3 py-2 disabled:opacity-60"
             />
             <p className="mt-1 text-xs text-muted">
-              {canCorrectFtp
-                ? "The FTP this activity was recorded with. Changing it recomputes IF, TSS and the power zones; the file is not touched."
-                : "This activity has power but no recorded duration, so TSS cannot be recomputed and the FTP stays as recorded."}
+              {t(canCorrectFtp ? "activity.edit.ftpHint" : "activity.edit.ftpLocked")}
             </p>
           </div>
         )}
 
         {/* Sport type */}
         <div>
-          <label className="text-xs text-muted block mb-1">Sport type</label>
+          <label className="text-xs text-muted block mb-1">{t("activity.edit.sport")}</label>
           <Select
-            ariaLabel="Sport type"
+            ariaLabel={t("activity.edit.sport")}
             className="w-full"
             value={sportType}
             onChange={changeSport}
             options={[...SPORT_TYPES]
-              .sort((a, b) => sportLabel(a).localeCompare(sportLabel(b), language))
+              .sort((a, b) => sportLabel(a, a, t).localeCompare(sportLabel(b, b, t), language))
               .map((st) => ({
                 value: st,
-                label: sportLabel(st),
+                label: sportLabel(st, st, t),
                 icon: <SportIcon sport={st} size={18} />,
               }))}
           />
@@ -423,22 +430,20 @@ export function EditActivityModal({
 
         {/* Gear (ADR 0003) */}
         <div>
-          <label className="text-xs text-muted block mb-1">Gear</label>
+          <label className="text-xs text-muted block mb-1">{t("common.gear")}</label>
           {gearLocked ? (
-            <p className="text-xs text-faint">
-              A multisport event carries no gear of its own; its legs do.
-            </p>
+            <p className="text-xs text-faint">{t("activity.edit.gearLocked")}</p>
           ) : (
             <Select
-              ariaLabel="Gear"
+              ariaLabel={t("common.gear")}
               className="w-full"
               value={gear}
               onChange={setGear}
               options={[
-                { value: NO_GEAR, label: "None" },
+                { value: NO_GEAR, label: t("activity.gear.none") },
                 ...gearChoices.map((g) => ({
                   value: g.id,
-                  label: g.retired_at ? `${g.name} (retired)` : g.name,
+                  label: g.retired_at ? t("library.filter.retired", { name: g.name }) : g.name,
                   icon: <GearKindIcon kind={g.kind} size={14} />,
                 })),
               ]}
@@ -448,12 +453,12 @@ export function EditActivityModal({
 
         {/* Notes */}
         <div>
-          <label className="text-xs text-muted block mb-1">Notes</label>
+          <label className="text-xs text-muted block mb-1">{t("common.notes")}</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
-            placeholder="Notes..."
+            placeholder={t("activity.edit.notesPlaceholder")}
             className="w-full text-sm border border-border rounded px-3 py-2 resize-y"
           />
         </div>
@@ -467,7 +472,7 @@ export function EditActivityModal({
               className="text-sm px-3 py-2 text-red-500 hover:text-red-700 flex items-center gap-1"
             >
               <Trash2 size={14} />
-              Delete
+              {t("common.delete")}
             </button>
           ) : (
             <button
@@ -476,7 +481,7 @@ export function EditActivityModal({
               disabled={deleteMutation.isPending}
               className="text-sm px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
             >
-              {deleteMutation.isPending ? "Deleting..." : "Confirm delete"}
+              {t(deleteMutation.isPending ? "activity.edit.deleting" : "activity.edit.confirmDelete")}
             </button>
           )}
           <div className="flex gap-2">
@@ -485,7 +490,7 @@ export function EditActivityModal({
               onClick={onClose}
               className="text-sm px-4 py-2 text-muted hover:text-ink"
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -493,7 +498,7 @@ export function EditActivityModal({
               disabled={updateMutation.isPending}
               className="text-sm px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent-2 disabled:opacity-50"
             >
-              {updateMutation.isPending ? "Saving..." : "Save"}
+              {t(updateMutation.isPending ? "common.saving" : "common.save")}
             </button>
           </div>
         </div>

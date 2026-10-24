@@ -69,7 +69,7 @@ import { useResolvedDark } from "../../lib/theme";
 import { tipTransform } from "./chartTip";
 import { axisValues, yAxisSize } from "./chartAxis";
 import { useUnits, isImperial, distanceUnit, unitLabel, M_PER_MILE, MPH_PER_MPS } from "../../lib/units";
-import { formatNumber } from "../../lib/i18n";
+import { formatNumber, useT } from "../../lib/i18n";
 
 export type { SummaryAverages } from "./chartConfigs";
 
@@ -159,6 +159,7 @@ function SingleChart({
    * line with an "avg …" label; absent for charts without one (elevation). */
   avgValue?: number | null;
 }) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   // The height is read through a ref by the plot effect and the resize
@@ -222,7 +223,7 @@ function SingleChart({
         bbox: u.bbox,
         linePos: u.valToPos(avgValue, "y", true),
         pxRatio: uPlot.pxRatio,
-        text: `avg ${fmtVal(avgValue)}`,
+        text: t("activity.chart.avg", { value: fmtVal(avgValue) }),
         ink: inkColor,
         surface: surfaceColor,
       });
@@ -583,7 +584,7 @@ function SingleChart({
     };
     // `dark` re-bakes axis/grid colors from the live CSS tokens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xValues, values, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue]);
+  }, [xValues, values, config, setHoveredPointIndex, indexMap, dark, barZones, barStep, gradeValues, gradeCats, gradeRunGrades, avgValue, t]);
 
   // A new height resizes the live plot in place. Effects all run on mount,
   // and uPlot's setSize is not a no-op for equal sizes (it drops every
@@ -605,7 +606,7 @@ function SingleChart({
     if (!selectionStats) return;
     if (rangesEqual(selectedRange, publishedRange.current)) return;
     // valToPos is NaN in the tick the plot is constructed — defer a beat.
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       const u = plotRef.current;
       const cont = containerRef.current;
       if (!u || !cont) return;
@@ -633,7 +634,7 @@ function SingleChart({
         setSel({ left: overLeft + left, width: right - left, plotW: cont.clientWidth, text });
       }
     }, 0);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
     // selectionStats is recreated per parent render; the `same` guard above
     // makes those re-runs no-ops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -730,6 +731,7 @@ export function ChartPanel({
   filler,
   onFillerPlaced,
 }: Props) {
+  const t = useT();
   const showPace = isPaceSport(sport);
   // Right-click on the elevation selection → "Save segment" form at the
   // click point. The range snapshot is taken at open so a later selection
@@ -769,9 +771,10 @@ export function ChartPanel({
       CADENCE(sport),
       POWER,
     ],
-    // `units` re-creates the factory configs with the right conversions.
+    // `units` re-creates the factory configs with the right conversions,
+    // `t` (a new one per language) with the labels in the language.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showPace, showSwimPace, units, sport],
+    [showPace, showSwimPace, units, sport, t],
   );
   // Materialize each metric's series ONCE and share it with chartData below —
   // getData runs an O(N) pass (pace/speed also derive speedSeries), so calling
@@ -939,8 +942,8 @@ export function ChartPanel({
     for (let i = 0; i < trackpoints.distance_m.length; i++) {
       let xVal: number | null;
       if (xAxis === "time") {
-        const t = trackpoints.t[i];
-        xVal = t != null ? (t - firstT) / 60 : null;
+        const at = trackpoints.t[i];
+        xVal = at != null ? (at - firstT) / 60 : null;
       } else {
         xVal =
           trackpoints.distance_m[i] != null
@@ -1079,7 +1082,7 @@ export function ChartPanel({
   };
   const onTime = xAxis === "time";
   const xUnit = unitLabel(onTime ? "min" : distanceUnit());
-  const xLabel = `${onTime ? "Time" : "Distance"} (${xUnit})`;
+  const xLabel = `${t(onTime ? "common.time" : "common.distance")} (${xUnit})`;
 
   return (
     <div ref={panelRef} className="space-y-3">
@@ -1092,13 +1095,13 @@ export function ChartPanel({
               onClick={() => setXAxis("distance")}
               className={xAxis === "distance" ? "on" : ""}
             >
-              Distance
+              {t("common.distance")}
             </button>
             <button
               onClick={() => setXAxis("time")}
               className={xAxis === "time" ? "on" : ""}
             >
-              Time
+              {t("common.time")}
             </button>
           </div>
         </div>
@@ -1119,7 +1122,7 @@ export function ChartPanel({
               <span
                 onPointerDown={(e) => startDrag(e, config.key)}
                 className="cursor-grab text-faint hover:text-muted active:cursor-grabbing touch-none"
-                title="Drag to reorder"
+                title={t("activity.chart.reorderTip")}
               >
                 <GripVertical size={16} />
               </span>

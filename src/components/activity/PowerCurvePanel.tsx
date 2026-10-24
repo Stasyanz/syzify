@@ -9,6 +9,8 @@ import { useResolvedDark } from "../../lib/theme";
 import { AXIS_SPLITS, formatWindow, mergeCurveData, tooltipText } from "./powerCurve";
 import { tipTransform } from "./chartTip";
 import { axisValues, yAxisSize } from "./chartAxis";
+import { useT } from "../../lib/i18n";
+import { unitLabel } from "../../lib/units";
 
 const HEIGHT = 220;
 // Matches the Power metric in ChartPanel — the curve is the same quantity.
@@ -21,6 +23,7 @@ const CURVE_FILL = "rgba(124,58,237,0.10)";
  * clicking while a foreign record is hovered navigates to that activity.
  * Renders nothing for activities without a stored curve. */
 export function PowerCurvePanel({ activityId }: { activityId: string }) {
+  const t = useT();
   const navigate = useNavigate();
   const dark = useResolvedDark();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -90,9 +93,9 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
         },
       ],
       series: [
-        { label: "Window" },
+        { label: t("activity.powerCurve.window") },
         {
-          label: "All-time (W)",
+          label: `${t("activity.powerCurve.allTime")} (${unitLabel("W")})`,
           stroke: gridColor,
           fill: dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)",
           width: 1,
@@ -100,7 +103,7 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
           points: { show: false },
         },
         {
-          label: "This activity (W)",
+          label: `${t("activity.powerCurve.thisActivity")} (${unitLabel("W")})`,
           stroke: CURVE_COLOR,
           fill: CURVE_FILL,
           width: 2,
@@ -184,15 +187,15 @@ export function PowerCurvePanel({ activityId }: { activityId: string }) {
       plot.destroy();
       plotRef.current = null;
     };
-  }, [merged, dark, activityId, navigate]);
+  }, [merged, dark, activityId, navigate, t]);
 
   if (!merged) return null;
 
   return (
     <div className="dash-card">
       <div className="mb-3 flex items-baseline justify-between">
-        <h3>Power Curve</h3>
-        <span className="text-faint text-xs">best average power · all-time in grey</span>
+        <h3>{t("activity.powerCurve.title")}</h3>
+        <span className="text-faint text-xs">{t("activity.powerCurve.subtitle")}</span>
       </div>
       <div className="relative w-full">
         <div ref={containerRef} className="w-full" />

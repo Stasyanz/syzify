@@ -213,6 +213,7 @@ function ScaleChrome({
   active: boolean;
   onHandleDown: (e: React.PointerEvent) => void;
 }) {
+  const t = useT();
   return (
     <>
       <div
@@ -226,7 +227,7 @@ function ScaleChrome({
       />
       <div
         onPointerDown={onHandleDown}
-        title="Drag to resize"
+        title={t("activity.share.resizeTip")}
         style={{
           position: "absolute",
           right: -6,
@@ -458,6 +459,7 @@ export function BrandMark({
       <span
         role="img"
         aria-label={BRAND_WORDMARK}
+        translate="no"
         style={{ fontSize: baseFs * BRAND_WORD_FS, fontWeight: 800, lineHeight: 1 }}
       >
         {/* Same trick as the canvas export and Logo.tsx: dotless ı, accent

@@ -33,11 +33,104 @@ describe("the sport picker in the interface language (#233)", () => {
   it("names the sports in Russian, sorted the Russian way", () => {
     useLanguageStore.getState().setPref("ru");
     renderModal();
-    fireEvent.click(screen.getByLabelText("Sport type"));
+    fireEvent.click(screen.getByLabelText("Вид спорта"));
     const names = screen.getAllByRole("option").map((o) => o.textContent!);
     expect(names[0]).toBe("Альпинизм");
     expect(names).toContain("Бег");
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "ru")));
+  });
+});
+
+describe("EditActivityModal in Russian (#234)", () => {
+  afterEach(() => {
+    useLanguageStore.getState().setPref("system");
+    vi.mocked(api.listGear).mockResolvedValue([]);
+  });
+
+  function renderRu(over: Partial<Activity> = {}, props: { gearId?: string | null; gearLocked?: boolean } = {}) {
+    useLanguageStore.getState().setPref("ru");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onDeleted = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <EditActivityModal
+          activity={{ ...activity, ...over } as Activity}
+          gearId={props.gearId ?? null}
+          gearLocked={props.gearLocked}
+          onClose={() => {}}
+          onSaved={() => {}}
+          onDeleted={onDeleted}
+        />
+      </QueryClientProvider>,
+    );
+    return onDeleted;
+  }
+
+  it("names its fields and buttons", () => {
+    renderRu({ normalized_power_w: 159, threshold_power_w: 200, duration_s: 4800 });
+    for (const word of ["Редактирование тренировки", "Название", "Место", "Вид спорта", "Снаряжение", "Заметки"]) {
+      screen.getByText(word);
+    }
+    screen.getByLabelText("Закрыть");
+    screen.getByPlaceholderText("Город, адрес…");
+    screen.getByPlaceholderText("Заметки…");
+    expect(screen.getByLabelText("FTP (Вт)").getAttribute("placeholder")).toBe("например, 238");
+    for (const word of ["Удалить", "Отмена", "Сохранить"]) screen.getByText(word);
+    fireEvent.click(screen.getByLabelText("Снаряжение"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Без снаряжения"]);
+  });
+
+  it("says why a multisport event has no gear", () => {
+    renderRu({}, { gearLocked: true });
+    screen.getByText("У мультиспортивного события нет своего снаряжения — оно есть у этапов.");
+  });
+
+  it("says when the FTP and the gear were both refused", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([
+      {
+        id: "road", kind: "bike", name: "road", brand: null, model: null, purchased_at: null, initial_distance_m: 0,
+        distance_limit_m: null, retired_at: null, notes: null, created_at: "2026-01-01T00:00:00",
+        stats: { activities: 0, distance_m: 0, duration_s: 0, elev_gain_m: 0, last_used: null },
+        default_for: [], rules: [],
+      },
+    ]);
+    vi.mocked(api.setActivityGear).mockRejectedValueOnce("Нет такого снаряжения");
+    vi.mocked(api.setActivityFtp).mockRejectedValueOnce("Нет мощности");
+    renderRu({ sport_type: "ride", normalized_power_w: 200, threshold_power_w: 200, duration_s: 3600 });
+    fireEvent.click(screen.getByLabelText("Снаряжение"));
+    fireEvent.click(await screen.findByRole("option", { name: "road" }));
+    fireEvent.change(screen.getByLabelText("FTP (Вт)"), { target: { value: "238" } });
+    fireEvent.click(screen.getByText("Сохранить"));
+    await waitFor(() =>
+      expect(addToast).toHaveBeenLastCalledWith("success", "Тренировка обновлена (FTP и снаряжение не изменены)"),
+    );
+    expect(addToast).toHaveBeenCalledWith("error", "Снаряжение не изменено: Нет такого снаряжения");
+    expect(addToast).toHaveBeenCalledWith("error", "FTP не изменён: Нет мощности");
+  });
+
+  it("says a save and a delete are under way", async () => {
+    let saved: () => void = () => {};
+    let deleted: () => void = () => {};
+    vi.mocked(api.updateActivity).mockImplementationOnce(() => new Promise((r) => (saved = () => r(undefined))));
+    vi.mocked(api.deleteActivity).mockImplementationOnce(() => new Promise((r) => (deleted = () => r(undefined))));
+    renderRu();
+    fireEvent.click(screen.getByText("Сохранить"));
+    await screen.findByText("Сохранение…");
+    saved();
+    await screen.findByText("Сохранить");
+    fireEvent.click(screen.getByText("Удалить"));
+    fireEvent.click(screen.getByText("Подтвердить удаление"));
+    await screen.findByText("Удаление…");
+    deleted();
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Тренировка удалена"));
+  });
+
+  it("confirms a delete and says it is done", async () => {
+    const onDeleted = renderRu();
+    fireEvent.click(screen.getByText("Удалить"));
+    fireEvent.click(screen.getByText("Подтвердить удаление"));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(addToast).toHaveBeenCalledWith("success", "Тренировка удалена");
   });
 });
 

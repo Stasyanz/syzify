@@ -3,12 +3,13 @@ import {
   formatDistance,
   formatDuration,
   formatPaceOrSpeed,
-  paceOrSpeedLabel,
+  avgPaceOrSpeedLabel,
   formatElevation,
   formatHR,
   formatWhole,
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
+import { useT } from "../../lib/i18n";
 import { CornerRings } from "../brand/CornerRings";
 
 interface Props {
@@ -23,28 +24,29 @@ function splitValueUnit(s: string): { value: string; unit?: string } {
 
 export function SummaryPanel({ activity }: Props) {
   useUnits();
+  const t = useT();
 
   // Order + labels mirror the design's activity summary (Distance, Duration,
   // Pace/Speed, Elev Gain, Avg/Max HR, Cadence, Calories). HR / cadence /
   // calories tiles are dropped when the activity has no such data.
   const metrics: { label: string; value: string }[] = [
-    { label: "Distance", value: formatDistance(activity.distance_m) },
-    { label: "Duration", value: formatDuration(activity.duration_s) },
+    { label: t("common.distance"), value: formatDistance(activity.distance_m) },
+    { label: t("common.duration"), value: formatDuration(activity.duration_s) },
     {
-      label: `Avg ${paceOrSpeedLabel(activity.sport_type)}`,
+      label: avgPaceOrSpeedLabel(activity.sport_type, t),
       value: formatPaceOrSpeed(activity.sport_type, activity.avg_speed_mps),
     },
   ];
   // Swim "elevation gain" is GPS/pressure noise, a trainer's is barometer
   // drift — no tile for either.
   if (!elevationIsNoise(activity.sport_type)) {
-    metrics.push({ label: "Elev Gain", value: formatElevation(activity.elev_gain_m) });
+    metrics.push({ label: t("common.elevGain"), value: formatElevation(activity.elev_gain_m) });
   }
   if (activity.avg_hr != null) {
-    metrics.push({ label: "Avg HR", value: formatHR(activity.avg_hr) });
+    metrics.push({ label: t("common.avgHr"), value: formatHR(activity.avg_hr) });
   }
   if (activity.calories != null) {
-    metrics.push({ label: "Calories", value: formatWhole(activity.calories, "kcal") });
+    metrics.push({ label: t("common.calories"), value: formatWhole(activity.calories, "kcal") });
   }
 
   return (

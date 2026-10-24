@@ -1,4 +1,5 @@
 import { describeDevice } from "../../lib/devices";
+import { useT } from "../../lib/i18n";
 import { DeviceSilhouette } from "../brand/DeviceSilhouette";
 
 /**
@@ -7,11 +8,13 @@ import { DeviceSilhouette } from "../brand/DeviceSilhouette";
  * the full name. Nothing for an activity whose file named no device.
  */
 export function DeviceChip({ source }: { source: string | null | undefined }) {
+  const t = useT();
   const device = describeDevice(source);
   if (!device) return null;
   // The tooltip is a CSS pseudo-element (data-tip), invisible to assistive
-  // technology; the aria-label carries the same sentence for it.
-  const tip = `Recorded on ${device.full_name}`;
+  // technology; the aria-label carries the same sentence for it. The same
+  // sentence as the Library row's.
+  const tip = t("library.item.recordedOn", { device: device.full_name });
   return (
     <div className="device-chip" data-tip={tip} aria-label={tip} data-testid="device-chip">
       <DeviceSilhouette form={device.form} />

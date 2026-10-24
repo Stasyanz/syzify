@@ -1,5 +1,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, PopupAt, useMap, useMapEvents } from "../map/leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Polyline,
+  Marker,
+  CircleMarker,
+  Tooltip,
+  PopupAt,
+  ZoomControl,
+  useMap,
+  useMapEvents,
+} from "../map/leaflet";
 import L from "leaflet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, Maximize, Minimize, MapPin } from "lucide-react";
@@ -12,6 +23,7 @@ import { api, isTauri } from "../../lib/tauri";
 import { useResizeGrip } from "./useResizeGrip";
 import { protocolBase } from "../../lib/protocolUrl";
 import { errorText } from "../../lib/errors";
+import { useT } from "../../lib/i18n";
 
 interface Props {
   trackpoints: TrackPointColumns;
@@ -326,12 +338,13 @@ export function clampMapHeight(px: number): number {
   return Math.min(MAP_MAX_HEIGHT_PX, Math.max(MAP_DEFAULT_HEIGHT_PX, Math.round(px)));
 }
 
+// The name is the layer's `common.map.layer.<id>` message.
 const MAP_LAYERS = [
-  { id: "osm", name: "Standard", icon: Map },
-  { id: "topo", name: "Topo", icon: Mountain },
-  { id: "cycling", name: "Cycling", icon: Bike },
-  { id: "satellite", name: "Satellite", icon: Satellite },
-  { id: "dark", name: "Dark", icon: Moon },
+  { id: "osm", icon: Map },
+  { id: "topo", icon: Mountain },
+  { id: "cycling", icon: Bike },
+  { id: "satellite", icon: Satellite },
+  { id: "dark", icon: Moon },
 ] as const;
 
 type LayerId = (typeof MAP_LAYERS)[number]["id"];
@@ -353,6 +366,7 @@ const ATTRIBUTIONS: Record<LayerId, string> = {
 };
 
 function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: LayerId) => void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -364,7 +378,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
       <button
         onClick={() => setOpen((o) => !o)}
         className="bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2"
-        title="Change map layer"
+        title={t("common.map.changeLayer")}
       >
         <Layers size={18} className="text-muted" />
       </button>
@@ -385,7 +399,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
                 }`}
               >
                 <Icon size={14} />
-                {l.name}
+                {t(`common.map.layer.${l.id}`)}
               </button>
             );
           })}
@@ -434,13 +448,14 @@ function KeepCourseInView({ positions }: { positions: L.LatLngExpression[] }) {
  * hooks rendered. */
 export function RouteMap(props: Props) {
   useUnits();
+  const t = useT();
   const positions = useRoutePositions(props.trackpoints);
 
   if (positions.length === 0) {
     // No GPS track — don't reserve a full map canvas; a slim notice is enough.
     return (
       <div className="bg-card-2 rounded-card flex items-center justify-center h-16 text-sm text-faint">
-        Indoor activity — no route data
+        {t("activity.map.noRoute")}
       </div>
     );
   }
@@ -484,6 +499,7 @@ function RouteMapCanvas({
 
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const setDestination = useMutation({
     mutationFn: ({ point: [lat, lon] }: { point: [number, number]; seq: number }) =>
       api.setActivityLocationPoint(activityId, lat, lon),
@@ -496,9 +512,9 @@ function RouteMapCanvas({
       // user's choice; a lookup that found no name (network, or nothing
       // there) is worth a warning — the old name is gone for coordinates.
       if (result.geocoded || result.geocoding_off) {
-        addToast("success", `Destination point: ${result.location_name}`);
+        addToast("success", t("activity.map.destinationSaved", { place: result.location_name }));
       } else {
-        addToast("warning", `Destination point saved as coordinates (${result.location_name}): no place name found.`);
+        addToast("warning", t("activity.map.destinationCoords", { coords: result.location_name }));
       }
       queryClient.invalidateQueries({ queryKey: ["activity", activityId] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
@@ -569,7 +585,9 @@ function RouteMapCanvas({
         // NaN center would break KeepCourseInView's setMaxBounds.
         attributionControl={!simulated}
         maxZoom={simulated ? 18 : undefined}
+        zoomControl={false}
       >
+        <ZoomControl zoomInTitle={t("common.map.zoomIn")} zoomOutTitle={t("common.map.zoomOut")} />
         {!simulated && (
           <TileLayer
             key={layer}
@@ -586,7 +604,9 @@ function RouteMapCanvas({
           <Marker position={flag} icon={flagIcon} zIndexOffset={1000} eventHandlers={flagEvents}>
             <Tooltip direction="top">
               <span style={{ fontSize: "11px", lineHeight: "1.4" }}>
-                {locationName ? `Destination · ${locationName}` : "Destination point"}
+                {locationName
+                  ? t("activity.map.destinationNamed", { place: locationName })
+                  : t("activity.map.destination")}
               </span>
             </Tooltip>
           </Marker>
@@ -609,7 +629,7 @@ function RouteMapCanvas({
               >
                 <MapPin size={15} className="text-muted flex-shrink-0" />
                 <span className="cal-pop-t">
-                  {setDestination.isPending ? "Saving…" : "Set as destination point"}
+                  {t(setDestination.isPending ? "common.saving" : "activity.map.setDestination")}
                 </span>
               </button>
               {/* A refusal belongs to the menu it came from: a save still in
@@ -629,7 +649,7 @@ function RouteMapCanvas({
       {simulated ? (
         // On a backing of its own: a pan can bring the course under it.
         <div className="absolute bottom-2 left-2 z-[1000] pointer-events-none rounded bg-card px-1.5 py-0.5 text-xs text-muted">
-          Simulated course — not a place on the map
+          {t("activity.map.simulated")}
         </div>
       ) : (
         <LayerSwitcher layer={layer} onSelect={handleLayerSelect} />
@@ -637,7 +657,7 @@ function RouteMapCanvas({
       <button
         onClick={() => setIsFullscreen((f) => !f)}
         className="absolute top-2 right-2 z-[1000] bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2"
-        title={isFullscreen ? "Exit fullscreen" : "Fullscreen map"}
+        title={t(isFullscreen ? "common.map.exitFullscreen" : "common.map.fullscreen")}
       >
         {isFullscreen ? (
           <Minimize size={18} className="text-muted" />

@@ -133,14 +133,78 @@ describe("ActivityDetailPage in the interface language (#232)", () => {
       ]);
       renderPage();
       expect((await screen.findByText("rename")).getAttribute("data-title")).toBe("Тренировка");
-      // The badges' sentences are #234's; the sport in them is already the word.
+      // The badges say the record and the sport in the language (#234).
       await waitFor(() => expect(document.querySelectorAll(".badge-pill")).toHaveLength(2));
       const tips = Array.from(document.querySelectorAll(".badge-pill"), (b) => b.getAttribute("data-tip"));
-      expect(tips[0]).toContain("all-time Тренировка record");
-      expect(tips[1]).toContain("Тренировка personal best");
+      expect(tips).toEqual([
+        "Самая длинная дистанция · рекорд за всё время (Тренировка)",
+        "Самая долгая тренировка · личный рекорд (Тренировка)",
+      ]);
     } finally {
       useLanguageStore.getState().setPref("system");
     }
+  });
+});
+
+describe("ActivityDetailPage in Russian (#234)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  const single = (over: Partial<Activity>) =>
+    detail({ is_multisport: false, activity: { ...detail().activity, ...over } });
+  const tips = () => Array.from(document.querySelectorAll(".badge-pill"), (b) => b.getAttribute("data-tip"));
+
+  it("names a run's records — the climb and the pace", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getActivityDetail).mockResolvedValue(single({ sport_type: "run" }));
+    vi.mocked(api.getActivityRecordBadges).mockResolvedValue([
+      { kind: "elevation", all_time: true },
+      { kind: "pace", all_time: false },
+    ]);
+    renderPage();
+    await waitFor(() => expect(tips()).toHaveLength(2));
+    expect(tips()).toEqual([
+      "Наибольший набор высоты · рекорд за всё время (Бег)",
+      "Самый быстрый темп · личный рекорд (Бег)",
+    ]);
+  });
+
+  it("names a ride's fastest as its speed", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getActivityDetail).mockResolvedValue(single({ sport_type: "ride" }));
+    vi.mocked(api.getActivityRecordBadges).mockResolvedValue([{ kind: "pace", all_time: true }]);
+    renderPage();
+    await waitFor(() => expect(tips()).toEqual(["Самая высокая скорость · рекорд за всё время (Велосипед)"]));
+  });
+
+  it("titles the header's controls", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getActivityDetail).mockResolvedValue(single({ sport_type: "ride" }));
+    renderPage();
+    await screen.findByText("rename");
+    for (const label of ["Предыдущая тренировка", "Следующая тренировка", "Изменить", "Поделиться", "Экспорт GPX"]) {
+      screen.getByLabelText(label);
+    }
+    expect(screen.getByLabelText("Предыдущая тренировка").getAttribute("data-tip")).toBe("Предыдущая тренировка (←)");
+    expect(document.querySelector('[title="Назад в библиотеку (Esc)"]')).not.toBeNull();
+  });
+
+  it("links a leg to its event, by the event's title or the plain word", async () => {
+    useLanguageStore.getState().setPref("ru");
+    const legOf = single({ id: "leg", sport_type: "swim", parent_id: "event" } as Partial<Activity>);
+    vi.mocked(api.getActivityDetail).mockImplementation(async (id: string) =>
+      id === "event" ? detail({ activity: { ...detail().activity, id: "event", title: "Ironman" } }) : legOf,
+    );
+    renderPage();
+    const link = await screen.findByText("Ironman");
+    expect(link.closest("button")!.getAttribute("data-tip")).toBe(
+      "Открыть мультиспортивное событие, к которому относится этот этап",
+    );
+    cleanup();
+    vi.mocked(api.getActivityDetail).mockImplementation(async (id: string) =>
+      id === "event" ? detail({ activity: { ...detail().activity, id: "event", title: null } }) : legOf,
+    );
+    renderPage();
+    await screen.findByText("Мультиспорт");
   });
 });
 

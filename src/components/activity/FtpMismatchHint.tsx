@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { deviceLabel } from "../../lib/devices";
+import { formatNumber, useRichT, useT } from "../../lib/i18n";
+import { unitLabel } from "../../lib/units";
 import type { Activity, PreviousPower } from "../../lib/types";
 
 /** The setting under which a dismissed hint is remembered, per activity —
@@ -66,6 +68,8 @@ export function FtpMismatchHint({
   recent: PreviousPower[] | null | undefined;
   onCorrect: () => void;
 }) {
+  const t = useT();
+  const rt = useRichT();
   const m = ftpMismatch(activity, recent);
   const key = ftpHintDismissedKey(activity.id);
   const { data: saved, isPending } = useQuery({
@@ -83,27 +87,37 @@ export function FtpMismatchHint({
     setDismissedFor(activity.id);
     api.setSetting(key, "1").catch(() => {});
   };
-  const thisLabel = deviceLabel(m.thisDevice);
-  const recentLabel = deviceLabel(m.recentDevice);
-  const on = thisLabel ? ` on ${thisLabel}` : "";
-  const with_ = recentLabel ? ` (${recentLabel})` : "";
+  const thisDevice = deviceLabel(m.thisDevice);
+  const recentDevice = deviceLabel(m.recentDevice);
+  const watts = (w: number) => (
+    <strong className="text-ink">
+      {formatNumber(w)} {unitLabel("W")}
+    </strong>
+  );
+  const ftps = { thisFtp: watts(m.thisFtp), recentFtp: watts(m.recentFtp) };
+  // One sentence per pair of known devices: each language words the
+  // "on …" and the "(…)" its own way.
+  const text =
+    thisDevice && recentDevice
+      ? rt("activity.ftpHint.bothDevices", { ...ftps, thisDevice, recentDevice })
+      : thisDevice
+        ? rt("activity.ftpHint.thisDevice", { ...ftps, thisDevice })
+        : recentDevice
+          ? rt("activity.ftpHint.recentDevice", { ...ftps, recentDevice })
+          : rt("activity.ftpHint.plain", ftps);
   return (
     <div
       role="note"
       className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted"
     >
-      <span>
-        Recorded with FTP <strong className="text-ink">{m.thisFtp} W</strong>
-        {on} — your recent rides used <strong className="text-ink">{m.recentFtp} W</strong>
-        {with_}.
-      </span>
+      <span>{text}</span>
       <button type="button" onClick={onCorrect} className="text-accent-2 underline hover:no-underline">
-        Correct FTP
+        {t("activity.ftpHint.correct")}
       </button>
       <button
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss"
+        aria-label={t("common.dismiss")}
         className="ml-auto grid h-6 w-6 place-items-center rounded text-faint hover:bg-card-2 hover:text-ink"
       >
         <X size={14} />

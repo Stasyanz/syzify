@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { legRows } from "./MultisportLegs";
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { MemoryRouter } from "react-router";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { legRows, MultisportLegs } from "./MultisportLegs";
+import { t, useLanguageStore } from "../../lib/i18n";
 import type { MultisportLeg } from "../../lib/types";
 
 const leg = (
@@ -33,7 +38,7 @@ describe("legRows", () => {
       leg(3, "ride", { total_distance_m: 40000, avg_speed_mps: 9.5 }),
       leg(4, "transition", { total_timer_time_s: 60 }),
       leg(5, "run"),
-    ]);
+    ], t);
     expect(rows.map((r) => r.label)).toEqual(["Swim", "T1", "Ride", "T2", "Run"]);
     // Transitions show only their time.
     expect(rows[1].time).not.toBe("");
@@ -47,7 +52,7 @@ describe("legRows", () => {
       leg(2, "transition", { total_timer_time_s: 90 }),
       leg(3, "run", { start_time: "2021-07-17T09:00:00+03:00", source_activity_id: "act-run" }),
       leg(4, "run"), // no start_time — nothing to window by
-    ]);
+    ], t);
     expect(rows.map((r) => r.focusable)).toEqual([true, false, false, false]);
   });
 
@@ -56,7 +61,7 @@ describe("legRows", () => {
       leg(1, "swim", { source_activity_id: "act-swim" }),
       leg(2, "transition", { total_timer_time_s: 90, source_activity_id: null }),
       leg(3, "run", { source_activity_id: "act-run" }),
-    ]);
+    ], t);
     expect(rows[0].link).toBe("act-swim");
     expect(rows[1].link).toBeNull();
     expect(rows[2].link).toBe("act-run");
@@ -67,7 +72,7 @@ describe("legRows", () => {
       leg(1, "swim", { avg_speed_mps: 1.3 }),
       leg(2, "ride", { avg_speed_mps: 9.5 }),
       leg(3, "run", { avg_speed_mps: 4.0 }),
-    ]);
+    ], t);
     // Swim pace is per 100 m; running pace per km; speed a rate with unit.
     expect(rows[0].effort).toBe("1:17 /100m");
     expect(rows[2].effort).toContain(" /km");
@@ -85,11 +90,65 @@ describe("legRows", () => {
         avg_hr: null,
         total_ascent_m: null,
       }),
-    ]);
+    ], t);
     expect(rows[0].time).not.toBe("—");
     expect(rows[1].time).toBe("—");
     expect(rows[1].distance).toBe("—");
     expect(rows[1].effort).toBe("—");
     expect(rows[1].hr).toBe("—");
+  });
+
+  describe("in Russian (#234)", () => {
+    afterEach(() => useLanguageStore.getState().setPref("system"));
+
+    it("names the sport legs in the language, the transitions T1/T2 in every one", () => {
+      useLanguageStore.getState().setPref("ru");
+      const rows = legRows([
+        leg(1, "swim"),
+        leg(2, "transition", { total_timer_time_s: 95 }),
+        leg(3, "ride"),
+        leg(4, "transition", { total_timer_time_s: 60 }),
+        leg(5, "run"),
+      ], t);
+      expect(rows.map((r) => r.label)).toEqual(["Плавание", "T1", "Велосипед", "T2", "Бег"]);
+    });
+  });
+});
+
+describe("MultisportLegs (#234)", () => {
+  afterEach(() => {
+    cleanup();
+    useLanguageStore.getState().setPref("system");
+  });
+
+  const legs = [
+    leg(1, "swim", { start_time: "2021-07-17T08:30:00+03:00" }),
+    leg(2, "transition", { total_timer_time_s: 90 }),
+    leg(3, "run", { source_activity_id: "act-run" }),
+  ];
+  const mount = (onFocusLeg?: (n: number) => void) =>
+    render(createElement(MemoryRouter, null, createElement(MultisportLegs, { legs, onFocusLeg })));
+  const headers = () => Array.from(document.querySelectorAll("th"), (th) => th.textContent).filter(Boolean);
+
+  it("heads the table in Russian and tells a focusable leg from the rest", () => {
+    useLanguageStore.getState().setPref("ru");
+    const onFocusLeg = vi.fn();
+    mount(onFocusLeg);
+    screen.getByText("Этапы");
+    expect(headers()).toEqual(["Этап", "Время", "Дистанция", "Темп / скорость", "Ср. пульс", "Набор"]);
+    const rows = document.querySelectorAll("tbody tr");
+    // The FIT-native swim focuses in place and says so; the merged run
+    // opens its own page, the transition does nothing.
+    expect(rows[0].getAttribute("data-tip")).toBe("Показать карту и графики этого этапа");
+    expect(rows[1].getAttribute("data-tip")).toBeNull();
+    expect(rows[2].getAttribute("data-tip")).toBeNull();
+    fireEvent.click(rows[0]);
+    expect(onFocusLeg).toHaveBeenCalledWith(1);
+  });
+
+  it("heads the table in English", () => {
+    mount();
+    screen.getByText("Legs");
+    expect(headers()).toEqual(["Leg", "Time", "Distance", "Pace / Speed", "Avg HR", "Elev"]);
   });
 });

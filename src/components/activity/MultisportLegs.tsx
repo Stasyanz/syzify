@@ -13,6 +13,7 @@ import {
   formatHR,
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
+import { useT, type Translator } from "../../lib/i18n";
 
 /** One display row of the legs table — extracted pure for tests. */
 export interface LegRow {
@@ -34,9 +35,9 @@ export interface LegRow {
 }
 
 /** Transitions are labeled T1, T2… by their order among transitions; sport
- * legs get their sport label. Times prefer the leg's timer time (moving)
- * with elapsed as the fallback. */
-export function legRows(legs: MultisportLeg[]): LegRow[] {
+ * legs get their sport label, in `translate`'s language. Times prefer the
+ * leg's timer time (moving) with elapsed as the fallback. */
+export function legRows(legs: MultisportLeg[], translate: Translator): LegRow[] {
   let transitions = 0;
   return legs.map((leg) => {
     const time = leg.total_timer_time_s ?? leg.total_elapsed_time_s;
@@ -44,7 +45,7 @@ export function legRows(legs: MultisportLeg[]): LegRow[] {
       transitions += 1;
       return {
         key: leg.leg_number,
-        label: `T${transitions}`,
+        label: `T${transitions}`, // i18n-ignore: "T" + a number names a transition everywhere
         sport: leg.sport_type,
         isTransition: true,
         link: null,
@@ -58,7 +59,7 @@ export function legRows(legs: MultisportLeg[]): LegRow[] {
     }
     return {
       key: leg.leg_number,
-      label: sportLabel(leg.sport_type),
+      label: sportLabel(leg.sport_type, leg.sport_type, translate),
       sport: leg.sport_type,
       isTransition: false,
       link: leg.source_activity_id,
@@ -93,24 +94,25 @@ export function MultisportLegs({
   onFocusLeg?: (legNumber: number) => void;
 }) {
   useUnits();
+  const t = useT();
   const navigate = useNavigate();
   if (legs.length === 0) return null;
-  const rows = legRows(legs);
+  const rows = legRows(legs, t);
   const anyAction = rows.some((r) => r.link || (r.focusable && onFocusLeg));
 
   return (
     <div className="dash-card">
-      <h3 className="mb-3">Legs</h3>
+      <h3 className="mb-3">{t("activity.legs.title")}</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-faint text-xs uppercase tracking-wide">
-              <th className="font-semibold pb-2 text-left">Leg</th>
-              <th className="font-semibold pb-2 text-right">Time</th>
-              <th className="font-semibold pb-2 text-right">Distance</th>
-              <th className="font-semibold pb-2 text-right">Pace / Speed</th>
-              <th className="font-semibold pb-2 text-right">Avg HR</th>
-              <th className="font-semibold pb-2 text-right">Elev</th>
+              <th className="font-semibold pb-2 text-left">{t("activity.legs.leg")}</th>
+              <th className="font-semibold pb-2 text-right">{t("common.time")}</th>
+              <th className="font-semibold pb-2 text-right">{t("common.distance")}</th>
+              <th className="font-semibold pb-2 text-right">{t("activity.legs.paceSpeed")}</th>
+              <th className="font-semibold pb-2 text-right">{t("common.avgHr")}</th>
+              <th className="font-semibold pb-2 text-right">{t("activity.legs.elev")}</th>
               {anyAction && <th className="pb-2 w-4" />}
             </tr>
           </thead>
@@ -122,7 +124,7 @@ export function MultisportLegs({
               <tr
                 key={r.key}
                 onClick={onClick}
-                data-tip={focus ? "Focus this leg's map & charts" : undefined}
+                data-tip={focus ? t("activity.legs.focusTip") : undefined}
                 className={`border-t border-border ${r.isTransition ? "text-faint" : ""} ${
                   onClick ? "cursor-pointer hover:bg-card-2" : ""
                 } ${r.key === focusedLeg ? "bg-accent-soft" : ""}`}

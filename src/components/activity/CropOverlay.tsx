@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useT } from "../../lib/i18n";
 import { normalizeStraighten, normalizeOrientation, type CropRect } from "./shareLayout";
 import {
   type Corner,
@@ -49,6 +50,7 @@ interface DragState {
 }
 
 export function CropOverlay({ boxW, boxH, crop, ratio, onChange, children }: Props) {
+  const t = useT();
   const rect: Rect = { x: crop.x * boxW, y: crop.y * boxH, w: crop.w * boxW, h: crop.h * boxH };
   const angle = crop.straighten; // degrees — the crop box tilts by this
 
@@ -187,7 +189,7 @@ export function CropOverlay({ boxW, boxH, crop, ratio, onChange, children }: Pro
         <div style={{ position: "absolute", left: "50%", top: -ROT_OFFSET, width: 1, height: ROT_OFFSET, background: "rgba(255,255,255,0.9)", pointerEvents: "none" }} />
         <div
           onPointerDown={startDrag("rotate")}
-          title="Drag to rotate (hold Shift to snap to 15°)"
+          title={t("activity.share.rotateTip")}
           style={{
             position: "absolute",
             left: "50%",

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { TimeInZone } from "../../lib/types";
 import { formatDuration } from "../../lib/format";
-import { formatPercent } from "../../lib/i18n";
+import { formatPercent, useLanguageStore, useT, type Language } from "../../lib/i18n";
 import { timeInZoneRows, type ZoneRow, type ZoneType } from "./timeInZones";
 
 interface Props {
@@ -10,12 +10,18 @@ interface Props {
   className?: string;
 }
 
-const TAB_LABEL: Record<ZoneType, string> = { hr: "Heart rate", power: "Power" };
+// The switch names heart rate short: the full word ("Frequenza cardiaca")
+// would crowd the card's title.
+const TAB_LABEL = { hr: "activity.zones.tabHr", power: "common.power" } as const satisfies Record<ZoneType, string>;
+const LIST_LABEL = {
+  hr: "activity.zones.listHr",
+  power: "activity.zones.listPower",
+} as const satisfies Record<ZoneType, string>;
 
 /** "53%", and "<1%" for a sliver that would otherwise read as nothing. */
-function pctLabel(pct: number): string {
-  if (pct > 0 && pct < 0.5) return `<${formatPercent(1, 0)}`;
-  return formatPercent(pct, 0);
+function pctLabel(pct: number, lang: Language): string {
+  if (pct > 0 && pct < 0.5) return `<${formatPercent(1, 0, lang)}`;
+  return formatPercent(pct, 0, lang);
 }
 
 /**
@@ -27,11 +33,13 @@ function pctLabel(pct: number): string {
  * activity opens on power again. Renders nothing without device zone data.
  */
 export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Props) {
+  const t = useT();
+  const language = useLanguageStore((s) => s.language);
   const [picked, setPicked] = useState<ZoneType | null>(null);
 
   const byType: Partial<Record<ZoneType, ZoneRow[]>> = {};
   for (const type of ["power", "hr"] as const) {
-    const rows = timeInZoneRows(timeInZones, type, durationS);
+    const rows = timeInZoneRows(timeInZones, type, durationS, language);
     if (rows) byType[type] = rows;
   }
   const types = Object.keys(byType) as ZoneType[];
@@ -43,11 +51,11 @@ export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Pro
   return (
     <div className={`dash-card ${className}`} style={{ padding: "12px 14px" }}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="!m-0">Time in Zones</h3>
+        <h3 className="!m-0">{t("activity.zones.title")}</h3>
         {types.length > 1 && (
           <div
             role="group"
-            aria-label="Zone type"
+            aria-label={t("activity.zones.type")}
             className="inline-flex rounded-lg border border-border-2 bg-card-2 p-0.5"
           >
             {types.map((type) => (
@@ -62,7 +70,7 @@ export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Pro
                     : "text-muted hover:text-ink"
                 }`}
               >
-                {TAB_LABEL[type]}
+                {t(TAB_LABEL[type])}
               </button>
             ))}
           </div>
@@ -78,7 +86,7 @@ export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Pro
           return (
             <ul
               key={type}
-              aria-label={`Time in ${TAB_LABEL[type].toLowerCase()} zones`}
+              aria-label={t(LIST_LABEL[type])}
               aria-hidden={!shown}
               className={`col-start-1 row-start-1 m-0 list-none p-0 grid grid-cols-[auto_1fr_auto_auto] content-between items-center gap-x-3 gap-y-2 text-sm ${
                 shown ? "" : "invisible"
@@ -91,7 +99,7 @@ export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Pro
                   data-zone={r.zone}
                   aria-label={`${r.label}${r.range ? `, ${r.range}` : ""}, ${formatDuration(
                     r.timeS,
-                  )}, ${pctLabel(r.pct)}`}
+                  )}, ${pctLabel(r.pct, language)}`}
                 >
                   <div className="leading-tight" aria-hidden="true">
                     <div className="text-ink">{r.label}</div>
@@ -111,7 +119,7 @@ export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Pro
                     {formatDuration(r.timeS)}
                   </div>
                   <div className="font-num text-muted text-right w-10" aria-hidden="true">
-                    {pctLabel(r.pct)}
+                    {pctLabel(r.pct, language)}
                   </div>
                 </li>
               ))}

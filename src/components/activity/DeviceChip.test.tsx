@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import { DeviceChip } from "./DeviceChip";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -10,10 +11,23 @@ describe("DeviceChip", () => {
     render(<DeviceChip source="Garmin fenix6x" />);
     const chip = screen.getByTestId("device-chip");
     expect(chip.textContent).toBe("fenix 6X Pro");
-    expect(chip.getAttribute("data-tip")).toBe("Recorded on Garmin fenix 6X Pro");
+    // The Library's sentence for the same thing (#234).
+    expect(chip.getAttribute("data-tip")).toBe("Recorded with Garmin fenix 6X Pro");
     // The same sentence for screen readers: data-tip is CSS-only.
-    expect(chip.getAttribute("aria-label")).toBe("Recorded on Garmin fenix 6X Pro");
+    expect(chip.getAttribute("aria-label")).toBe("Recorded with Garmin fenix 6X Pro");
     expect(chip.querySelector("svg")!.getAttribute("data-form")).toBe("watch_multi");
+  });
+
+  it("says what recorded it in the interface language (#234)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      render(<DeviceChip source="Garmin fenix6x" />);
+      const chip = screen.getByTestId("device-chip");
+      expect(chip.getAttribute("data-tip")).toBe("Записано: Garmin fenix 6X Pro");
+      expect(chip.getAttribute("aria-label")).toBe("Записано: Garmin fenix 6X Pro");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it.each([

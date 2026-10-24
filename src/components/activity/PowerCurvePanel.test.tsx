@@ -27,6 +27,7 @@ vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 
 import { PowerCurvePanel } from "./PowerCurvePanel";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 
 function renderPanel() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -118,6 +119,23 @@ describe("PowerCurvePanel", () => {
     expect(opts.scales.x.distr).toBe(3);
     expect(opts.cursor.drag).toEqual({ x: false, y: false });
     expect(opts.axes[0].filter?.(null, [5, null, 60])).toEqual([5, null, 60]);
+  });
+
+  it("names the card and the series in Russian (#234)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      vi.mocked(api.getPowerCurve).mockResolvedValue({
+        points: [{ window_s: 5, watts: 615 }],
+        envelope: [{ window_s: 5, watts: 646, activity_id: "older", title: null, start_time: "2026-08-29T08:02:36+03:00" }],
+      } as PowerCurveData);
+      const { getByText } = renderPanel();
+      await waitFor(() => getByText("Кривая мощности"));
+      getByText("лучшая средняя мощность · серым — за всё время");
+      const opts = constructed[0].opts as { series: { label?: string }[] };
+      expect(opts.series.map((s) => s.label)).toEqual(["Окно", "За всё время (Вт)", "Эта тренировка (Вт)"]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("sizes the watts axis by its labels, so 1,000 is not cut (#219)", async () => {

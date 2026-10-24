@@ -75,11 +75,11 @@ describe("DynamicsZonesRow", () => {
     const pressed = () =>
       screen.getAllByRole("button").find((b) => b.getAttribute("aria-pressed") === "true")!
         .textContent;
-    fireEvent.click(screen.getByText("Heart rate"));
-    expect(pressed()).toBe("Heart rate");
+    fireEvent.click(screen.getByText("HR"));
+    expect(pressed()).toBe("HR");
     // Same activity refreshed: the pick stays.
     rerender(<DynamicsZonesRow activity={{ ...pedalRide }} timeInZones={both} />);
-    expect(pressed()).toBe("Heart rate");
+    expect(pressed()).toBe("HR");
     // Another activity: power again.
     rerender(<DynamicsZonesRow activity={{ ...pedalRide, id: "c" }} timeInZones={both} />);
     expect(pressed()).toBe("Power");

@@ -9,6 +9,7 @@ import { useToastStore } from "../../stores/toastStore";
 import type { Photo } from "../../lib/types";
 import { photoUrl } from "./photoUrl";
 import { errorText } from "../../lib/errors";
+import { capitalize, formatNumber, useT } from "../../lib/i18n";
 
 interface Props {
   activityId: string;
@@ -18,6 +19,7 @@ interface Props {
 export function PhotoGallery({ activityId, onShare }: Props) {
   const queryClient = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const [lightbox, setLightbox] = useState<Photo | null>(null);
   const [editingCaption, setEditingCaption] = useState<string | null>(null);
   const [captionDraft, setCaptionDraft] = useState("");
@@ -36,13 +38,15 @@ export function PhotoGallery({ activityId, onShare }: Props) {
     onSuccess: (res) => {
       invalidate();
       const parts: string[] = [];
-      if (res.attached.length) parts.push(`Added ${res.attached.length}`);
-      if (res.skipped.length) parts.push(`skipped ${res.skipped.length} duplicates`);
-      if (res.failed.length) parts.push(`${res.failed.length} failed`);
+      if (res.attached.length) parts.push(t("activity.photos.added", { count: res.attached.length }));
+      if (res.skipped.length) parts.push(t("activity.photos.skipped", { count: res.skipped.length }));
+      if (res.failed.length) parts.push(t("activity.photos.failed", { count: res.failed.length }));
       const tone = res.failed.length > 0 ? "warning" : "success";
-      if (parts.length) addToast(tone, parts.join(", "));
+      // The parts after the first are written in lower case; whichever
+      // comes first opens the sentence.
+      if (parts.length) addToast(tone, capitalize(parts.join(", ")));
     },
-    onError: (e: unknown) => addToast("error", `Failed to attach photos: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("activity.photos.attachFailed", { error: errorText(e) })),
   });
 
   const deleteMutation = useMutation({
@@ -64,7 +68,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
   const reorderMutation = useMutation({
     mutationFn: (ids: string[]) => api.reorderPhotos(ids),
     onError: (e: unknown) => {
-      addToast("error", `Failed to reorder: ${errorText(e)}`);
+      addToast("error", t("activity.photos.reorderFailed", { error: errorText(e) }));
       invalidate();
     },
   });
@@ -84,12 +88,12 @@ export function PhotoGallery({ activityId, onShare }: Props) {
   const handleAdd = useCallback(async () => {
     const selected = await open({
       multiple: true,
-      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "heic", "heif"] }],
+      filters: [{ name: t("activity.photos.images"), extensions: ["jpg", "jpeg", "png", "webp", "heic", "heif"] }],
     });
     if (selected && selected.length > 0) {
       attachMutation.mutate(selected);
     }
-  }, [attachMutation]);
+  }, [attachMutation, t]);
 
   // Native OS drops anywhere on the activity page attach photos — that is
   // handled window-wide by useDropImport, not here.
@@ -97,7 +101,8 @@ export function PhotoGallery({ activityId, onShare }: Props) {
     <div>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium text-muted">
-          Photos {photos.length > 0 && <span className="text-faint">({photos.length})</span>}
+          {t("activity.photos.title")}{" "}
+          {photos.length > 0 && <span className="text-faint">({formatNumber(photos.length)})</span>}
         </h3>
         <button
           onClick={handleAdd}
@@ -105,15 +110,13 @@ export function PhotoGallery({ activityId, onShare }: Props) {
           className="flex items-center gap-1.5 text-sm text-muted hover:text-ink px-3 py-1.5 rounded border border-border hover:border-border-2 disabled:opacity-50"
         >
           <ImagePlus size={14} />
-          {attachMutation.isPending ? "Adding..." : "Add Photos"}
+          {t(attachMutation.isPending ? "activity.photos.adding" : "activity.photos.add")}
         </button>
       </div>
 
       <div className="border rounded-lg p-3 border-border">
         {photos.length === 0 ? (
-          <div className="text-center text-sm text-faint py-8">
-            No photos yet. Click "Add Photos" or drop images anywhere on this page.
-          </div>
+          <div className="text-center text-sm text-faint py-8">{t("activity.photos.empty")}</div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
             {photos.map((p, idx) => (
@@ -145,7 +148,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                 <div className="absolute inset-x-0 top-0 p-1 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => onShare(p)}
-                    title="Share"
+                    title={t("common.share")}
                     className="p-1 rounded bg-black/60 hover:bg-black/80 text-white"
                   >
                     <Share2 size={12} />
@@ -155,7 +158,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                       setEditingCaption(p.id);
                       setCaptionDraft(p.caption ?? "");
                     }}
-                    title="Edit caption"
+                    title={t("activity.photos.editCaption")}
                     className="p-1 rounded bg-black/60 hover:bg-black/80 text-white"
                   >
                     <Pencil size={12} />
@@ -163,14 +166,14 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                   <button
                     onClick={async () => {
                       const ok = await confirmDialog({
-                        title: "Delete photo",
-                        message: "Delete this photo?",
-                        confirmLabel: "Delete",
+                        title: t("activity.photos.deleteTitle"),
+                        message: t("activity.photos.deleteMessage"),
+                        confirmLabel: t("common.delete"),
                         danger: true,
                       });
                       if (ok) deleteMutation.mutate(p.id);
                     }}
-                    title="Delete"
+                    title={t("common.delete")}
                     className="p-1 rounded bg-black/60 hover:bg-red-700 text-white"
                   >
                     <Trash2 size={12} />
@@ -192,7 +195,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
         // must not discard a half-typed caption. Closing is explicit.
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
           <div className="bg-card rounded-lg p-4 w-96">
-            <h3 className="text-sm font-medium mb-2">Edit caption</h3>
+            <h3 className="text-sm font-medium mb-2">{t("activity.photos.editCaption")}</h3>
             <input
               type="text"
               value={captionDraft}
@@ -205,7 +208,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                 onClick={() => setEditingCaption(null)}
                 className="text-sm text-muted px-3 py-1.5"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={() =>
@@ -216,7 +219,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
                 }
                 className="text-sm bg-accent text-white px-3 py-1.5 rounded"
               >
-                Save
+                {t("common.save")}
               </button>
             </div>
           </div>
@@ -230,6 +233,7 @@ export function PhotoGallery({ activityId, onShare }: Props) {
         >
           <button
             onClick={() => setLightbox(null)}
+            aria-label={t("common.close")}
             className="absolute top-4 right-4 p-2 rounded bg-black/60 hover:bg-black/80 text-white"
           >
             <X size={20} />

@@ -6,6 +6,8 @@ import {
   formatSwimPace,
   formatPaceOrSpeed,
   paceOrSpeedLabel,
+  avgPaceOrSpeedLabel,
+  showsPace,
   formatSpeed,
   formatElevation,
   formatGrade,
@@ -108,6 +110,26 @@ describe("formatPaceOrSpeed / paceOrSpeedLabel", () => {
     expect(paceOrSpeedLabel("ride")).toBe("Speed");
     // Non-swim water sports keep speed too.
     expect(paceOrSpeedLabel("paddle")).toBe("Speed");
+  });
+});
+
+describe("showsPace / avgPaceOrSpeedLabel (#234)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("shows a pace for foot and swim sports, a speed for the rest", () => {
+    expect(["run", "trail_run", "swim", "open_water"].map(showsPace)).toEqual([true, true, true, true]);
+    expect(["ride", "paddle"].map(showsPace)).toEqual([false, false]);
+  });
+
+  it("names the average by the same choice, in the language", () => {
+    expect(avgPaceOrSpeedLabel("run")).toBe("Avg Pace");
+    expect(avgPaceOrSpeedLabel("ride")).toBe("Avg Speed");
+    useLanguageStore.getState().setPref("ru");
+    expect(avgPaceOrSpeedLabel("swim")).toBe("Ср. темп");
+    expect(avgPaceOrSpeedLabel("ride")).toBe("Ср. скорость");
+    useLanguageStore.getState().setPref("it");
+    expect(avgPaceOrSpeedLabel("run")).toBe("Passo medio");
+    expect(avgPaceOrSpeedLabel("ride")).toBe("Velocità media");
   });
 });
 

@@ -13,6 +13,7 @@ vi.mock("../../stores/toastStore", () => ({
 
 import { api } from "../../lib/tauri";
 import { SportBadge } from "./SportBadge";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -67,5 +68,18 @@ describe("SportBadge", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "The vault is locked"));
     expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("names the sport and says the change in Russian (#234)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      vi.mocked(api.updateActivity).mockResolvedValue(undefined as never);
+      mount();
+      fireEvent.click(screen.getByTitle("Велосипед — сменить вид спорта"));
+      fireEvent.click(screen.getByRole("button", { name: "Бег" }));
+      await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Вид спорта изменён"));
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

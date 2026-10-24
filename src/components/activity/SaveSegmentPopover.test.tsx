@@ -4,6 +4,7 @@ import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { SaveSegmentPopover, clampMenuPosition, MENU_W } from "./SaveSegmentPopover";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -115,6 +116,24 @@ describe("SaveSegmentPopover", () => {
     fireEvent.click(screen.getByText("Save"));
     expect(await screen.findByText(/no GPS data/)).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("speaks Russian: the form, the duplicate warning and the saved beat (#234)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      mocked.checkSimilarSegments.mockResolvedValue([{ id: "s0", name: "Старый подъём", distance_m: 2410 }]);
+      renderPopover();
+      screen.getByText("Сохранить сегмент");
+      screen.getByText("Отмена");
+      await screen.findByText(
+        "Похожий сегмент уже сохранён: «Старый подъём» (2,41 км). Этот всё равно можно сохранить.",
+      );
+      fireEvent.change(screen.getByPlaceholderText("Название сегмента"), { target: { value: "Новый" } });
+      fireEvent.click(screen.getByText("Всё равно сохранить"));
+      await screen.findByText("Сохранено ✓");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("closes on Escape and on an outside pointerdown", () => {

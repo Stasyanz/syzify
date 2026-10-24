@@ -10,9 +10,9 @@ import {
   formatElevation,
   formatDurationHM,
   formatPaceOrSpeed,
-  paceOrSpeedLabel,
+  showsPace,
 } from "../lib/format";
-import { useUnits } from "../lib/units";
+import { unitLabel, useUnits } from "../lib/units";
 import { formatDateTime, useT } from "../lib/i18n";
 import { SportBadge } from "../components/activity/SportBadge";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
@@ -161,7 +161,7 @@ export function ActivityDetailPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full text-muted">
-        Loading activity...
+        {t("activity.loading")}
       </div>
     );
   }
@@ -169,7 +169,7 @@ export function ActivityDetailPage() {
   if (error || !data) {
     return (
       <div className="flex items-center justify-center h-full text-red-500">
-        Failed to load activity
+        {t("activity.loadFailed")}
       </div>
     );
   }
@@ -202,15 +202,15 @@ export function ActivityDetailPage() {
   const badgeView = (kind: string): { value: string; label: string } => {
     switch (kind) {
       case "distance":
-        return { value: formatDistance(activity.distance_m), label: "Longest distance" };
+        return { value: formatDistance(activity.distance_m), label: t("dashboard.records.longestDistance") };
       case "elevation":
-        return { value: formatElevation(activity.elev_gain_m), label: "Highest climb" };
+        return { value: formatElevation(activity.elev_gain_m), label: t("activity.badge.elevation") };
       case "duration":
-        return { value: formatDurationHM(activity.duration_s), label: "Longest duration" };
+        return { value: formatDurationHM(activity.duration_s), label: t("dashboard.records.longestDuration") };
       case "pace":
         return {
           value: formatPaceOrSpeed(activity.sport_type, activity.avg_speed_mps),
-          label: `Fastest ${paceOrSpeedLabel(activity.sport_type).toLowerCase()}`,
+          label: t(showsPace(activity.sport_type) ? "activity.badge.pace" : "activity.badge.speed"),
         };
       default:
         return { value: "", label: "" };
@@ -263,7 +263,7 @@ export function ActivityDetailPage() {
           <button
             onClick={() => navigate("/library")}
             className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors shrink-0"
-            title="Back to library (Esc)"
+            title={t("activity.header.backTip")}
           >
             <ChevronLeft size={18} />
           </button>
@@ -280,9 +280,9 @@ export function ActivityDetailPage() {
           <div className="min-w-0 flex-1">
             <InlineTitle
               title={activity.title ?? sport}
-              onSave={async (t) => {
+              onSave={async (title) => {
                 try {
-                  await api.updateActivity(activity.id, { title: t });
+                  await api.updateActivity(activity.id, { title });
                   queryClient.invalidateQueries({ queryKey: ["activity", id] });
                   queryClient.invalidateQueries({ queryKey: ["activities"] });
                   queryClient.invalidateQueries({ queryKey: ["calendar"] });
@@ -297,10 +297,10 @@ export function ActivityDetailPage() {
                 <button
                   onClick={() => navigate(`/activity/${activity.parent_id}`)}
                   className="flex items-center gap-1 text-xs bg-accent-soft text-accent-2 px-2 py-0.5 rounded hover:opacity-80 cursor-pointer whitespace-nowrap shrink-0"
-                  data-tip="Open the multisport event this leg belongs to"
+                  data-tip={t("activity.header.parentTip")}
                 >
                   <Trophy size={11} />
-                  {parent?.activity.title ?? "Multisport"}
+                  {parent?.activity.title ?? t("activity.header.multisport")}
                 </button>
               )}
             </div>
@@ -329,7 +329,7 @@ export function ActivityDetailPage() {
                   <div
                     key={b.kind}
                     className="badge-pill"
-                    data-tip={`${label} · ${b.all_time ? `all-time ${sport} record` : `${sport} personal best`}`}
+                    data-tip={t(b.all_time ? "activity.badge.allTime" : "activity.badge.personalBest", { label, sport })}
                   >
                     <Trophy size={13} />
                     <span>{value}</span>
@@ -344,8 +344,8 @@ export function ActivityDetailPage() {
               onClick={goToPrev}
               disabled={!adjacent?.prev_id}
               className="grid place-items-center w-8 h-8 rounded-md text-faint hover:text-ink hover:bg-card-2 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-faint disabled:cursor-not-allowed"
-              data-tip="Previous activity (←)"
-              aria-label="Previous activity"
+              data-tip={t("activity.header.previousTip")}
+              aria-label={t("activity.header.previous")}
             >
               <ChevronLeft size={18} />
             </button>
@@ -353,8 +353,8 @@ export function ActivityDetailPage() {
               onClick={goToNext}
               disabled={!adjacent?.next_id}
               className="grid place-items-center w-8 h-8 rounded-md text-faint hover:text-ink hover:bg-card-2 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-faint disabled:cursor-not-allowed"
-              data-tip="Next activity (→)"
-              aria-label="Next activity"
+              data-tip={t("activity.header.nextTip")}
+              aria-label={t("activity.header.next")}
             >
               <ChevronRight size={18} />
             </button>
@@ -362,33 +362,33 @@ export function ActivityDetailPage() {
             <button
               onClick={() => setEditing(true)}
               className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors"
-              data-tip="Edit"
-              aria-label="Edit"
+              data-tip={t("common.edit")}
+              aria-label={t("common.edit")}
             >
               <Pencil size={16} />
             </button>
             <button
               onClick={() => setSharing("pick")}
               className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors"
-              data-tip="Share"
-              aria-label="Share"
+              data-tip={t("common.share")}
+              aria-label={t("common.share")}
             >
               <Share2 size={16} />
             </button>
             <ActionMenu
-              ariaLabel="Export GPX"
-              tip="Export GPX"
+              ariaLabel={t("activity.export.title")}
+              tip={t("activity.export.title")}
               disabled={exporting}
               className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors disabled:opacity-50"
               items={[
                 {
-                  label: "Original GPX",
-                  hint: "Full track as recorded",
+                  label: t("activity.export.original"),
+                  hint: t("activity.export.originalHint"),
                   onSelect: () => handleExportGpx(),
                 },
                 {
-                  label: "With privacy zone",
-                  hint: `Hides ${PRIVACY_RADIUS_M} m around start & finish`,
+                  label: t("activity.export.private"),
+                  hint: t("activity.export.privateHint", { distance: `${PRIVACY_RADIUS_M} ${unitLabel("m")}` }),
                   onSelect: () => handleExportGpx(PRIVACY_RADIUS_M),
                 },
               ]}
@@ -402,8 +402,8 @@ export function ActivityDetailPage() {
               <button
                 onClick={handleUnmerge}
                 className="grid place-items-center w-9 h-9 rounded-xl border border-border-2 bg-card text-muted hover:text-ink hover:bg-card-2 hover:border-faint transition-colors"
-                data-tip="Unmerge"
-                aria-label="Unmerge"
+                data-tip={t("activity.header.unmerge")}
+                aria-label={t("activity.header.unmerge")}
               >
                 <Split size={16} />
               </button>
@@ -525,7 +525,7 @@ export function ActivityDetailPage() {
           {/* Notes */}
           {activity.notes && (
             <div>
-              <h3 className="text-sm font-medium text-muted mb-1">Notes</h3>
+              <h3 className="text-sm font-medium text-muted mb-1">{t("common.notes")}</h3>
               <p className="text-ink whitespace-pre-wrap">{activity.notes}</p>
             </div>
           )}

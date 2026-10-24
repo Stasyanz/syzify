@@ -35,7 +35,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load image"));
+    img.onerror = () => reject(new Error(t("activity.share.imageFailed")));
     img.src = src;
   });
 }
@@ -193,7 +193,7 @@ export const BRAND_WORD_FS = 2.16;
 function chipColors(theme: "dark" | "light") {
   return {
     bg: theme === "dark" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.78)",
-    text: theme === "dark" ? "#ffffff" : "#0a0a0a",
+    text: theme === "dark" ? "#ffffff" : "#0a0a0a", // i18n-ignore: the text's color
     subtext: theme === "dark" ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.55)",
     stroke: theme === "dark" ? "#ffffff" : "#0a0a0a",
   };
@@ -446,7 +446,7 @@ export async function renderShareCanvas(opts: RenderOptions): Promise<string> {
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context unavailable");
+  if (!ctx) throw new Error(t("activity.share.canvasFailed"));
 
   ctx.textBaseline = "alphabetic";
   // Opaque backdrop so a rotated frame that overhangs the photo has defined (not

@@ -75,16 +75,37 @@ describe("LapsTable in the interface language (#232)", () => {
   it("names the auto-split length in the language and the units", () => {
     useLanguageStore.getState().setPref("ru");
     const ride = render(<LapsTable laps={[]} trackpoints={track(12)} sport="ride" />);
-    expect(ride.container.querySelector("h3")!.textContent).toBe("Laps· auto · 5 км");
+    expect(ride.container.querySelector("h3")!.textContent).toBe("Круги· авто · 5 км");
     cleanup();
     const swim = render(<LapsTable laps={[]} trackpoints={track(1)} sport="swim" />);
-    expect(swim.container.querySelector("h3")!.textContent).toBe("Laps· auto · 100 м");
+    expect(swim.container.querySelector("h3")!.textContent).toBe("Круги· авто · 100 м");
     cleanup();
     useUnitsStore.setState({ mode: "imperial" });
     const run = render(<LapsTable laps={[]} trackpoints={track(4)} sport="run" />);
-    expect(run.container.querySelector("h3")!.textContent).toBe("Laps· auto · 1 ми");
+    expect(run.container.querySelector("h3")!.textContent).toBe("Круги· авто · 1 ми");
     cleanup();
     const mtb = render(<LapsTable laps={[]} trackpoints={track(20)} sport="mountain_bike" />);
-    expect(mtb.container.querySelector("h3")!.textContent).toBe("Laps· auto · 5 ми");
+    expect(mtb.container.querySelector("h3")!.textContent).toBe("Круги· авто · 5 ми");
+  });
+
+  /** #234: the headers are the dictionaries' words, a ride's pace column
+   * its speed and a run's its pace. */
+  const headers = (container: HTMLElement) => Array.from(container.querySelectorAll("thead th"), (th) => th.textContent);
+
+  it("heads its columns in English", () => {
+    const { container } = render(<LapsTable laps={[lap(1), lap(2)]} trackpoints={track(0)} sport="ride" />);
+    expect(container.querySelector("h3")!.textContent).toBe("Laps");
+    expect(headers(container)).toEqual([
+      "Lap", "Time", "Distance", "Avg Speed", "Avg HR", "Max HR", "Ascent", "Cadence", "Power",
+    ]);
+  });
+
+  it("heads its columns in Russian", () => {
+    useLanguageStore.getState().setPref("ru");
+    const { container } = render(<LapsTable laps={[lap(1), lap(2)]} trackpoints={track(0)} sport="run" />);
+    expect(container.querySelector("h3")!.textContent).toBe("Круги");
+    expect(headers(container)).toEqual([
+      "Круг", "Время", "Дистанция", "Ср. темп", "Ср. пульс", "Макс. пульс", "Набор высоты", "Каденс", "Мощность",
+    ]);
   });
 });

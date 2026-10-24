@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MAX_TITLE_LENGTH } from "../../lib/types";
+import { useT } from "../../lib/i18n";
 
 interface Props {
   /** Current display title (custom title or the sport-based fallback). */
@@ -19,6 +20,7 @@ interface Props {
  * overlong value (pre-existing title, paste in some engines) through.
  */
 export function InlineTitle({ title, onSave }: Props) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   // Transient "can't type further" flash when input hits the cap.
@@ -95,7 +97,7 @@ export function InlineTitle({ title, onSave }: Props) {
           onBlur={() => {
             if (!settled.current) save();
           }}
-          aria-label="Activity title"
+          aria-label={t("activity.title.label")}
           className={`${headingClass} col-start-1 row-start-1 w-full min-w-0 pr-1 bg-transparent outline-none border-b ${
             limitHit ? "border-red-500" : "border-accent"
           }`}
@@ -108,7 +110,7 @@ export function InlineTitle({ title, onSave }: Props) {
             role="status"
             className="absolute right-0 top-full mt-1.5 z-10 rounded-md bg-red-700 text-white text-xs font-medium px-2 py-0.5 whitespace-nowrap shadow-md"
           >
-            Max {MAX_TITLE_LENGTH} characters
+            {t("activity.title.max", { count: MAX_TITLE_LENGTH })}
           </span>
         )}
       </span>
@@ -118,7 +120,7 @@ export function InlineTitle({ title, onSave }: Props) {
   return (
     <h1
       onClick={start}
-      data-tip="Click to rename"
+      data-tip={t("activity.title.renameTip")}
       className={`${headingClass} truncate cursor-text`}
       style={headingStyle}
     >

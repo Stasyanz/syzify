@@ -10,6 +10,7 @@ import {
   isPersonalRecord,
 } from "./SegmentEffortsPanel";
 import { useActivityStore } from "../../stores/activityStore";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: { getActivitySegmentEfforts: vi.fn() },
@@ -82,7 +83,8 @@ describe("SegmentEffortsPanel", () => {
 
   it("marks the best effort with a PR badge", async () => {
     await renderPanel([effort({ rank: 1 })]);
-    expect(screen.getByText("PR")).toBeTruthy();
+    expect(screen.getByText("PR").getAttribute("data-tip")).toBe("Personal record");
+    expect(screen.getByRole("img", { name: "Personal record" })).toBe(screen.getByText("PR"));
   });
 
   it("renders nothing when the activity has no efforts", async () => {
@@ -132,5 +134,33 @@ describe("SegmentEffortsPanel", () => {
     expect(screen.getByText("3.15 km")).toBeTruthy();
     // Time, pace and rank all fall back to placeholders.
     expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("speaks Russian: the headers, the standing and the PR badge (#234)", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      mocked.getActivitySegmentEfforts.mockResolvedValue([
+        effort({ rank: 1, avg_power_w: 240 }),
+        effort({ id: 2, start_idx: 30, end_idx: 40, rank: 2, effort_count: 12 }),
+      ]);
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={qc}>
+          <SegmentEffortsPanel activityId="act-1" sport="ride" />
+        </QueryClientProvider>,
+      );
+      await screen.findByText("Сегменты");
+      expect(Array.from(document.querySelectorAll("th"), (th) => th.textContent)).toEqual([
+        "Сегмент", "Время", "Мощность", "Скорость", "Дистанция", "Уклон", "Место",
+      ]);
+      const pr = screen.getByText("ЛР");
+      expect(pr.getAttribute("data-tip")).toBe("Личный рекорд");
+      expect(screen.getByRole("img", { name: "Личный рекорд" })).toBe(pr);
+      screen.getByText("1 из 2");
+      screen.getByText("2 из 12");
+      expect(document.querySelector("tbody tr")!.getAttribute("title")).toBe("Показать на карте и графике");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

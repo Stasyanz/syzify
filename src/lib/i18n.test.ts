@@ -310,6 +310,8 @@ describe("the dictionaries", () => {
       "units.lb", "units.bpm", "units.w", "units.rpm", "units.kcal", "units.h", "units.min", "units.mm",
       "sport.triathlon", "sport.cardio", "sport.yoga", "sport.snowboard", "sport.golf",
       "unlock.password", "dashboard.records.sprint", "dashboard.volume.title",
+      // "Multisport", Coggan's VO2 max as Italian coaching writes it, a segment's PR.
+      "activity.header.multisport", "activity.zones.power.vo2max", "activity.segments.pr",
     ],
   };
 

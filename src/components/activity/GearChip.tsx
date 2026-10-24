@@ -6,6 +6,7 @@ import { gearChoicesFor, kindsForSport } from "../../lib/gear";
 import type { GearItem, GearKind } from "../../lib/types";
 import { useToastStore } from "../../stores/toastStore";
 import { errorText } from "../../lib/errors";
+import { useT, type Translator } from "../../lib/i18n";
 
 /** The kind's icon, shared with the Garage cards. */
 export function GearKindIcon({ kind, size = 16, className }: { kind: GearKind; size?: number; className?: string }) {
@@ -22,14 +23,11 @@ export function gearTip(item: GearItem): string {
 
 /** What an activity without gear asks for: the one kind its sport takes
  * ("Bike" for a ride, "Shoes" for a run), or plain "Gear" where the sport
- * takes anything. */
-export function gearPlaceholder(sport: string): { kind: GearKind; label: string } {
+ * takes anything. The label in `translate`'s language. */
+export function gearPlaceholder(sport: string, translate: Translator): { kind: GearKind; label: string } {
   const kinds = kindsForSport(sport).filter((k) => k !== "other");
-  if (kinds.length === 1) {
-    const kind = kinds[0];
-    return { kind, label: kind === "bike" ? "Bike" : "Shoes" };
-  }
-  return { kind: "other", label: "Gear" };
+  const kind = kinds.length === 1 ? kinds[0] : "other";
+  return { kind, label: translate(`activity.gear.kind.${kind}`) };
 }
 
 /** Whether the chip has anything to show: the item it is on, or (for an
@@ -66,6 +64,7 @@ export function GearChip({
   onChanged: () => void;
 }) {
   const addToast = useToastStore((s) => s.addToast);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { data: items = [] } = useQuery({
@@ -106,7 +105,7 @@ export function GearChip({
       onChanged();
     },
     // A Tauri command's refusal arrives as a bare string, not an Error.
-    onError: (e: unknown) => addToast("error", `Gear not changed: ${errorText(e)}`),
+    onError: (e: unknown) => addToast("error", t("activity.gear.notChanged", { error: errorText(e) })),
   });
 
   if (!gearChipVisible(items, gearId, sport, locked)) return null;
@@ -115,8 +114,8 @@ export function GearChip({
   // still cached) reads as no gear.
   const currentId = current?.id ?? null;
   const choices = gearChoicesFor(items, sport, gearId);
-  const placeholder = gearPlaceholder(sport);
-  const tip = current ? gearTip(current) : `No ${placeholder.label.toLowerCase()} yet — pick one`;
+  const placeholder = gearPlaceholder(sport, t);
+  const tip = current ? gearTip(current) : t(`activity.gear.empty.${placeholder.kind}`);
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -126,7 +125,7 @@ export function GearChip({
         // sets the ink color itself.
         className={`device-chip cursor-pointer ${current ? "" : "!text-faint"}`}
         data-tip={tip}
-        aria-label={current ? `Gear: ${tip}` : `Pick ${placeholder.label.toLowerCase()}`}
+        aria-label={current ? t("activity.gear.current", { gear: tip }) : t(`activity.gear.pick.${placeholder.kind}`)}
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="gear-chip"
@@ -141,7 +140,7 @@ export function GearChip({
       {open && (
         <div
           role="menu"
-          aria-label="Gear"
+          aria-label={t("common.gear")}
           className="absolute top-full left-0 mt-1.5 bg-card border border-border rounded-card shadow-xl py-1 z-20 w-56 max-h-80 overflow-y-auto scroll-themed"
         >
           {[null, ...choices].map((choice) => {
@@ -162,7 +161,13 @@ export function GearChip({
                 <span className="grid h-6 w-6 shrink-0 place-items-center text-accent-2">
                   {choice ? <GearKindIcon kind={choice.kind} size={14} /> : null}
                 </span>
-                <span className="truncate">{choice ? (choice.retired_at ? `${choice.name} (retired)` : choice.name) : "None"}</span>
+                <span className="truncate">
+                  {choice
+                    ? choice.retired_at
+                      ? t("library.filter.retired", { name: choice.name })
+                      : choice.name
+                    : t("activity.gear.none")}
+                </span>
                 {isSel && <Check size={14} className="ml-auto shrink-0" />}
               </button>
             );

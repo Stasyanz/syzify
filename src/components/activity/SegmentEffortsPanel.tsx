@@ -11,6 +11,7 @@ import {
   paceOrSpeedLabel,
 } from "../../lib/format";
 import { useActivityStore } from "../../stores/activityStore";
+import { useT } from "../../lib/i18n";
 
 /** Sport-aware speed/pace of one effort, from its own path and time. */
 export function effortSpeedMps(e: {
@@ -37,6 +38,7 @@ export function SegmentEffortsPanel({
   activityId: string;
   sport: string;
 }) {
+  const t = useT();
   const selectedRange = useActivityStore((s) => s.selectedRange);
   const setSelectedRange = useActivityStore((s) => s.setSelectedRange);
   const { data: efforts } = useQuery({
@@ -57,18 +59,18 @@ export function SegmentEffortsPanel({
 
   return (
     <div className="dash-card">
-      <h3 className="mb-3">Segments</h3>
+      <h3 className="mb-3">{t("activity.segments.title")}</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-faint text-xs uppercase tracking-wide">
-              <th className="font-semibold pb-2 text-left">Segment</th>
-              <th className="font-semibold pb-2 text-right">Time</th>
-              {hasPower && <th className="font-semibold pb-2 text-right">Power</th>}
+              <th className="font-semibold pb-2 text-left">{t("activity.segments.segment")}</th>
+              <th className="font-semibold pb-2 text-right">{t("common.time")}</th>
+              {hasPower && <th className="font-semibold pb-2 text-right">{t("common.power")}</th>}
               <th className="font-semibold pb-2 text-right">{paceOrSpeedLabel(sport)}</th>
-              <th className="font-semibold pb-2 text-right">Distance</th>
-              <th className="font-semibold pb-2 text-right">Grade</th>
-              <th className="font-semibold pb-2 text-right">Rank</th>
+              <th className="font-semibold pb-2 text-right">{t("common.distance")}</th>
+              <th className="font-semibold pb-2 text-right">{t("activity.segments.grade")}</th>
+              <th className="font-semibold pb-2 text-right">{t("activity.segments.rank")}</th>
             </tr>
           </thead>
           <tbody>
@@ -80,15 +82,21 @@ export function SegmentEffortsPanel({
                 className={`cursor-pointer border-t border-border transition-colors ${
                   isActive(e) ? "bg-accent-soft" : "hover:bg-card-2"
                 }`}
-                title="Show on map and chart"
+                title={t("activity.segments.showTip")}
               >
                 <td className="py-1.5 pr-2 font-medium">
                   <span className="inline-flex items-center gap-1.5">
                     {e.segment_name}
                     {isPersonalRecord(e) && (
-                      <span className="inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-bold uppercase text-accent-2">
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-bold uppercase text-accent-2"
+                        // "PR" is a badge, read out whole.
+                        role="img"
+                        data-tip={t("activity.segments.prTip")}
+                        aria-label={t("activity.segments.prTip")}
+                      >
                         <Trophy size={11} aria-hidden />
-                        PR
+                        {t("activity.segments.pr")}
                       </span>
                     )}
                   </span>
@@ -111,7 +119,7 @@ export function SegmentEffortsPanel({
                   {e.avg_grade_pct != null ? formatGrade(e.avg_grade_pct) : "--"}
                 </td>
                 <td className="py-1.5 text-right tabular-nums">
-                  {e.rank != null ? `${e.rank} of ${e.effort_count}` : "--"}
+                  {e.rank != null ? t("activity.segments.rankOf", { rank: e.rank, total: e.effort_count }) : "--"}
                 </td>
               </tr>
             ))}

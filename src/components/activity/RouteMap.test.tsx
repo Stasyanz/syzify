@@ -21,6 +21,7 @@ import { api } from "../../lib/tauri";
 import { RouteMap } from "./RouteMap";
 import { useActivityStore } from "../../stores/activityStore";
 import type { TrackPointColumns } from "../../lib/types";
+import { useLanguageStore } from "../../lib/i18n";
 
 // Three points ~111 m apart along a meridian; a right-click snaps within 50 m.
 const track: TrackPointColumns = {
@@ -477,5 +478,50 @@ describe("a simulated course (#190, #222)", () => {
       expect(mapSpy.mock.calls.length, sport).toBe(before);
       cleanup();
     }
+  });
+});
+
+describe("RouteMap in Russian (#234)", () => {
+  beforeEach(() => useLanguageStore.getState().setPref("ru"));
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("titles its controls, the layers and the destination in the language", async () => {
+    vi.mocked(api.setActivityLocationPoint).mockResolvedValue({
+      geocoded: true,
+      geocoding_off: false,
+      location_name: "Махмутлар",
+    });
+    const { map, getByTitle, getByText } = mount({ location: [55.702, 37.6], locationName: "Махмутлар" });
+    // Leaflet's own zoom buttons too: their titles come from the dictionaries.
+    expect(document.querySelector(".leaflet-control-zoom-in")!.getAttribute("title")).toBe("Приблизить");
+    expect(document.querySelector(".leaflet-control-zoom-out")!.getAttribute("title")).toBe("Отдалить");
+    fireEvent.click(getByTitle("Сменить слой карты"));
+    for (const name of ["Стандартная", "Топографическая", "Велосипедная", "Спутниковая", "Тёмная"]) getByText(name);
+    fireEvent.click(getByTitle("Карта на весь экран"));
+    fireEvent.click(getByTitle("Выйти из полноэкранного режима"));
+    getByTitle("Карта на весь экран");
+
+    const tip = flagOf(map)!.getTooltip()?.getContent() as HTMLElement;
+    expect(tip.textContent).toBe("Точка назначения · Махмутлар");
+    act(() => void map.fire("click", { latlng: L.latLng(55.7011, 37.6) }));
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>(".leaflet-popup button")).find((b) =>
+      b.textContent?.includes("Сделать точкой назначения"),
+    );
+    fireEvent.click(item!);
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Точка назначения: Махмутлар"));
+  });
+
+  it("names a flag without a place, and an indoor activity's empty map", () => {
+    const { map } = mount({ location: [55.7, 37.6], locationName: null });
+    expect((flagOf(map)!.getTooltip()?.getContent() as HTMLElement).textContent).toBe("Точка назначения");
+    cleanup();
+    const empty = { ...track, lat: [null, null, null], lon: [null, null, null] };
+    const qc = new QueryClient();
+    const { getByText } = render(
+      <QueryClientProvider client={qc}>
+        <RouteMap trackpoints={empty} sport="indoor_ride" activityId="act-1" />
+      </QueryClientProvider>,
+    );
+    getByText("Тренировка в помещении — нет данных маршрута");
   });
 });

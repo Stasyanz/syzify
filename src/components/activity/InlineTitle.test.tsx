@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent } from "@testing-library/react";
 import { InlineTitle } from "./InlineTitle";
+import { t, useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -73,5 +74,23 @@ describe("InlineTitle", () => {
     fireEvent.keyDown(input2, { key: "Enter" });
     fireEvent.blur(input2);
     expect(onSave).toHaveBeenCalledTimes(2); // Enter's save only, blur skipped
+  });
+});
+
+describe("InlineTitle in Russian (#234)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("labels the field, tips the heading and counts the cap with the plural it takes", () => {
+    useLanguageStore.getState().setPref("ru");
+    render(<InlineTitle title="Утренний заезд" onSave={vi.fn()} />);
+    expect(screen.getByRole("heading").getAttribute("data-tip")).toBe("Нажмите, чтобы переименовать");
+    fireEvent.click(screen.getByRole("heading"));
+    const input = screen.getByLabelText("Название тренировки");
+    fireEvent.change(input, { target: { value: "x".repeat(150) } });
+    expect(screen.getByRole("status").textContent).toBe("Максимум 100 символов");
+    // The other forms of the same message.
+    expect(t("activity.title.max", { count: 1 })).toBe("Максимум 1 символ");
+    expect(t("activity.title.max", { count: 3 })).toBe("Максимум 3 символа");
+    expect(t("activity.title.max", { count: 21 })).toBe("Максимум 21 символ");
   });
 });

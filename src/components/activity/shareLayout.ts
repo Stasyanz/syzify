@@ -1,3 +1,5 @@
+import { t } from "../../lib/i18n";
+
 export type BlockKind = "title" | "metrics" | "map" | "elevation";
 
 /** Position of a block, in fractions of the photo size (0..1, top-left corner). */
@@ -144,7 +146,14 @@ export interface CropPreset {
 }
 
 export const CROP_PRESETS: CropPreset[] = [
-  { key: "free", label: "Free", ratio: null },
+  {
+    key: "free",
+    // Read when shown, in the language of the moment.
+    get label() {
+      return t("activity.share.cropFree");
+    },
+    ratio: null,
+  },
   { key: "1:1", label: "1:1", ratio: 1 },
   { key: "16:9", label: "16:9", ratio: 16 / 9 },
 ];

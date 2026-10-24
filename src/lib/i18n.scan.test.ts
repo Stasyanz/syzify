@@ -22,20 +22,25 @@ function sources(dir: string, out: string[] = []): string[] {
 /** JSX attributes and object properties whose string reaches the screen. */
 const SHOWN_ATTRIBUTES = new Set([
   "aria-label", "ariaLabel", "aria-description", "aria-valuetext", "title", "placeholder", "data-tip", "alt", "label",
+  "tip",
 ]);
 const SHOWN_PROPERTIES = new Set([
   "label", "title", "message", "confirmLabel", "cancelLabel", "placeholder", "clearLabel", "ariaLabel", "description", "text", "name",
+  "hint",
 ]);
 /** Calls whose argument at the index is shown as it is: `sportLabel`'s
  * fallback is the name of a sport the app does not know. */
 const SHOWN_ARGUMENTS: Record<string, number> = { addToast: 1, confirm: 0, alert: 0, sportLabel: 1 };
 
 /** Text that reads the same in every language: names, formats, the
- * training abbreviations the epic keeps (#237). Grow it with care — an
- * English word here is a word nobody translates. */
+ * training abbreviations the epic keeps (#237) — and Garmin's PCO
+ * (platform center offset), which its Russian and Italian screens write
+ * the same way. Grow it with care — an English word here is a word nobody
+ * translates. */
 const SAME_IN_EVERY_LANGUAGE = new Set([
   "Syzify", "GitHub", "OpenStreetMap", "Garmin", "Strava", "Zwift",
   "GPX", "FIT", "TCX", "ZIP", "NP", "TSS", "FTP", "IF", "VI", "W",
+  "PCO",
 ]);
 
 /** Whether a text has a word some language writes differently. */
@@ -128,29 +133,6 @@ export function untranslatedIn(fileName: string, text: string): string[] {
  * with an empty map. A file not listed must show no English of its own.
  */
 const NOT_YET_TRANSLATED: Record<string, number> = {
-  "components/activity/ChartPanel.tsx": 4,
-  "components/activity/CropOverlay.tsx": 1,
-  "components/activity/CyclingDynamicsPanel.tsx": 18,
-  "components/activity/DraggableShareBlocks.tsx": 2,
-  "components/activity/EditActivityModal.tsx": 35,
-  "components/activity/FtpMismatchHint.tsx": 4,
-  "components/activity/GearChip.tsx": 9,
-  "components/activity/InlineTitle.tsx": 4,
-  "components/activity/LapsTable.tsx": 11,
-  "components/activity/MultisportLegs.tsx": 9,
-  "components/activity/PhotoGallery.tsx": 16,
-  "components/activity/PowerCurvePanel.tsx": 5,
-  "components/activity/RouteMap.tsx": 16,
-  "components/activity/SaveSegmentPopover.tsx": 8,
-  "components/activity/SegmentEffortsPanel.tsx": 10,
-  "components/activity/ShareModal.tsx": 44,
-  "components/activity/SportBadge.tsx": 2,
-  "components/activity/SummaryPanel.tsx": 6,
-  "components/activity/TimeInZonesPanel.tsx": 3,
-  "components/activity/chartConfigs.ts": 7,
-  "components/activity/shareCanvas.ts": 2,
-  "components/activity/shareLayout.ts": 1,
-  "components/activity/timeInZones.ts": 1,
   "components/feedback/FeedbackModal.tsx": 21,
   "components/import/ImportDialog.tsx": 6,
   "components/import/ImportProgressOverlay.tsx": 1,
@@ -169,7 +151,6 @@ const NOT_YET_TRANSLATED: Record<string, number> = {
   "hooks/useWatchFolderListener.ts": 1,
   "lib/importSummary.ts": 2,
   "lib/settingsTabs.ts": 5,
-  "routes/ActivityDetail.tsx": 23,
   "routes/PluginPage.tsx": 3,
   "routes/Segments.tsx": 27,
   "routes/Settings.tsx": 58,
@@ -239,6 +220,7 @@ describe("the scanner", () => {
       'const k = <p>{mode === "dark" ? icon : null}</p>;',
       'const l = <p>{t("settings.general.theme")}</p>;',
       'const m = <p>FTP · NP</p>;',
+      'const n = <Menu tip="Export file" items={[{ hint: "Whole track" }]} />;',
     ].join("\n");
     expect(untranslatedIn("fixture.tsx", source)).toEqual([
       "1: Plain text",
@@ -257,6 +239,8 @@ describe("the scanner", () => {
       "8: ZIP Archive",
       "9: Import failed",
       "10: Delete it?",
+      "16: Export file",
+      "16: Whole track",
     ]);
   });
 });

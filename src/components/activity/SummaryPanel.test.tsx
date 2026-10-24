@@ -30,8 +30,20 @@ describe("SummaryPanel in the interface language (#232)", () => {
       const text = container.textContent!;
       // Each tile sets its unit apart from the number.
       expect(text).toContain("4,00км");
-      expect(text).toContain("Скорость27,0км/ч");
+      expect(text).toContain("Ср. скорость27,0км/ч");
       expect(text).toContain("1240ккал");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("names the tiles in the language (#234)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const a = { ...makeActivity("run"), avg_hr: 150, calories: 500 } as Activity;
+      const { container } = render(<SummaryPanel activity={a} />);
+      const labels = Array.from(container.querySelectorAll(".uppercase"), (l) => l.textContent);
+      expect(labels).toEqual(["Дистанция", "Время", "Ср. темп", "Набор высоты", "Ср. пульс", "Калории"]);
     } finally {
       useLanguageStore.getState().setPref("system");
     }

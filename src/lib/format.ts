@@ -10,7 +10,7 @@ import {
   type UnitSymbol,
 } from "./units";
 import { isPaceSport, isSwimSport } from "./types";
-import { formatDateTime, formatNumber, formatPercent, t } from "./i18n";
+import { formatDateTime, formatNumber, formatPercent, t, type Translator } from "./i18n";
 
 // Numbers, units and dates here are written in the interface language
 // (#232): "1,50 км" in Russian. The units mode is its own setting.
@@ -74,7 +74,18 @@ export function formatPaceOrSpeed(sport: string, speedMps: number | null): strin
 /** Metric name matching formatPaceOrSpeed's choice for the sport, in the
  * interface language. */
 export function paceOrSpeedLabel(sport: string): string {
-  return isPaceSport(sport) || isSwimSport(sport) ? t("format.pace") : t("format.speed");
+  return showsPace(sport) ? t("format.pace") : t("format.speed");
+}
+
+/** "Avg Pace" or "Avg Speed", by the same choice — one message each, so
+ * a language words it its own way ("Passo medio"). */
+export function avgPaceOrSpeedLabel(sport: string, translate: Translator = t): string {
+  return showsPace(sport) ? translate("common.avgPace") : translate("common.avgSpeed");
+}
+
+/** Whether the sport's speed is shown as a pace (foot and swim sports). */
+export function showsPace(sport: string): boolean {
+  return isPaceSport(sport) || isSwimSport(sport);
 }
 
 export function formatSpeed(speedMps: number | null): string {

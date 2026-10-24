@@ -11,13 +11,14 @@ import {
   formatDistance,
   formatDuration,
   formatPaceOrSpeed,
-  paceOrSpeedLabel,
+  avgPaceOrSpeedLabel,
   formatElevation,
   formatHR,
   formatPower,
   formatWhole,
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
+import { formatNumber, useT, type Translator } from "../../lib/i18n";
 import { photoUrl } from "./photoUrl";
 import { DraggableShareBlocks, BrandMark } from "./DraggableShareBlocks";
 import { Checkbox } from "../ui/Checkbox";
@@ -56,31 +57,36 @@ interface Field {
   group: "basic" | "advanced";
 }
 
-/** The stats a share card can carry, formatted for the screen. Exported
- * for its tests. */
-export function buildFields(activity: Activity): Field[] {
+/** The stats a share card can carry, formatted for the screen and named
+ * in `translate`'s language. Exported for its tests. */
+export function buildFields(activity: Activity, translate: Translator): Field[] {
   const fields: Field[] = [
-    { key: "distance", label: "Distance", value: formatDistance(activity.distance_m), group: "basic" },
-    { key: "duration", label: "Duration", value: formatDuration(activity.duration_s), group: "basic" },
+    { key: "distance", label: translate("common.distance"), value: formatDistance(activity.distance_m), group: "basic" },
+    { key: "duration", label: translate("common.duration"), value: formatDuration(activity.duration_s), group: "basic" },
     {
       key: "pace",
-      label: `Avg ${paceOrSpeedLabel(activity.sport_type)}`,
+      label: avgPaceOrSpeedLabel(activity.sport_type, translate),
       value: formatPaceOrSpeed(activity.sport_type, activity.avg_speed_mps),
       group: "basic",
     },
-    { key: "elev_gain", label: "Elev Gain", value: formatElevation(activity.elev_gain_m), group: "basic" },
+    {
+      key: "elev_gain",
+      label: translate("common.elevGain"),
+      value: formatElevation(activity.elev_gain_m),
+      group: "basic",
+    },
   ];
 
   if (activity.avg_hr != null) {
-    fields.push({ key: "avg_hr", label: "Avg HR", value: formatHR(activity.avg_hr), group: "advanced" });
+    fields.push({ key: "avg_hr", label: translate("common.avgHr"), value: formatHR(activity.avg_hr), group: "advanced" });
   }
   if (activity.max_hr != null) {
-    fields.push({ key: "max_hr", label: "Max HR", value: formatHR(activity.max_hr), group: "advanced" });
+    fields.push({ key: "max_hr", label: translate("common.maxHr"), value: formatHR(activity.max_hr), group: "advanced" });
   }
   if (activity.avg_power_w != null) {
     fields.push({
       key: "avg_power",
-      label: "Avg Power",
+      label: translate("activity.share.avgPower"),
       value: formatPower(activity.avg_power_w),
       group: "advanced",
     });
@@ -88,7 +94,7 @@ export function buildFields(activity: Activity): Field[] {
   if (activity.max_power_w != null) {
     fields.push({
       key: "max_power",
-      label: "Max Power",
+      label: translate("activity.share.maxPower"),
       value: formatPower(activity.max_power_w),
       group: "advanced",
     });
@@ -96,7 +102,7 @@ export function buildFields(activity: Activity): Field[] {
   if (activity.avg_cadence != null) {
     fields.push({
       key: "avg_cadence",
-      label: "Avg Cadence",
+      label: translate("activity.share.avgCadence"),
       value: formatWhole(activity.avg_cadence, cadenceUnit(activity.sport_type)),
       group: "advanced",
     });
@@ -104,7 +110,7 @@ export function buildFields(activity: Activity): Field[] {
   if (activity.calories != null) {
     fields.push({
       key: "calories",
-      label: "Calories",
+      label: translate("common.calories"),
       value: formatWhole(activity.calories, "kcal"),
       group: "advanced",
     });
@@ -112,8 +118,8 @@ export function buildFields(activity: Activity): Field[] {
   if (activity.avg_temperature_c != null) {
     fields.push({
       key: "temp",
-      label: "Avg Temp",
-      value: `${Math.round(activity.avg_temperature_c)}°C`,
+      label: translate("activity.share.avgTemp"),
+      value: `${formatNumber(Math.round(activity.avg_temperature_c))}°C`,
       group: "advanced",
     });
   }
@@ -131,6 +137,7 @@ export function buildFields(activity: Activity): Field[] {
 
 export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Props) {
   const units = useUnits();
+  const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const composeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -164,7 +171,7 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
   // buildFields runs the unit-aware formatters, so it must recompute when the
   // metric/imperial preference changes, not only when the activity does.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allFields = useMemo(() => buildFields(activity), [activity, units]);
+  const allFields = useMemo(() => buildFields(activity, t), [activity, units, t]);
   const [selectedFields, setSelectedFields] = useState<Set<string>>(
     () => new Set(allFields.filter((f) => f.group === "basic").map((f) => f.key))
   );
@@ -311,13 +318,13 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
     if (!photoId) return;
     const im = new Image();
     im.onload = () => setImgEl(im);
-    im.onerror = () => addToast("error", "Failed to load photo preview");
+    im.onerror = () => addToast("error", t("activity.share.previewFailed"));
     im.src = photoUrl(photoId, "full");
     return () => {
       im.onload = null;
       im.onerror = null;
     };
-  }, [photoId, addToast]);
+  }, [photoId, addToast, t]);
 
   // Paint the cropped/straightened/oriented output into the compose-preview canvas
   // through the exact export code path (drawCrop) — WYSIWYG.
@@ -373,7 +380,7 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
       const defaultName = `${activity.start_time.slice(0, 10)}_${activity.sport_type}_share.png`;
       const dest = await save({
         defaultPath: defaultName,
-        filters: [{ name: "PNG", extensions: ["png"] }],
+        filters: [{ name: "PNG", extensions: ["png"] }], // i18n-ignore: a format's name
       });
       if (!dest) {
         setExporting(false);
@@ -383,11 +390,10 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
       const base64 = dataUrl.split(",")[1] ?? "";
       await api.saveShareImage(dest, base64);
 
-      addToast("success", "Share image saved");
+      addToast("success", t("activity.share.saved"));
       onClose();
     } catch (e) {
-      const msg = errorText(e);
-      addToast("error", `Export failed: ${msg}`);
+      addToast("error", t("activity.share.exportFailed", { error: errorText(e) }));
     } finally {
       setExporting(false);
     }
@@ -479,21 +485,19 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
               </div>
             )
           ) : (
-            <div className="text-faint text-sm">
-              No photos attached. Add photos to this activity first.
-            </div>
+            <div className="text-faint text-sm">{t("activity.share.noPhotos")}</div>
           )}
         </div>
 
         {/* Controls */}
         <div className="w-full lg:w-80 border-l border-border flex flex-col">
           <div className="flex items-center justify-between p-4 border-b border-border">
-            <h2 className="font-semibold text-ink">Share image</h2>
+            <h2 className="font-semibold text-ink">{t("activity.share.title")}</h2>
             <div className="flex items-center gap-2">
               <button
                 onClick={onClose}
-                data-tip="Close"
-                aria-label="Close"
+                data-tip={t("common.close")}
+                aria-label={t("common.close")}
                 className="text-faint hover:text-muted"
               >
                 <X size={18} />
@@ -504,7 +508,7 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
           <div className="flex-1 overflow-y-auto p-4 space-y-5">
             {photos.length > 1 && (
               <section>
-                <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Photo</h3>
+                <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">{t("activity.share.photo")}</h3>
                 <div className="grid grid-cols-4 gap-1.5">
                   {photos.map((p) => (
                     <button
@@ -526,30 +530,32 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
             )}
 
             <section>
-              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Theme</h3>
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">
+                {t("settings.general.theme")}
+              </h3>
               <div className="flex gap-2">
-                {(["dark", "light"] as Theme[]).map((t) => (
+                {(["dark", "light"] as Theme[]).map((th) => (
                   <button
-                    key={t}
-                    onClick={() => setTheme(t)}
-                    className={`flex-1 px-3 py-1.5 rounded text-sm capitalize border ${
-                      theme === t
+                    key={th}
+                    onClick={() => setTheme(th)}
+                    className={`flex-1 px-3 py-1.5 rounded text-sm border ${
+                      theme === th
                         ? "bg-accent-soft border-border-2 text-accent-2"
                         : "border-border text-muted hover:bg-card-2"
                     }`}
                   >
-                    {t}
+                    {t(th === "dark" ? "settings.general.themeDark" : "settings.general.themeLight")}
                   </button>
                 ))}
               </div>
               <label className="flex items-center gap-2 text-sm text-ink mt-2 cursor-pointer">
                 <Checkbox checked={transparentBg} onChange={setTransparentBg} />
-                Transparent block background
+                {t("activity.share.transparent")}
               </label>
             </section>
 
             <section>
-              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Crop</h3>
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">{t("activity.share.crop")}</h3>
               {/* One row: aspect presets on the left, crop actions (icons) on the right */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {CROP_PRESETS.map((p) => (
@@ -568,8 +574,8 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
                 <div className="ml-auto flex items-center gap-1.5">
                   <button
                     onClick={() => setCropMode((m) => !m)}
-                    title={cropMode ? "Apply crop" : "Adjust crop"}
-                    aria-label={cropMode ? "Apply crop" : "Adjust crop"}
+                    title={t(cropMode ? "activity.share.applyCrop" : "activity.share.adjustCrop")}
+                    aria-label={t(cropMode ? "activity.share.applyCrop" : "activity.share.adjustCrop")}
                     className={`p-1.5 rounded border ${
                       cropMode
                         ? "bg-accent border-accent-2 text-white hover:bg-accent-2"
@@ -580,8 +586,8 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
                   </button>
                   <button
                     onClick={resetCrop}
-                    data-tip="Reset crop"
-                    aria-label="Reset crop"
+                    data-tip={t("activity.share.resetCrop")}
+                    aria-label={t("activity.share.resetCrop")}
                     className="p-1.5 rounded border border-border text-muted hover:bg-card-2"
                   >
                     <Undo2 size={16} />
@@ -593,7 +599,11 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
                   Quarter turns are made with the frame's rotation knob — the
                   auto-fold turns them into the output orientation. */}
               <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-faint w-14">Straighten</span>
+                {/* As wide as the word: "Raddrizza" and "Наклон" are longer
+                    than the English the old fixed width was cut for. */}
+                <span className="text-xs text-faint min-w-14 shrink-0 whitespace-nowrap">
+                  {t("activity.share.straighten")}
+                </span>
                 <input
                   type="range"
                   min={-MAX_STRAIGHTEN}
@@ -603,30 +613,32 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
                   onChange={(e) => setResidualTilt(Number(e.target.value))}
                   onDoubleClick={() => setResidualTilt(0)}
                   className="flex-1"
-                  aria-label="Straighten crop frame"
+                  aria-label={t("activity.share.straightenLabel")}
                 />
-                <span className="w-10 text-right text-xs tabular-nums text-muted">{Math.round(residualTilt)}°</span>
+                <span className="w-10 text-right text-xs tabular-nums text-muted">
+                  {formatNumber(Math.round(residualTilt))}°
+                </span>
               </div>
 
               {cropMode ? (
                 <p className="text-xs text-faint mt-1.5">
-                  Drag to move, corners to resize{activeRatio ? " (locked ratio)" : ""}, the top knob to rotate the frame
-                  freely (Shift snaps to 15°, snaps square near 0/90/180°). Turning the frame a quarter gives a vertical crop.
+                  {t(activeRatio ? "activity.share.cropHelpLocked" : "activity.share.cropHelp")}
                 </p>
               ) : (
-                <p className="text-xs text-faint mt-1.5">Showing the cropped result. Press the crop button to change the region.</p>
+                <p className="text-xs text-faint mt-1.5">{t("activity.share.cropResult")}</p>
               )}
             </section>
 
             <section>
-              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Visuals</h3>
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">{t("activity.share.visuals")}</h3>
               <label className="flex items-center gap-2 text-sm text-ink mb-1.5 cursor-pointer">
                 <Checkbox checked={showTitle} onChange={setShowTitle} />
-                Title &amp; date
+                {t("activity.share.titleDate")}
               </label>
               <label className={`flex items-center gap-2 text-sm mb-1.5 ${hasMap ? "text-ink cursor-pointer" : "text-muted"}`}>
                 <Checkbox checked={showMap && hasMap} disabled={!hasMap} onChange={setShowMap} />
-                Route map {!hasMap && <span className="text-faint">(no GPS)</span>}
+                {t("activity.share.routeMap")}{" "}
+                {!hasMap && <span className="text-faint">{t("activity.share.noGps")}</span>}
               </label>
               <label className={`flex items-center gap-2 text-sm ${hasElevation ? "text-ink cursor-pointer" : "text-muted"}`}>
                 <Checkbox
@@ -634,12 +646,13 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
                   disabled={!hasElevation}
                   onChange={setShowElevation}
                 />
-                Elevation profile {!hasElevation && <span className="text-faint">(no data)</span>}
+                {t("activity.share.elevationProfile")}{" "}
+                {!hasElevation && <span className="text-faint">{t("activity.share.noData")}</span>}
               </label>
             </section>
 
             <section>
-              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">Metrics</h3>
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">{t("activity.share.metrics")}</h3>
               <div className="space-y-1.5">
                 {allFields.map((f) => (
                   <label key={f.key} className="flex items-center gap-2 text-sm text-ink cursor-pointer">
@@ -659,7 +672,7 @@ export function ShareModal({ activity, trackpoints, initialPhoto, onClose }: Pro
               className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-2 text-white font-medium py-2 rounded disabled:opacity-50"
             >
               <Download size={16} />
-              {exporting ? "Exporting..." : "Save PNG"}
+              {t(exporting ? "activity.share.exporting" : "activity.share.savePng")}
             </button>
           </div>
         </div>

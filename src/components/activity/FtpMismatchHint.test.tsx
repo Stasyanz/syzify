@@ -11,6 +11,7 @@ vi.mock("../../lib/tauri", () => ({
 import { api } from "../../lib/tauri";
 import { FtpMismatchHint, ftpMismatch, recentFtp, ftpHintDismissedKey } from "./FtpMismatchHint";
 import type { PreviousPower } from "../../lib/types";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -108,6 +109,30 @@ describe("FtpMismatchHint", () => {
     await waitFor(() => expect(api.getSetting).toHaveBeenCalledWith(ftpHintDismissedKey("act-7")));
     await new Promise((r) => setTimeout(r, 20));
     expect(again.queryByRole("note")).toBeNull();
+  });
+
+  /** #234: one sentence per pair of known devices, each in the language. */
+  it.each([
+    ["Edge 840", "fenix 7", "Записано с FTP 200 Вт на Edge 840 — в последних заездах был 238 Вт (fenix 7)."],
+    ["Edge 840", null, "Записано с FTP 200 Вт на Edge 840 — в последних заездах был 238 Вт."],
+    [null, "fenix 7", "Записано с FTP 200 Вт — в последних заездах был 238 Вт (fenix 7)."],
+    [null, null, "Записано с FTP 200 Вт — в последних заездах был 238 Вт."],
+  ])("says it in Russian with this device %s and the recent one %s", async (thisDevice, recentDevice, sentence) => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { findByRole, getByText, getByLabelText } = mount(
+        <FtpMismatchHint
+          activity={{ id: "x", threshold_power_w: 200, source_device: thisDevice }}
+          recent={[ride("13", 238, recentDevice)]}
+          onCorrect={() => {}}
+        />,
+      );
+      expect((await findByRole("note")).querySelector("span")!.textContent).toBe(sentence);
+      getByText("Исправить FTP");
+      getByLabelText("Скрыть");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("a dismissal on one ride does not hide the hint on the next ride the same mounted page shows", async () => {

@@ -14,6 +14,7 @@ import {
   M_PER_MILE,
   FT_PER_M,
   unitLabel,
+  unitLabelIn,
   type UnitSymbol,
 } from "./units";
 import { useLanguageStore } from "./i18n";
@@ -42,6 +43,13 @@ describe("unitLabel (#232)", () => {
     useLanguageStore.getState().setPref("it");
     const own: Partial<Record<UnitSymbol, string>> = { spm: "ppm", "strokes/min": "br/min" };
     expect(ALL.map(unitLabel)).toEqual(ALL.map((u) => own[u] ?? u));
+  });
+
+  it("writes a symbol in the language it is given, whatever the interface's (#234)", () => {
+    expect(unitLabelIn("ru", "bpm")).toBe("уд/мин");
+    expect(unitLabelIn("it", "spm")).toBe("ppm");
+    useLanguageStore.getState().setPref("ru");
+    expect(unitLabelIn("en", "W")).toBe("W");
   });
 });
 

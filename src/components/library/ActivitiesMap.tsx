@@ -29,7 +29,7 @@ import {
   type Cluster,
 } from "./clusterLocations";
 
-// The name is the layer's `library.map.layer.<id>` message.
+// The name is the layer's `common.map.layer.<id>` message.
 const MAP_LAYERS = [
   { id: "osm", icon: Map },
   { id: "topo", icon: Mountain },
@@ -237,7 +237,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
       <button
         onClick={() => setOpen((o) => !o)}
         className="bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2"
-        title={t("library.map.changeLayer")}
+        title={t("common.map.changeLayer")}
       >
         <Layers size={18} className="text-muted" />
       </button>
@@ -258,7 +258,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
                 }`}
               >
                 <Icon size={14} />
-                {t(`library.map.layer.${l.id}`)}
+                {t(`common.map.layer.${l.id}`)}
               </button>
             );
           })}
@@ -361,7 +361,7 @@ export function ActivitiesMap() {
         className="h-full w-full z-0"
         zoomControl={false}
       >
-        <ZoomControl zoomInTitle={t("library.map.zoomIn")} zoomOutTitle={t("library.map.zoomOut")} />
+        <ZoomControl zoomInTitle={t("common.map.zoomIn")} zoomOutTitle={t("common.map.zoomOut")} />
         <TileLayer
           key={layer}
           attribution={ATTRIBUTIONS[layer]}
@@ -412,8 +412,8 @@ export function ActivitiesMap() {
         <button
           onClick={() => setIsFullscreen((f) => !f)}
           className="bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2 tip-left"
-          data-tip={isFullscreen ? t("library.map.exitFullscreen") : t("library.map.fullscreen")}
-          aria-label={isFullscreen ? t("library.map.exitFullscreen") : t("library.map.fullscreen")}
+          data-tip={isFullscreen ? t("common.map.exitFullscreen") : t("common.map.fullscreen")}
+          aria-label={isFullscreen ? t("common.map.exitFullscreen") : t("common.map.fullscreen")}
         >
           {isFullscreen ? (
             <Minimize size={18} className="text-muted" />

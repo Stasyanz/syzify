@@ -3,13 +3,14 @@ import {
   formatDistance,
   formatDuration,
   formatPaceOrSpeed,
-  paceOrSpeedLabel,
+  avgPaceOrSpeedLabel,
   formatHR,
   formatElevation,
   formatPower,
   formatWhole,
 } from "../../lib/format";
 import { isImperial, unitLabel, useUnits, M_PER_MILE } from "../../lib/units";
+import { useT } from "../../lib/i18n";
 
 interface Props {
   laps: Lap[];
@@ -112,6 +113,7 @@ export function autoLaps(tp: TrackPointColumns, sport: string): Row[] {
 
 export function LapsTable({ laps, trackpoints, sport }: Props) {
   useUnits();
+  const t = useT();
 
   const real = laps.length >= 2;
   const rows: Row[] = real
@@ -140,33 +142,33 @@ export function LapsTable({ laps, trackpoints, sport }: Props) {
   const hasPower = some((r) => r.power);
 
   const cols: { key: string; label: string; cell: (r: Row) => string; num?: boolean }[] = [
-    { key: "lap", label: "Lap", cell: (r) => String(r.lap) },
-    { key: "time", label: "Time", cell: (r) => formatDuration(r.time), num: true },
+    { key: "lap", label: t("activity.laps.lap"), cell: (r) => String(r.lap) },
+    { key: "time", label: t("common.time"), cell: (r) => formatDuration(r.time), num: true },
   ];
   if (hasDist)
-    cols.push({ key: "dist", label: "Distance", cell: (r) => formatDistance(r.distance), num: true });
+    cols.push({ key: "dist", label: t("common.distance"), cell: (r) => formatDistance(r.distance), num: true });
   if (hasSpeed)
     cols.push({
       key: "pace",
-      label: `Avg ${paceOrSpeedLabel(sport)}`,
+      label: avgPaceOrSpeedLabel(sport, t),
       cell: (r) => formatPaceOrSpeed(sport, r.speed),
       num: true,
     });
-  if (hasHr) cols.push({ key: "hr", label: "Avg HR", cell: (r) => formatHR(r.hr), num: true });
-  if (hasMaxHr) cols.push({ key: "maxhr", label: "Max HR", cell: (r) => formatHR(r.maxHr), num: true });
+  if (hasHr) cols.push({ key: "hr", label: t("common.avgHr"), cell: (r) => formatHR(r.hr), num: true });
+  if (hasMaxHr) cols.push({ key: "maxhr", label: t("common.maxHr"), cell: (r) => formatHR(r.maxHr), num: true });
   if (hasAsc)
-    cols.push({ key: "asc", label: "Ascent", cell: (r) => formatElevation(r.ascent), num: true });
+    cols.push({ key: "asc", label: t("activity.laps.ascent"), cell: (r) => formatElevation(r.ascent), num: true });
   if (hasCad)
     cols.push({
       key: "cad",
-      label: "Cadence",
+      label: t("common.cadence"),
       cell: (r) => (r.cadence != null ? formatWhole(r.cadence, cadenceUnit(sport)) : "--"),
       num: true,
     });
   if (hasPower)
     cols.push({
       key: "power",
-      label: "Power",
+      label: t("common.power"),
       cell: (r) => formatPower(r.power),
       num: true,
     });
@@ -174,10 +176,10 @@ export function LapsTable({ laps, trackpoints, sport }: Props) {
   return (
     <div className="dash-card">
       <h3 className="mb-3">
-        Laps
+        {t("activity.laps.title")}
         {!real && (
           <span className="ml-2 text-xs font-normal text-faint">
-            · auto · {lapLengthLabel(sport)}
+            {t("activity.laps.auto", { length: lapLengthLabel(sport) })}
           </span>
         )}
       </h3>

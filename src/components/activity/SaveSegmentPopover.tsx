@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { formatDistance } from "../../lib/format";
+import { useT } from "../../lib/i18n";
 
 export const MENU_W = 280;
 const MENU_H_EST = 170;
@@ -37,6 +38,7 @@ export function SaveSegmentPopover({
   range: [number, number];
   onClose: () => void;
 }) {
+  const t = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState("");
   const [saved, setSaved] = useState(false);
@@ -61,8 +63,8 @@ export function SaveSegmentPopover({
   // navigation) cancels the timer instead of firing onClose into a gone tree.
   useEffect(() => {
     if (!saved) return;
-    const t = setTimeout(onClose, 900);
-    return () => clearTimeout(t);
+    const timer = setTimeout(onClose, 900);
+    return () => clearTimeout(timer);
   }, [saved, onClose]);
 
   // Outside click / Esc dismiss. pointerdown (not click) so dragging a new
@@ -91,12 +93,14 @@ export function SaveSegmentPopover({
       className="dash-card fixed z-[1500] shadow-2xl"
       style={{ left: pos.left, top: pos.top, width: MENU_W, padding: 14 }}
     >
-      <h3 className="!m-0 mb-2 text-sm font-bold">Save segment</h3>
+      <h3 className="!m-0 mb-2 text-sm font-bold">{t("activity.segment.save")}</h3>
 
       {similar && similar.length > 0 && (
         <p className="mb-2 text-xs leading-snug text-amber-600">
-          Similar segment already saved: “{similar[0].name}” (
-          {formatDistance(similar[0].distance_m)}). You can still save this one.
+          {t("activity.segment.similar", {
+            name: similar[0].name,
+            distance: formatDistance(similar[0].distance_m),
+          })}
         </p>
       )}
 
@@ -104,7 +108,7 @@ export function SaveSegmentPopover({
         <input
           autoFocus
           value={name}
-          placeholder="Segment name"
+          placeholder={t("activity.segment.name")}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && canSave) save.mutate();
@@ -119,12 +123,12 @@ export function SaveSegmentPopover({
       )}
 
       <div className="flex items-center justify-end gap-2">
-        {saved && <span className="mr-auto text-xs font-semibold text-muted">Saved ✓</span>}
+        {saved && <span className="mr-auto text-xs font-semibold text-muted">{t("activity.segment.saved")}</span>}
         <button className="btn ghost" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button className="btn primary" disabled={!canSave} onClick={() => save.mutate()}>
-          {similar && similar.length > 0 ? "Save anyway" : "Save"}
+          {t(similar && similar.length > 0 ? "activity.segment.saveAnyway" : "common.save")}
         </button>
       </div>
     </div>

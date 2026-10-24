@@ -660,7 +660,8 @@ describe("ChartPanel in the interface language (#232)", () => {
   it("writes the hover tip, the tick labels and the x unit in Russian", () => {
     act(() => useLanguageStore.getState().setPref("ru"));
     const run = columns(N, {
-      t: seq((i) => i * 30),
+      // The last sample lost its clock: the time axis skips it.
+      t: seq((i) => i * 30).map((v, i) => (i === N - 1 ? null : v)),
       distance_m: seq((i) => i * 100),
       speed_mps: seq(() => 1000 / 300),
       hr: seq(() => 150),
@@ -673,17 +674,20 @@ describe("ChartPanel in the interface language (#232)", () => {
       act(() => hooks.setCursor![0]({ cursor: { idx: null }, over: document.createElement("div") }));
       return text;
     };
-    expect(hover("Pace")).toBe("5:00 /км");
-    expect(hover("Heart")).toBe("150 уд/мин");
+    // The charts' names are the dictionaries' words too (#234).
+    expect(hover("Темп")).toBe("5:00 /км");
+    expect(hover("Пульс")).toBe("150 уд/мин");
 
-    const axes = plotOf("Heart").opts.axes as Axis[];
+    const axes = plotOf("Пульс").opts.axes as Axis[];
     expect(axes[0].label).toBe("км");
     expect(axes[1].values!({}, [1.5, 10000])).toEqual(["1,5", "10\xa0000"]);
     // The pace axis keeps its own m:ss ticks.
-    expect((plotOf("Pace").opts.axes as Axis[])[1].values!({}, [5.5])).toEqual(["5:30"]);
+    expect((plotOf("Темп").opts.axes as Axis[])[1].values!({}, [5.5])).toEqual(["5:30"]);
+    expect(plotOf("Пульс").opts.series[0].label).toBe("Дистанция (км)");
 
-    fireEvent.click(getByText("Time"));
-    expect((plotOf("Heart").opts.axes as Axis[])[0].label).toBe("мин");
-    expect(plotOf("Heart").opts.series[0].label).toBe("Time (мин)");
+    fireEvent.click(getByText("Время"));
+    expect((plotOf("Пульс").opts.axes as Axis[])[0].label).toBe("мин");
+    expect(plotOf("Пульс").opts.series[0].label).toBe("Время (мин)");
+    expect((plotOf("Пульс").data[0] as ArrayLike<number>).length).toBe(N - 1);
   });
 });

@@ -66,10 +66,35 @@ describe("CyclingDynamicsPanel", () => {
       const { container, getByRole } = render(<CyclingDynamicsPanel activity={a} />);
       const text = container.textContent!;
       expect(text).toContain("57,4\xa0%");
-      expect(getByRole("img").getAttribute("aria-label")).toBe("Balance: left 57,4\xa0%, right 42,6\xa0%");
+      expect(getByRole("img").getAttribute("aria-label")).toBe("Баланс: левая 57,4\xa0%, правая 42,6\xa0%");
       expect(text).toContain("--+9 мм");
       expect(text).toContain("161 / -- Вт");
       expect(text).toContain("-- / 111 об/мин");
+      cleanup();
+      // A phase angle the pedals did not report is a dash, not "NaN°".
+      const noEnd = render(<CyclingDynamicsPanel activity={dynamicsActivity({ avg_left_power_phase_end_deg: null })} />);
+      expect(noEnd.container.textContent).toContain("325° → --");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("names its parts in the interface language (#234)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container, getByText } = render(<CyclingDynamicsPanel activity={dynamicsActivity()} />);
+      for (const word of [
+        "Велодинамика", "Баланс", "Левая", "Правая", "Фаза мощности", "Пиковая фаза",
+        "Время", "Мощность", "Каденс", "Сидя",
+      ]) {
+        getByText(word, { exact: false });
+      }
+      getByText(/^Стоя/);
+      // The side letters on both pedal clocks.
+      expect(Array.from(container.querySelectorAll("svg text"), (s) => s.textContent)).toEqual(["Л", "П"]);
+      // Garmin's own abbreviation, explained in the language.
+      expect(getByText("PCO").getAttribute("data-tip")).toBe("Смещение от центра платформы");
+      expect(container.textContent).toContain("(ср./макс.)");
     } finally {
       useLanguageStore.getState().setPref("system");
     }

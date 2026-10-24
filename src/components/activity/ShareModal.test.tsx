@@ -37,10 +37,17 @@ vi.mock("../../lib/tauri", () => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 // Isolate the preview <img> under test from the overlay/canvas logic.
 vi.mock("./DraggableShareBlocks", () => ({ DraggableShareBlocks: () => null, BrandMark: () => null }));
+// No canvas in happy-dom: the export's drawing is stood in for, the rest of
+// the module (the preview's backdrop and crop) stays real.
+vi.mock("./shareCanvas", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./shareCanvas")>()),
+  renderShareCanvas: vi.fn(async () => "data:image/png;base64,UE5H"),
+}));
+import { save } from "@tauri-apps/plugin-dialog";
 
 import { ShareModal, buildFields } from "./ShareModal";
 import { api } from "../../lib/tauri";
-import { useLanguageStore } from "../../lib/i18n";
+import { t, useLanguageStore } from "../../lib/i18n";
 
 // The preview wrapper's measured size (clientWidth/clientHeight stubbed below).
 const WRAP = { w: 800, h: 600 };
@@ -339,7 +346,8 @@ describe("buildFields (#232)", () => {
       avg_temperature_c: 21.4,
       training_stress_score: 96.2,
     }) as unknown as Activity;
-  const values = (a: Activity) => Object.fromEntries(buildFields(a).map((f) => [f.key, f.value]));
+  const values = (a: Activity) => Object.fromEntries(buildFields(a, t).map((f) => [f.key, f.value]));
+  const labels = (a: Activity) => buildFields(a, t).map((f) => f.label);
 
   afterEach(() => useLanguageStore.getState().setPref("system"));
 
@@ -373,5 +381,118 @@ describe("buildFields (#232)", () => {
     expect(values(full("swim")).avg_cadence).toBe("88 spm");
     useLanguageStore.getState().setPref("ru");
     expect(values(full("open_water")).avg_cadence).toBe("88 гр/мин");
+  });
+
+  it("names the stats in the language, a ride's pace as its speed (#234)", () => {
+    expect(labels(full("ride"))).toEqual([
+      "Distance", "Duration", "Avg Speed", "Elev Gain", "Avg HR", "Max HR",
+      "Avg Power", "Max Power", "Avg Cadence", "Calories", "Avg Temp", "TSS",
+    ]);
+    useLanguageStore.getState().setPref("ru");
+    expect(labels(full("ride"))).toEqual([
+      "Дистанция", "Время", "Ср. скорость", "Набор высоты", "Ср. пульс", "Макс. пульс",
+      "Ср. мощность", "Макс. мощность", "Ср. каденс", "Калории", "Ср. температура", "TSS",
+    ]);
+    expect(labels(full("run"))[2]).toBe("Ср. темп");
+    useLanguageStore.getState().setPref("it");
+    expect(labels(full("swim"))[2]).toBe("Passo medio");
+  });
+});
+
+describe("ShareModal in the interface language (#234)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("writes its controls in Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    const { getByText, getByLabelText, container } = renderModal();
+    await waitFor(() => getByLabelText("Настроить кадрирование"));
+    getByText("Поделиться изображением");
+    getByLabelText("Закрыть");
+    getByText("Тёмная");
+    getByText("Светлая");
+    getByText("Прозрачный фон блоков");
+    getByText("Свободно");
+    getByLabelText("Сбросить кадрирование");
+    getByText("Показан кадрированный результат. Нажмите кнопку кадрирования, чтобы изменить область.");
+    // No GPS and no altitude on this activity: both say why they are off.
+    getByText("(нет GPS)");
+    getByText("(нет данных)");
+    getByText("Сохранить PNG");
+
+    fireEvent.click(getByLabelText("Настроить кадрирование"));
+    await waitFor(() => getByLabelText("Применить кадрирование"));
+    expect(container.querySelector('[title^="Потяните, чтобы повернуть"]')).not.toBeNull();
+    getByText(/^Перетаскивайте рамку, чтобы сдвинуть, углы — чтобы изменить размер, верхнюю/);
+    // A ratio locks the frame, and the help says so.
+    fireEvent.click(getByText("16:9"));
+    await waitFor(() => getByText(/\(пропорции зафиксированы\)/));
+  });
+
+  it("says a failed export in Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getPhotoDataUrl).mockRejectedValueOnce("Хранилище заблокировано");
+    const { getByText } = renderModal();
+    await waitFor(() => expect((getByText("Сохранить PNG").closest("button") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(getByText("Сохранить PNG"));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.map((x) => x.message)).toContain(
+        "Не удалось экспортировать: Хранилище заблокировано",
+      ),
+    );
+  });
+
+  it("saves the picked theme's image and says so in Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getPhotoDataUrl).mockResolvedValueOnce("data:image/jpeg;base64,SlBH");
+    vi.mocked(save).mockResolvedValueOnce("/tmp/share.png");
+    vi.mocked(api.saveShareImage).mockResolvedValueOnce(undefined);
+    const { getByText } = renderModal();
+    fireEvent.click(getByText("Светлая"));
+    await waitFor(() => expect((getByText("Сохранить PNG").closest("button") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(getByText("Сохранить PNG"));
+    await waitFor(() => expect(api.saveShareImage).toHaveBeenCalledWith("/tmp/share.png", "UE5H"));
+    const { renderShareCanvas } = await import("./shareCanvas");
+    const drawn = vi.mocked(renderShareCanvas).mock.lastCall![0];
+    expect(drawn).toMatchObject({ theme: "light" });
+    // The image carries the stats in the interface language too.
+    expect(drawn.fields).toEqual([
+      { label: "Дистанция", value: "5,00 км" },
+      { label: "Время", value: "30:00" },
+      { label: "Ср. темп", value: expect.stringMatching(/^\d+:\d\d \/км$/) },
+      { label: "Набор высоты", value: "50 м" },
+    ]);
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.map((x) => x.message)).toContain("Изображение сохранено"),
+    );
+  });
+
+  /** The drawing's own failures, quoted by the toast, in the language too. */
+  it.each([
+    ["the canvas", undefined, "Не удалось экспортировать: Холст 2D недоступен"],
+    ["the photo", "error" as const, "Не удалось экспортировать: Не удалось загрузить изображение"],
+  ])("says in Russian that %s could not be drawn", async (_what, photoMode, message) => {
+    useLanguageStore.getState().setPref("ru");
+    // The data URL carries no photo id: its mode is the empty id's.
+    if (photoMode) imageMode[""] = photoMode;
+    vi.mocked(api.getPhotoDataUrl).mockResolvedValueOnce("data:image/jpeg;base64,SlBH");
+    const real = await vi.importActual<typeof import("./shareCanvas")>("./shareCanvas");
+    const { renderShareCanvas } = await import("./shareCanvas");
+    vi.mocked(renderShareCanvas).mockImplementationOnce(real.renderShareCanvas);
+    const { getByText } = renderModal();
+    await waitFor(() => expect((getByText("Сохранить PNG").closest("button") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(getByText("Сохранить PNG"));
+    await waitFor(() => expect(useToastStore.getState().toasts.map((x) => x.message)).toContain(message));
+  });
+
+  it("says in Russian that there is no photo to share", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getPhotos).mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { findByText } = render(
+      <QueryClientProvider client={qc}>
+        <ShareModal activity={activity} trackpoints={trackpoints} initialPhoto={null} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await findByText("К тренировке не прикреплено фото. Сначала добавьте фото.");
   });
 });

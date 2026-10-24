@@ -69,6 +69,29 @@ describe("timeInZoneRows", () => {
     }
   });
 
+  it("takes names, numbers and units from the one language it is given (#234)", () => {
+    // The interface stays English: the language passed in is the only source.
+    const italian = timeInZoneRows(POWER_RIDE, "power", DURATION, "it")!;
+    expect(italian.map((r) => r.label)).toEqual([
+      "Z1 Recupero attivo", "Z2 Resistenza", "Z3 Medio", "Z4 Soglia", "Z5 VO2 max",
+      "Z6 Capacità anaerobica", "Z7 Neuromuscolare",
+    ]);
+    expect(italian[0].range).toBe("0–129 W");
+    // A bound past a thousand is grouped the language's way.
+    const sprinter = POWER_RIDE.map((r) => (r.zone_index === 6 ? { ...r, zone_high_boundary: 1353 } : r));
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const en = timeInZoneRows(sprinter, "power", DURATION, "en")!;
+      expect(en[5]).toMatchObject({ label: "Z6 Anaerobic", range: "282–1,353 W" });
+      expect(en[6].range).toBe("> 1,353 W");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+    expect(timeInZoneRows(HR_RIDE, "hr", DURATION, "ru")!.map((r) => r.label)).toEqual([
+      "Z1 Разминка", "Z2 Лёгкая", "Z3 Аэробная", "Z4 Пороговая", "Z5 Максимальная",
+    ]);
+  });
+
   it("shows Z1–Z7 for power and never reads the sentinel ceiling", () => {
     const rows = timeInZoneRows(POWER_RIDE, "power", DURATION)!;
     expect(rows).toHaveLength(7);

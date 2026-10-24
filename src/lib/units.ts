@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { t } from "./i18n";
+import { t, translate, type Language } from "./i18n";
 import type { MessageKey } from "../locales/types";
 
 export type UnitsMode = "metric" | "imperial";
@@ -114,4 +114,10 @@ const UNIT_KEYS: Record<UnitSymbol, Extract<MessageKey, `units.${string}`>> = {
 /** A unit symbol as the interface language writes it ("км" in Russian). */
 export function unitLabel(unit: UnitSymbol): string {
   return t(UNIT_KEYS[unit]);
+}
+
+/** A unit symbol as `lang` writes it — for code that holds its own
+ * language, so its words, numbers and units come from one source. */
+export function unitLabelIn(lang: Language, unit: UnitSymbol): string {
+  return translate(lang, UNIT_KEYS[unit]);
 }

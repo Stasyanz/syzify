@@ -269,6 +269,28 @@ describe("transparent block background — canvas and preview stay WYSIWYG", () 
     }
   });
 
+  it("preview: the resize grips are titled in the interface language (#234)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = renderBlocks(true, true);
+      const grips = Array.from(container.querySelectorAll("[title]"), (g) => g.getAttribute("title"));
+      expect(grips.length).toBeGreaterThan(0);
+      expect(new Set(grips)).toEqual(new Set(["Потяните, чтобы изменить размер"]));
+      // The wordmark is a name: marked for no translation.
+      expect(container.querySelector('[translate="no"]')).not.toBeNull();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("canvas: the light theme fills a light plate", () => {
+    const { ctx, calls } = makeFakeCtx();
+    const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "light", baseFs: 0 };
+    drawMapBlock(d, MAP_POS, trackpoints);
+    expect(calls.plainFills).toContain("rgba(255,255,255,0.78)");
+    expect(calls.plainFills).not.toContain(DARK_CHIP_BG);
+  });
+
   it("canvas: elevation drops both the plate AND the translucent area fill", () => {
     const { ctx, calls } = makeFakeCtx();
     const d: DrawCtx = {
@@ -371,6 +393,8 @@ describe("title block visibility", () => {
       drawTitleBlock(d, { x: 0, y: 0 }, activity);
       const meta = calls.texts[0];
       expect(meta).toMatch(/^БЕГ · 1 МАЯ 2026 Г\., \d{1,2}:\d\d$/);
+      // An untitled run is titled by its sport, in the language (#234).
+      expect(calls.texts).toContain("Бег");
       expect(renderWithTitle(true).container.textContent).toContain(meta);
     } finally {
       useLanguageStore.getState().setPref("system");

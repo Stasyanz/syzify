@@ -1,6 +1,8 @@
 import type { TimeInZone } from "../../lib/types";
 import { HR_ZONE_COLORS, POWER_ZONE_COLORS, zoneIndexOffset } from "./chartZones";
-import { unitLabel, type UnitSymbol } from "../../lib/units";
+import { unitLabelIn, type UnitSymbol } from "../../lib/units";
+import { currentLanguage, formatNumber, translate, type Language } from "../../lib/i18n";
+import type { MessageKey } from "../../locales/types";
 
 export type ZoneType = "hr" | "power";
 
@@ -18,20 +20,28 @@ export interface ZoneRow {
   color: string;
 }
 
-/** Garmin's zone names, index = zone − 1. */
-export const HR_ZONE_NAMES = ["Warm up", "Easy", "Aerobic", "Threshold", "Maximum"];
-export const POWER_ZONE_NAMES = [
-  "Active recovery",
-  "Endurance",
-  "Tempo",
-  "Threshold",
-  "VO2 max",
-  "Anaerobic",
-  "Neuromuscular",
-];
+/** The zones' names as messages, index = zone − 1: Garmin's for heart
+ * rate, Coggan's levels for power. */
+const HR_ZONE_NAMES = [
+  "activity.zones.hr.warmUp",
+  "activity.zones.hr.easy",
+  "activity.zones.hr.aerobic",
+  "activity.zones.hr.threshold",
+  "activity.zones.hr.maximum",
+] as const satisfies readonly MessageKey[];
+const POWER_ZONE_NAMES = [
+  "activity.zones.power.recovery",
+  "activity.zones.power.endurance",
+  "activity.zones.power.tempo",
+  "activity.zones.power.threshold",
+  "activity.zones.power.vo2max",
+  "activity.zones.power.anaerobic",
+  "activity.zones.power.neuromuscular",
+] as const satisfies readonly MessageKey[];
 
 const UNIT: Record<ZoneType, UnitSymbol> = { hr: "bpm", power: "W" };
-const NAMES: Record<ZoneType, string[]> = { hr: HR_ZONE_NAMES, power: POWER_ZONE_NAMES };
+type ZoneName = (typeof HR_ZONE_NAMES)[number] | (typeof POWER_ZONE_NAMES)[number];
+const NAMES: Record<ZoneType, readonly ZoneName[]> = { hr: HR_ZONE_NAMES, power: POWER_ZONE_NAMES };
 const COLORS: Record<ZoneType, string[]> = { hr: HR_ZONE_COLORS, power: POWER_ZONE_COLORS };
 
 /**
@@ -52,12 +62,14 @@ const COLORS: Record<ZoneType, string[]> = { hr: HR_ZONE_COLORS, power: POWER_ZO
  * their TIME is dropped — the row still carries a valid boundary and its
  * index, and losing either would shift the whole list by a zone.
  *
- * Null when the type has no rows or no time in any shown zone.
+ * Null when the type has no rows or no time in any shown zone. Names,
+ * numbers and units all in `lang`; "Z1" is the same in every language.
  */
 export function timeInZoneRows(
   zones: TimeInZone[],
   type: ZoneType,
   durationS: number | null,
+  lang: Language = currentLanguage(),
 ): ZoneRow[] | null {
   const secs = new Map<number, number>();
   const ceil = new Map<number, number | null>();
@@ -70,16 +82,16 @@ export function timeInZoneRows(
     if (!ceil.has(z.zone_index) || (usable && ceil.get(z.zone_index) == null)) {
       ceil.set(z.zone_index, usable ? b : null);
     }
-    const t = z.time_s;
-    const valid = isFinite(t) && t >= 0 && t <= maxS;
-    secs.set(z.zone_index, Math.max(secs.get(z.zone_index) ?? 0, valid ? t : 0));
+    const s = z.time_s;
+    const valid = isFinite(s) && s >= 0 && s <= maxS;
+    secs.set(z.zone_index, Math.max(secs.get(z.zone_index) ?? 0, valid ? s : 0));
   }
   if (secs.size === 0) return null;
 
   const names = NAMES[type];
   const n = names.length;
   const offset = zoneIndexOffset(secs.keys(), n);
-  const unit = unitLabel(UNIT[type]);
+  const unit = unitLabelIn(lang, UNIT[type]);
   const total = durationS != null && durationS > 0 ? durationS : null;
 
   const rows: ZoneRow[] = [];
@@ -90,8 +102,8 @@ export function timeInZoneRows(
     const top = zone === n ? null : (ceil.get(idx) ?? null);
     rows.push({
       zone,
-      label: `Z${zone} ${names[zone - 1]}`,
-      range: rangeLabel(floor, top, zone === n, unit),
+      label: `Z${zone} ${translate(lang, names[zone - 1])}`, // i18n-ignore: "Z" + a number names a zone everywhere
+      range: rangeLabel(floor, top, zone === n, unit, lang),
       timeS,
       pct: total ? (timeS / total) * 100 : 0,
       color: COLORS[type][zone - 1],
@@ -107,13 +119,15 @@ function rangeLabel(
   top: number | null,
   open: boolean,
   unit: string,
+  lang: Language,
 ): string {
   const f = floor == null ? null : Math.round(floor);
-  const t = top == null ? null : Math.round(top);
-  if (open) return f == null ? "" : `> ${f} ${unit}`;
-  if (f != null && t != null && t > f) return `${f}–${t} ${unit}`;
-  if (t != null) return `≤ ${t} ${unit}`;
-  if (f != null) return `> ${f} ${unit}`;
+  const c = top == null ? null : Math.round(top);
+  const num = (v: number) => formatNumber(v, 0, lang);
+  if (open) return f == null ? "" : `> ${num(f)} ${unit}`;
+  if (f != null && c != null && c > f) return `${num(f)}–${num(c)} ${unit}`;
+  if (c != null) return `≤ ${num(c)} ${unit}`;
+  if (f != null) return `> ${num(f)} ${unit}`;
   return "";
 }
 

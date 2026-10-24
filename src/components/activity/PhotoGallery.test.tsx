@@ -39,6 +39,7 @@ import { confirmDialog } from "../../stores/confirmStore";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { PhotoGallery } from "./PhotoGallery";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -142,6 +143,66 @@ describe("PhotoGallery", () => {
     await waitFor(() => expect(api.reorderPhotos).toHaveBeenCalledWith(["ph-2", "ph-1"]));
     await waitFor(() => expect(toasts()).toContain("error: Failed to reorder: The vault is locked"));
     await waitFor(() => expect(vi.mocked(api.getPhotos).mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  /** #234: the attach summary counts each part with the language's plural. */
+  it("sums up an attach, the counts in the plural they take", async () => {
+    useToastStore.setState({ toasts: [] });
+    const toasts = () => useToastStore.getState().toasts.map((t) => `${t.type}: ${t.message}`);
+    const { container } = renderGallery();
+    await waitFor(() => expect(container.querySelectorAll("[draggable]").length).toBe(1));
+    vi.mocked(open).mockResolvedValueOnce(["/a/1.jpg", "/a/2.jpg"]);
+    vi.mocked(api.attachPhotos).mockResolvedValueOnce({ attached: [photo], skipped: ["/a/2.jpg"], failed: [] });
+    fireEvent.click(screenButton(container, "Add Photos"));
+    await waitFor(() => expect(toasts()).toEqual(["success: Added 1 photo, skipped 1 duplicate"]));
+    vi.mocked(open).mockResolvedValueOnce(["/a/3.jpg"]);
+    vi.mocked(api.attachPhotos).mockResolvedValueOnce({
+      attached: [photo, photo],
+      skipped: [],
+      failed: [{ path: "/a/3.jpg", reason: "bad" }],
+    });
+    fireEvent.click(screenButton(container, "Add Photos"));
+    await waitFor(() => expect(toasts()).toContain("warning: Added 2 photos, 1 failed"));
+    // Nothing added: the skipped part opens the sentence.
+    vi.mocked(open).mockResolvedValueOnce(["/a/1.jpg", "/a/2.jpg"]);
+    vi.mocked(api.attachPhotos).mockResolvedValueOnce({ attached: [], skipped: ["/a/1.jpg", "/a/2.jpg"], failed: [] });
+    fireEvent.click(screenButton(container, "Add Photos"));
+    await waitFor(() => expect(toasts()).toContain("success: Skipped 2 duplicates"));
+    // An empty answer says nothing at all.
+    const before = toasts().length;
+    vi.mocked(open).mockResolvedValueOnce(["/a/1.jpg"]);
+    vi.mocked(api.attachPhotos).mockResolvedValueOnce({ attached: [], skipped: [], failed: [] });
+    fireEvent.click(screenButton(container, "Add Photos"));
+    await waitFor(() => expect(api.attachPhotos).toHaveBeenCalledTimes(4));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(toasts()).toHaveLength(before);
+  });
+
+  it("speaks Russian: its words and the attach summary's plurals", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      useToastStore.setState({ toasts: [] });
+      const toasts = () => useToastStore.getState().toasts.map((t) => t.message);
+      vi.mocked(api.getPhotos).mockResolvedValue([]);
+      const { container, findByText } = renderGallery();
+      await findByText("Фото пока нет. Нажмите «Добавить фото» или перетащите изображения в любое место страницы.");
+      let settle: (v: { attached: Photo[]; skipped: string[]; failed: { path: string; reason: string }[] }) => void =
+        () => {};
+      vi.mocked(open).mockResolvedValueOnce(["/a/1.jpg"]);
+      vi.mocked(api.attachPhotos).mockImplementationOnce(() => new Promise((r) => (settle = r)));
+      fireEvent.click(screenButton(container, "Добавить фото"));
+      await findByText("Добавление…");
+      expect(vi.mocked(open).mock.calls[0][0]).toMatchObject({ filters: [{ name: "Изображения" }] });
+      settle({ attached: [], skipped: ["1", "2", "3", "4", "5"], failed: [{ path: "x", reason: "y" }] });
+      // Nothing added: the sentence opens on the skipped part, capitalized.
+      await waitFor(() => expect(toasts()).toEqual(["Пропущено 5 дубликатов, с ошибкой: 1"]));
+      vi.mocked(open).mockResolvedValueOnce(["/a/1.jpg"]);
+      vi.mocked(api.attachPhotos).mockResolvedValueOnce({ attached: [photo, photo], skipped: ["1", "2"], failed: [] });
+      fireEvent.click(screenButton(container, "Добавить фото"));
+      await waitFor(() => expect(toasts()).toContain("Добавлено 2 фото, пропущено 2 дубликата"));
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup, fireEvent, screen } from "@testing-library/react";
+import { render, cleanup, fireEvent, screen, act } from "@testing-library/react";
 import type { TimeInZone } from "../../lib/types";
 import { HR_ZONE_COLORS, POWER_ZONE_COLORS } from "./chartZones";
 import { TimeInZonesPanel } from "./TimeInZonesPanel";
@@ -75,7 +75,7 @@ describe("TimeInZonesPanel", () => {
     );
     expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Zone type");
     const buttons = switchButtons();
-    expect(buttons.map((b) => b.textContent)).toEqual(["Power", "Heart rate"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Power", "HR"]);
     expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
     expect(buttons[1].getAttribute("aria-pressed")).toBe("false");
     let rows = rowsOf(container);
@@ -113,8 +113,36 @@ describe("TimeInZonesPanel", () => {
     try {
       const { container } = render(<TimeInZonesPanel timeInZones={POWER} durationS={DURATION} />);
       const z7 = rowsOf(container)[0];
-      expect(z7.label).toBe("Z7 Neuromuscular, > 353 Вт, 0:08, <1\xa0%");
+      expect(z7.label).toBe("Z7 Нервно-мышечная, > 353 Вт, 0:08, <1\xa0%");
       expect(rowsOf(container)[6].text).toContain("31\xa0%");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("names the card, the switch and every zone in the language (#234)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = render(<TimeInZonesPanel timeInZones={[...HR, ...POWER]} durationS={DURATION} />);
+      screen.getByText("Время в зонах");
+      expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Тип зон");
+      const buttons = switchButtons();
+      expect(buttons.map((b) => b.textContent)).toEqual(["Мощность", "Пульс"]);
+      expect(screen.getByRole("list").getAttribute("aria-label")).toBe("Время в зонах мощности");
+      const names = () => rowsOf(container).map((r) => r.label.split(",")[0]);
+      // Adjectives like the heart rate row: no "Темп" to read as a pace.
+      expect(names()).toEqual([
+        "Z7 Нервно-мышечная", "Z6 Анаэробная", "Z5 МПК", "Z4 Пороговая", "Z3 Темповая", "Z2 Выносливость",
+        "Z1 Активное восстановление",
+      ]);
+      fireEvent.click(buttons[1]);
+      expect(screen.getByRole("list").getAttribute("aria-label")).toBe("Время в зонах пульса");
+      expect(names()).toEqual(["Z5 Максимальная", "Z4 Пороговая", "Z3 Аэробная", "Z2 Лёгкая", "Z1 Разминка"]);
+      cleanup();
+      // Italian names heart rate short on the switch: "FC", not "Frequenza cardiaca".
+      act(() => useLanguageStore.getState().setPref("it"));
+      render(<TimeInZonesPanel timeInZones={[...HR, ...POWER]} durationS={DURATION} />);
+      expect(switchButtons().map((b) => b.textContent)).toEqual(["Potenza", "FC"]);
     } finally {
       useLanguageStore.getState().setPref("system");
     }
