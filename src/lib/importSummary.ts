@@ -1,12 +1,14 @@
 import type { ImportResult } from "./types";
+import { dateOfDayKey } from "./calendar";
+import { formatDateTime } from "./i18n";
 
 /** Toast level for an import outcome. */
 export type ImportSummaryLevel = "success" | "warning" | "info";
 
-/** "Sep 5" / "Aug 20 – Sep 5" for the monitoring day range. */
+/** "Sep 5" / "Aug 20 – Sep 5" for the monitoring day range, in the
+ * interface language ("5 сент."). */
 function dayLabel(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDateTime(dateOfDayKey(iso), { month: "short", day: "numeric" });
 }
 
 function rangeLabel(range: [string, string]): string {

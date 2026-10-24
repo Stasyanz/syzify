@@ -2,7 +2,8 @@
 // it is labelled/formatted, and where its "avg" reference comes from. Kept
 // apart from the uPlot wiring so all of it is testable without a canvas.
 
-import type { TrackPointColumns } from "../../lib/types";
+import { cadenceUnit, type TrackPointColumns } from "../../lib/types";
+import { swimPaceUnit } from "../../lib/format";
 import { ELEVATION_BANDS_M, type ElevationBand } from "./chartZones";
 import { meanPace, paceOfSpeed, seriesMean } from "./chartAverage";
 import {
@@ -10,6 +11,7 @@ import {
   distanceUnit,
   elevationUnit,
   speedUnit,
+  unitLabel,
   M_PER_MILE,
   M_PER_100YD,
   FT_PER_M,
@@ -26,15 +28,26 @@ export interface SummaryAverages {
 
 export type ChartType = "elevation" | "hr" | "pace" | "speed" | "cadence" | "power";
 
-export interface ChartConfig {
+/** A chart's own value format, or none (plain numbers and the unit). The
+ * two come together: a pace tick says "5:30", its tip "5:30 /km". */
+type ValueFormat =
+  | { valueFmt?: undefined; tipSuffix?: undefined }
+  | {
+      /** The y-axis tick formatter (pace m:ss). */
+      valueFmt: (v: number) => string;
+      /** What follows a `valueFmt` value in the hover tip and the avg
+       * label — a pace is per a distance ("5:00 /km"). */
+      tipSuffix: string;
+    };
+
+export type ChartConfig = ValueFormat & {
   key: ChartType;
   label: string;
+  /** The unit as the screen shows it, in the interface language. */
   unit: string;
   color: string;
   fill: string;
   getData: (tp: TrackPointColumns) => (number | null)[];
-  /** Optional y-axis tick formatter (e.g. pace mm:ss). */
-  valueFmt?: (v: number) => string;
   /** Flip the y-axis so smaller values read as "higher" — pace is
    * faster the smaller the number, and faster belongs at the top. */
   invertY?: boolean;
@@ -64,7 +77,7 @@ export interface ChartConfig {
     speedMps: (number | null)[],
     t: (number | null)[],
   ) => number | null;
-}
+};
 
 /** Pace (min/km decimal) → "m:ss". */
 export function fmtPace(minPerKm: number): string {
@@ -148,7 +161,7 @@ export function widenToSpan(min: number, max: number, span: number): [number, nu
 export const ELEVATION = (): ChartConfig => ({
   key: "elevation",
   label: "Elevation",
-  unit: elevationUnit(),
+  unit: unitLabel(elevationUnit()),
   color: "#0e7490",
   fill: "rgba(14,116,144,0.12)",
   getData: (tp) =>
@@ -165,10 +178,14 @@ export const ELEVATION = (): ChartConfig => ({
   missing: "gap",
   noAverage: true,
 });
+// The unit is read when shown, not when the module loads: the interface
+// language may have changed since (#232).
 export const HR: ChartConfig = {
   key: "hr",
   label: "Heart rate",
-  unit: "bpm",
+  get unit() {
+    return unitLabel("bpm");
+  },
   color: "#dc2626",
   fill: "rgba(220,38,38,0.10)",
   getData: (tp) => tp.hr,
@@ -183,7 +200,8 @@ export const PACE = (): ChartConfig => {
   return {
     key: "pace",
     label: "Pace",
-    unit: `min/${distanceUnit()}`,
+    unit: `${unitLabel("min")}/${unitLabel(distanceUnit())}`,
+    tipSuffix: `/${unitLabel(distanceUnit())}`,
     color: "#c2410c",
     fill: "rgba(194,65,12,0.10)",
     getData: (tp) =>
@@ -203,7 +221,8 @@ export const SWIM_PACE = (): ChartConfig => {
   return {
     key: "pace",
     label: "Pace",
-    unit: `min/100${isImperial() ? "yd" : "m"}`,
+    unit: `${unitLabel("min")}${swimPaceUnit()}`,
+    tipSuffix: swimPaceUnit(),
     color: "#c2410c",
     fill: "rgba(194,65,12,0.10)",
     getData: (tp) =>
@@ -220,26 +239,29 @@ export const SPEED = (): ChartConfig => {
   return {
     key: "speed",
     label: "Speed",
-    unit: speedUnit(),
+    unit: unitLabel(speedUnit()),
     color: "#3f7d4e",
     fill: "rgba(63,125,78,0.10)",
     getData: (tp) => speedSeries(tp).map((v) => (v != null ? v * factor : null)),
     summaryAvg: (s) => (s.speed_mps != null ? s.speed_mps * factor : null),
   };
 };
-export const CADENCE: ChartConfig = {
+/** Cadence in the sport's own unit: crank rpm on a ride, steps elsewhere. */
+export const CADENCE = (sport: string): ChartConfig => ({
   key: "cadence",
   label: "Cadence",
-  unit: "spm",
+  unit: unitLabel(cadenceUnit(sport)),
   color: "#ca8a04",
   fill: "rgba(202,138,4,0.10)",
   getData: (tp) => tp.cadence,
   summaryAvg: (s) => s.cadence,
-};
+});
 export const POWER: ChartConfig = {
   key: "power",
   label: "Power",
-  unit: "W",
+  get unit() {
+    return unitLabel("W");
+  },
   color: "#7c3aed",
   fill: "rgba(124,58,237,0.10)",
   getData: (tp) => tp.power_w,

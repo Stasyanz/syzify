@@ -1,6 +1,25 @@
 import { describe, it, expect } from "vitest";
 import type uPlot from "uplot";
-import { yAxisSize } from "./chartAxis";
+import { axisValues, yAxisSize } from "./chartAxis";
+import { useLanguageStore } from "../../lib/i18n";
+
+describe("axisValues (#232)", () => {
+  const plot = {} as uPlot;
+
+  it("writes ticks as uPlot does, up to three decimals, in the interface language", () => {
+    expect(axisValues(plot, [0, 0.5, 12.25, 1500, 10000])).toEqual(["0", "0.5", "12.25", "1,500", "10,000"]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(axisValues(plot, [0.5, 12.25, 10000])).toEqual(["0,5", "12,25", "10\xa0000"]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("leaves a missing tick blank", () => {
+    expect(axisValues(plot, [null, 1])).toEqual(["", "1"]);
+  });
+});
 
 // No canvas needed: the only thing yAxisSize asks of the plot is a context
 // that measures text. 6 px per character is close to 11px sans-serif digits.

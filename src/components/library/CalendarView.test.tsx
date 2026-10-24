@@ -10,6 +10,8 @@ vi.mock("../../lib/tauri", () => ({
 
 import { CalendarView } from "./CalendarView";
 import { api } from "../../lib/tauri";
+import { monthTitle } from "../../lib/calendar";
+import { useLanguageStore } from "../../lib/i18n";
 
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -22,10 +24,27 @@ function renderView() {
   );
 }
 
-// The view's month title uses the runtime locale — build the expectation
-// the same way instead of hardcoding English.
-const label = (y: number, m: number) =>
-  new Date(y, m - 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+// The view's month title is in the interface language — build the
+// expectation the same way instead of hardcoding English.
+const label = (y: number, m: number) => monthTitle(y, m);
+
+describe("CalendarView in the interface language (#232)", () => {
+  beforeEach(() => vi.mocked(api.getCalendarData).mockResolvedValue([]));
+  afterEach(() => {
+    cleanup();
+    act(() => useLanguageStore.getState().setPref("system"));
+  });
+
+  it("titles the month and names the weekdays in Italian", () => {
+    act(() => useLanguageStore.getState().setPref("it"));
+    const { container, getByText } = renderView();
+    const now = new Date();
+    getByText(monthTitle(now.getFullYear(), now.getMonth() + 1));
+    expect(Array.from(container.querySelectorAll(".cal-dow"), (el) => el.textContent)).toEqual([
+      "Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom",
+    ]);
+  });
+});
 
 describe("CalendarView day rollover", () => {
   beforeEach(() => {

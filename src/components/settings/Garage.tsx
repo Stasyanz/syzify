@@ -15,7 +15,8 @@ import {
 import { kindSports, odometerM, rulesSummary, sensorLabel, wearFraction, wearState, wearTip, WEAR_COLORS } from "../../lib/gear";
 import { invalidateActivityData } from "../../lib/activityInvalidation";
 import { formatDistance, formatDurationHM, formatElevation } from "../../lib/format";
-import { useUnits, isImperial, distanceUnit, M_PER_MILE } from "../../lib/units";
+import { useUnits, isImperial, distanceUnit, unitLabel, M_PER_MILE } from "../../lib/units";
+import { formatDateTime } from "../../lib/i18n";
 import { useToastStore } from "../../stores/toastStore";
 import { confirmDialog } from "../../stores/confirmStore";
 import { Select } from "../ui/Select";
@@ -62,7 +63,7 @@ export function distanceInputValue(meters: number | null): string {
 }
 
 function formatDay(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return formatDateTime(new Date(iso), { year: "numeric", month: "short", day: "numeric" });
 }
 
 /**
@@ -375,7 +376,7 @@ export function GearModal({
   const [ruleSensors, setRuleSensors] = useState<string[]>(
     (item?.rules ?? []).filter((r) => r.kind === "sensor_serial").map((r) => r.value),
   );
-  const unit = distanceUnit();
+  const unit = unitLabel(distanceUnit());
   const retired = item?.retired_at != null;
   const initialField = readDistanceField(initial, initialText0, item?.initial_distance_m ?? null);
   const limitField = readDistanceField(limit, limitText0, item?.distance_limit_m ?? null);

@@ -568,6 +568,20 @@ export function isTrainerRide(sport: string): boolean {
   return sport === "indoor_ride" || sport === "virtual_ride";
 }
 
+/** A ride of any kind, on the road, the trail or a trainer: cadence is
+ * crank revolutions here, steps everywhere else. The one place that
+ * decides it — the cadence unit and the cadence zones both ask. */
+export function isCyclingSport(sport: string): boolean {
+  return sport === "ride" || sport === "mountain_bike" || isTrainerRide(sport);
+}
+
+/** The cadence unit of a sport: crank turns for a ride, strokes for a swim
+ * or a paddle, steps for anything else. */
+export function cadenceUnit(sport: string): "rpm" | "strokes/min" | "spm" {
+  if (isCyclingSport(sport)) return "rpm";
+  return isSwimSport(sport) || sport === "paddle" ? "strokes/min" : "spm";
+}
+
 /** A sport whose coordinates come from a simulator, not the ground (#190,
  * #192): a virtual ride or run carries the lat/lon of its virtual world.
  * No map, no destination point, no segment from it. Mirrors

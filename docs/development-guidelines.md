@@ -69,6 +69,22 @@ pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
   lowers a count, and a new English string in JSX, a shown label or a toast
   fails the suite. Tables of names and strings a function returns are out
   of its sight — `TRACKED_BY_HAND` lists those files.
+- **Numbers, dates and units (#232)** follow the interface language, not
+  the OS region: a shown number goes through `formatNumber` /
+  `formatPercent`, a date through `formatDateTime` (all in `lib/i18n.ts`,
+  cached per language and options), a unit symbol through `unitLabel`
+  (`lib/units.ts`) — `distanceUnit()` and the like stay the symbols logic
+  compares. One grouping policy per language, message parameters
+  included: English groups every thousand (`1,214 m`), Italian and
+  Russian from five digits (`1214 m`, `12 345 км`); a value that rounds to
+  zero has no sign.
+  `toFixed` and `toLocale*` are for what is not shown (SVG paths, keys).
+  Weekday and month names come from `lib/calendar.ts` (Monday first). A
+  language switch remounts `<AppShell key={language}>`, so memoized chart
+  configs and module-level text are written again; a module-level constant
+  that shows a unit reads it in a getter. Settings locks the language
+  picker while an operation of its own runs, since the remount would cut
+  it short, and puts the focus back on the picker after it.
 
 ### Boundary naming
 

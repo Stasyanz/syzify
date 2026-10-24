@@ -11,8 +11,15 @@ import {
   formatGrade,
   formatHR,
   formatSelectionStats,
+  formatPower,
+  formatWhole,
+  formatWeight,
+  formatDurationHM,
+  formatMinutes,
+  formatDate,
 } from "./format";
 import { useUnitsStore } from "./units";
+import { useLanguageStore } from "./i18n";
 
 describe("formatDistance", () => {
   it("returns -- for null", () => {
@@ -193,7 +200,7 @@ describe("imperial units", () => {
   });
 
   it("formats elevation in feet", () => {
-    expect(formatElevation(1000)).toBe("3281 ft");
+    expect(formatElevation(1000)).toBe("3,281 ft");
     expect(formatElevation(0)).toBe("0 ft");
   });
 
@@ -212,5 +219,114 @@ describe("formatHR", () => {
   it("formats bpm", () => {
     expect(formatHR(150)).toBe("150 bpm");
     expect(formatHR(72.4)).toBe("72 bpm");
+  });
+});
+
+describe("formatPower / formatWhole / formatWeight", () => {
+  afterEach(() => {
+    useUnitsStore.setState({ mode: "metric" });
+  });
+
+  it("rounds to a whole number with its unit", () => {
+    expect(formatPower(null)).toBe("--");
+    expect(formatPower(212.6)).toBe("213 W");
+    expect(formatWhole(1240.4, "kcal")).toBe("1,240 kcal");
+    expect(formatWhole(86.2, "spm")).toBe("86 spm");
+    // A rounded negative zero reads as zero, as the old templates wrote it.
+    expect(formatElevation(-0.3)).toBe("0 m");
+  });
+
+  it("writes a weight whole, or with its one decimal, in the display unit", () => {
+    expect(formatWeight(100)).toBe("100 kg");
+    expect(formatWeight(22.5)).toBe("22.5 kg");
+    useUnitsStore.setState({ mode: "imperial" });
+    expect(formatWeight(22.5)).toBe("49.6 lb");
+  });
+});
+
+describe("formatDurationHM / formatMinutes", () => {
+  it("writes hours and minutes, or minutes alone", () => {
+    expect(formatDurationHM(null)).toBe("--");
+    expect(formatDurationHM(5000)).toBe("1h 23m");
+    expect(formatDurationHM(3900)).toBe("1h 05m");
+    expect(formatDurationHM(1500)).toBe("25m");
+  });
+
+  it("writes whole minutes under an hour, hours and minutes above", () => {
+    expect(formatMinutes(24.6)).toBe("25 min");
+    expect(formatMinutes(85)).toBe("1h 25m");
+    expect(formatMinutes(120)).toBe("2h");
+  });
+});
+
+describe("formatDate", () => {
+  it("writes an activity's start with date and time", () => {
+    // ICU writes the space before PM as a plain or a narrow no-break one.
+    // The hour is the language's own, unpadded on the 12-hour clock.
+    expect(formatDate("2026-06-02T18:05:00")).toMatch(/^Jun 2, 2026, 6:05\sPM$/u);
+    expect(formatDate("2026-06-02T09:05:00")).toMatch(/^Jun 2, 2026, 9:05\sAM$/u);
+  });
+});
+
+describe("in Russian and Italian (#232)", () => {
+  afterEach(() => {
+    useLanguageStore.getState().setPref("system");
+    useUnitsStore.setState({ mode: "metric" });
+  });
+
+  it("writes Russian numbers, symbols and words", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect(formatDistance(1500)).toBe("1,50 км");
+    expect(formatDistance(500)).toBe("500 м");
+    expect(formatSpeed(10)).toBe("36,0 км/ч");
+    expect(formatPace(1000 / 300)).toBe("5:00 /км");
+    expect(formatSwimPace(1)).toBe("1:40 /100 м");
+    expect(formatHR(150)).toBe("150 уд/мин");
+    expect(formatPower(250)).toBe("250 Вт");
+    expect(formatWeight(22.5)).toBe("22,5 кг");
+    expect(formatGrade(8.34)).toBe("+8,3\xa0%");
+    // A grade that rounds to zero carries no sign.
+    expect(formatGrade(-0.04)).toBe("0,0\xa0%");
+    expect(paceOrSpeedLabel("run")).toBe("Темп");
+    expect(paceOrSpeedLabel("ride")).toBe("Скорость");
+    expect(formatDurationHM(5000)).toBe("1 ч 23 мин");
+    expect(formatDurationHM(1500)).toBe("25 мин");
+    expect(formatMinutes(25)).toBe("25 мин");
+    expect(formatMinutes(120)).toBe("2 ч");
+    expect(formatDate("2026-06-02T18:05:00")).toBe("2 июн. 2026 г., 18:05");
+    // A 24-hour clock, whatever the system's region says.
+    expect(formatDate("2026-06-02T09:05:00")).toBe("2 июн. 2026 г., 9:05");
+    expect(formatSelectionStats({ distanceM: 2410, deltaM: 183.4, gradePct: 7.61 })).toBe(
+      "2,41 км · +183 м · +7,6\xa0%",
+    );
+    useUnitsStore.setState({ mode: "imperial" });
+    expect(formatDistance(5000)).toBe("3,11 ми");
+    expect(formatDistance(100)).toBe("328 фт");
+    expect(formatSpeed(10)).toBe("22,4 ми/ч");
+    expect(formatPace(1000 / 300)).toBe("8:03 /ми");
+    expect(formatSwimPace(1)).toBe("1:31 /100 ярд");
+    expect(formatWeight(22.5)).toBe("49,6 фнт");
+  });
+
+  it("writes Italian numbers with the international symbols", () => {
+    useLanguageStore.getState().setPref("it");
+    expect(formatDistance(42195)).toBe("42,20 km");
+    expect(formatSpeed(10)).toBe("36,0 km/h");
+    expect(formatHR(150)).toBe("150 bpm");
+    expect(paceOrSpeedLabel("swim")).toBe("Passo");
+    expect(paceOrSpeedLabel("ride")).toBe("Velocità");
+    expect(formatDurationHM(5000)).toBe("1 h 23 min");
+    expect(formatMinutes(85)).toBe("1 h 25 min");
+    expect(formatSwimPace(1)).toBe("1:40 /100 m");
+    expect(formatDate("2026-06-02T18:05:00")).toBe("2 giu 2026, 18:05");
+    expect(formatElevation(1214)).toBe("1214 m");
+  });
+});
+
+describe("rounding (#232)", () => {
+  it("rounds a tie on the decimal value as written, not on its binary", () => {
+    // 1005 m is 1.005 km: toFixed(2) read the binary 1.00499… as "1.00".
+    expect(formatDistance(1005)).toBe("1.01 km");
+    expect(formatSpeed(1.25 / 3.6)).toBe("1.3 km/h");
   });
 });

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
+import { useLanguageStore } from "../../lib/i18n";
 import {
   MonitoringData,
   deleteMessage,
@@ -47,6 +48,15 @@ describe("wording", () => {
     expect(describeSummary({ days: 0, first_date: null, last_date: null, files: 0 })).toBe(
       "No Garmin monitoring data stored",
     );
+  });
+
+  it("dates the stored range in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("it");
+    try {
+      expect(describeSummary(summary)).toContain("(19 giu 2026 – 5 set 2026)");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("refuses a half-filled or inverted range", () => {

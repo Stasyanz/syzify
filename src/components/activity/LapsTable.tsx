@@ -1,4 +1,4 @@
-import { isTrainerRide, type Lap, type TrackPointColumns } from "../../lib/types";
+import { cadenceUnit, isCyclingSport, type Lap, type TrackPointColumns } from "../../lib/types";
 import {
   formatDistance,
   formatDuration,
@@ -6,8 +6,10 @@ import {
   paceOrSpeedLabel,
   formatHR,
   formatElevation,
+  formatPower,
+  formatWhole,
 } from "../../lib/format";
-import { isImperial, useUnits, M_PER_MILE } from "../../lib/units";
+import { isImperial, unitLabel, useUnits, M_PER_MILE } from "../../lib/units";
 
 interface Props {
   laps: Lap[];
@@ -30,7 +32,7 @@ interface Row {
 
 function lapDistanceFor(sport: string): number {
   const imperial = isImperial();
-  if (sport === "ride" || sport === "mountain_bike" || isTrainerRide(sport)) return imperial ? 5 * M_PER_MILE : 5000;
+  if (isCyclingSport(sport)) return imperial ? 5 * M_PER_MILE : 5000;
   // Pool lengths stay metric even for imperial users.
   if (sport === "swim" || sport === "open_water") return 100;
   return imperial ? M_PER_MILE : 1000;
@@ -39,8 +41,8 @@ function lapDistanceFor(sport: string): number {
 /** "1 km" / "5 km" / "100 m" / "1 mi" — the auto-split length for the header. */
 function lapLengthLabel(sport: string): string {
   const d = lapDistanceFor(sport);
-  if (isImperial() && d >= M_PER_MILE) return `${Math.round(d / M_PER_MILE)} mi`;
-  return d >= 1000 ? `${d / 1000} km` : `${d} m`;
+  if (isImperial() && d >= M_PER_MILE) return `${Math.round(d / M_PER_MILE)} ${unitLabel("mi")}`;
+  return d >= 1000 ? `${d / 1000} ${unitLabel("km")}` : `${d} ${unitLabel("m")}`;
 }
 
 /** Split a GPS track into fixed-distance laps when the source has no laps. */
@@ -158,14 +160,14 @@ export function LapsTable({ laps, trackpoints, sport }: Props) {
     cols.push({
       key: "cad",
       label: "Cadence",
-      cell: (r) => (r.cadence != null ? `${Math.round(r.cadence)} spm` : "--"),
+      cell: (r) => (r.cadence != null ? formatWhole(r.cadence, cadenceUnit(sport)) : "--"),
       num: true,
     });
   if (hasPower)
     cols.push({
       key: "power",
       label: "Power",
-      cell: (r) => (r.power != null ? `${Math.round(r.power)} W` : "--"),
+      cell: (r) => formatPower(r.power),
       num: true,
     });
 

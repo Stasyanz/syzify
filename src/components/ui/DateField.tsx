@@ -2,7 +2,8 @@ import { useRef, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "../../lib/tauri";
-import { buildMonthGrid } from "../../lib/calendar";
+import { buildMonthGrid, monthNames, weekdayNames } from "../../lib/calendar";
+import { formatDateTime } from "../../lib/i18n";
 import { useToday } from "../../hooks/useToday";
 import { Select } from "./Select";
 
@@ -76,10 +77,7 @@ export function DateField({
   // 6 weeks always: a popup that changes height between 5- and 6-week months
   // jumps under the cursor while flipping months.
   const cells = buildMonthGrid(view.y, view.m + 1, 6); // view.m is 0-based
-  const monthOptions = Array.from({ length: 12 }, (_, m) => ({
-    value: String(m),
-    label: new Date(2000, m, 1).toLocaleDateString("en-US", { month: "long" }),
-  }));
+  const monthOptions = monthNames().map((label, m) => ({ value: String(m), label }));
   // Year dropdown: reaching an old import year via the month chevrons takes
   // 12 clicks per year. Only years that actually contain activities — keyed
   // under ["activities"] so imports/deletes refresh it like everything else.
@@ -95,7 +93,7 @@ export function DateField({
     const y = String(maxYear - i);
     return { value: y, label: y };
   });
-  const dow = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  const dow = weekdayNames(2);
   const shift = (n: number) =>
     setView((p) => {
       let m = p.m + n;
@@ -105,7 +103,7 @@ export function DateField({
       return { y, m };
     });
   const display = sel
-    ? sel.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+    ? formatDateTime(sel, { day: "numeric", month: "short", year: "numeric" })
     : "";
   const isDisabled = (iso: string) => (!!min && iso < min) || (!!max && iso > max);
 

@@ -3,8 +3,10 @@ import type { VolumeBucket } from "../../lib/types";
 import { getSportColor } from "../../lib/sportColors";
 import { SPORT_LABELS, type SportType } from "../../lib/types";
 import { useDashboardStore } from "../../stores/dashboardStore";
-import { useUnits, toDistance, distanceUnit } from "../../lib/units";
-import { dayKey } from "../../lib/calendar";
+import { useUnits, toDistance, distanceUnit, unitLabel } from "../../lib/units";
+import { dayKey, weekdayNames } from "../../lib/calendar";
+import { formatNumber } from "../../lib/i18n";
+import { formatMinutes } from "../../lib/format";
 import { useToday } from "../../hooks/useToday";
 
 interface Props {
@@ -16,14 +18,8 @@ interface Props {
  * minutes under an hour ("25 min") and hours+minutes above ("1h 25m", "2h").
  * Distance uses whole numbers from 10 up, one decimal below ("42 km", "9.4 km"). */
 export function formatVolumeValue(value: number, unit: "km" | "mi" | "min"): string {
-  if (unit === "min") {
-    const total = Math.round(value);
-    if (total < 60) return `${total} min`;
-    const h = Math.floor(total / 60);
-    const m = total % 60;
-    return m ? `${h}h ${m}m` : `${h}h`;
-  }
-  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${unit}`;
+  if (unit === "min") return formatMinutes(value);
+  return `${formatNumber(value, value >= 10 ? 0 : 1)} ${unitLabel(unit)}`;
 }
 
 /** Sports appearing anywhere in the week — by EITHER metric. The legend must
@@ -58,6 +54,7 @@ export function VolumeChart({ weekVolume }: Props) {
       volumeMetric === "distance" ? toDistance(sb.distance_m) : sb.duration_s / 60;
 
     // Build the 7-day grid: 6 days ago → today.
+    const weekdays = weekdayNames(); // Monday-first
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(today);
       d.setDate(d.getDate() - (6 - i));
@@ -69,7 +66,7 @@ export function VolumeChart({ weekVolume }: Props) {
         : [];
       const total = segs.reduce((sum, s) => sum + s.value, 0);
       return {
-        label: d.toLocaleDateString(undefined, { weekday: "short" }),
+        label: weekdays[(d.getDay() + 6) % 7],
         total,
         segs,
       };
@@ -90,7 +87,7 @@ export function VolumeChart({ weekVolume }: Props) {
         <div>
           <h3>Volume</h3>
           <div className="text-[11px] font-medium text-faint mt-0.5">
-            Last 7 days · {unit}
+            Last 7 days · {unitLabel(unit)}
           </div>
         </div>
         <div className="seg">

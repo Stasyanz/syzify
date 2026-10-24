@@ -4,6 +4,7 @@
 
 import type { RecoveryNight } from "./types";
 import { dateOfDayKey } from "./calendar";
+import { formatDateTime } from "./i18n";
 
 export type Band = RecoveryNight["band"];
 
@@ -33,9 +34,10 @@ export function daysBetween(from: string, to: string): number {
   return Math.round(ms / 86_400_000);
 }
 
-/** "Sep 5" — the short local date of a "YYYY-MM-DD" key. */
+/** "Sep 5" — the short local date of a "YYYY-MM-DD" key, in the interface
+ * language ("5 сент."). */
 export function shortDate(key: string): string {
-  return dateOfDayKey(key).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDateTime(dateOfDayKey(key), { month: "short", day: "numeric" });
 }
 
 /** "+3" / "−2" / "0" for the night HR's distance from the baseline. */

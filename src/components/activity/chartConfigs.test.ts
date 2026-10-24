@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { TrackPointColumns } from "../../lib/types";
 import { useUnitsStore, M_PER_MILE, MPH_PER_MPS, FT_PER_M } from "../../lib/units";
+import { useLanguageStore } from "../../lib/i18n";
 import {
   CADENCE,
   ELEVATION,
@@ -105,14 +106,48 @@ describe("hasData", () => {
 });
 
 describe("metric configs", () => {
+  it("show their units in the interface language, read when shown (#232)", () => {
+    const units = () => [ELEVATION(), HR, PACE(), SWIM_PACE(), SPEED(), CADENCE("run"), POWER].map((c) => c.unit);
+    expect(units()).toEqual(["m", "bpm", "min/km", "min/100m", "km/h", "spm", "W"]);
+    expect([PACE().tipSuffix, SWIM_PACE().tipSuffix, SPEED().tipSuffix]).toEqual(["/km", "/100m", undefined]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      // HR and power are module constants: their unit follows the
+      // language all the same.
+      expect(units()).toEqual(["м", "уд/мин", "мин/км", "мин/100 м", "км/ч", "шаг/мин", "Вт"]);
+      expect(PACE().tipSuffix).toBe("/км");
+      useUnitsStore.setState({ mode: "imperial" });
+      expect([PACE().unit, SWIM_PACE().tipSuffix]).toEqual(["мин/ми", "/100 ярд"]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+      useUnitsStore.setState({ mode: "metric" });
+    }
+  });
+
+  it("count a ride's cadence in crank revolutions, a swim's in strokes, every other sport's in steps", () => {
+    expect(["ride", "mountain_bike", "indoor_ride", "virtual_ride"].map((s) => CADENCE(s).unit)).toEqual([
+      "rpm", "rpm", "rpm", "rpm",
+    ]);
+    expect(["run", "walk", "hike"].map((s) => CADENCE(s).unit)).toEqual(["spm", "spm", "spm"]);
+    expect(["swim", "open_water"].map((s) => CADENCE(s).unit)).toEqual(["spm", "spm"]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect([CADENCE("ride").unit, CADENCE("run").unit, CADENCE("swim").unit, CADENCE("open_water").unit]).toEqual([
+        "об/мин", "шаг/мин", "гр/мин", "гр/мин",
+      ]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
   it("map their columns and summary fields", () => {
     const tp = columns(2, { hr: [120, 130], cadence: [80, 90], power_w: [200, 220] });
     expect(HR.getData(tp)).toBe(tp.hr);
-    expect(CADENCE.getData(tp)).toBe(tp.cadence);
+    expect(CADENCE("run").getData(tp)).toBe(tp.cadence);
     expect(POWER.getData(tp)).toBe(tp.power_w);
     const s = { hr: 125, cadence: 85, power_w: 210, speed_mps: 10 };
     expect(HR.summaryAvg!(s)).toBe(125);
-    expect(CADENCE.summaryAvg!(s)).toBe(85);
+    expect(CADENCE("run").summaryAvg!(s)).toBe(85);
     expect(POWER.summaryAvg!(s)).toBe(210);
   });
 
@@ -150,7 +185,7 @@ describe("metric configs", () => {
     // Altitude has no zero convention, and a stop (pace null) is not a
     // 0:00 sprint at the top of the flipped axis.
     for (const cfg of [ELEVATION(), PACE(), SWIM_PACE()]) expect(cfg.missing).toBe("gap");
-    for (const cfg of [HR, CADENCE, POWER, SPEED()]) expect(cfg.missing).toBeUndefined();
+    for (const cfg of [HR, CADENCE("run"), POWER, SPEED()]) expect(cfg.missing).toBeUndefined();
   });
 
   it("elevation opts out of the average line and converts to feet when imperial", () => {

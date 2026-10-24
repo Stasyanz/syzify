@@ -1,5 +1,7 @@
 import type { Activity } from "../../lib/types";
 import { formatDuration } from "../../lib/format";
+import { formatNumber, formatPercent } from "../../lib/i18n";
+import { unitLabel, type UnitSymbol } from "../../lib/units";
 
 interface Props {
   activity: Activity;
@@ -87,11 +89,11 @@ function PhaseGauge({
 
 const fmtDeg = (v: number | null) => (v == null ? "--" : `${Math.round(v)}°`);
 const fmtMm = (v: number | null) =>
-  v == null ? "--" : `${v > 0 ? "+" : ""}${Math.round(v)} mm`;
-const fmtAvgMax = (avg: number | null, max: number | null, unit: string) =>
+  v == null ? "--" : `${v > 0 ? "+" : ""}${formatNumber(Math.round(v))} ${unitLabel("mm")}`;
+const fmtAvgMax = (avg: number | null, max: number | null, unit: UnitSymbol) =>
   avg == null && max == null
     ? "--"
-    : `${avg != null ? Math.round(avg) : "--"} / ${max != null ? Math.round(max) : "--"} ${unit}`;
+    : `${avg != null ? formatNumber(Math.round(avg)) : "--"} / ${max != null ? formatNumber(Math.round(max)) : "--"} ${unitLabel(unit)}`;
 
 /**
  * Cycling Dynamics card (dual-sided power meter data): L/R balance bar,
@@ -125,17 +127,17 @@ export function CyclingDynamicsPanel({ activity: a, className = "" }: Props) {
         <div className="mb-4">
           <div className="flex items-center justify-between text-sm mb-1">
             <span className="text-muted">
-              L <span className="font-num font-semibold text-ink">{leftPct.toFixed(1)}%</span>
+              L <span className="font-num font-semibold text-ink">{formatPercent(leftPct)}</span>
             </span>
             <span className="text-xs text-faint uppercase tracking-wide">Balance</span>
             <span className="text-muted">
-              <span className="font-num font-semibold text-ink">{rightPct.toFixed(1)}%</span> R
+              <span className="font-num font-semibold text-ink">{formatPercent(rightPct)}</span> R
             </span>
           </div>
           <div
             className="relative h-2 rounded-full overflow-hidden flex"
             role="img"
-            aria-label={`Balance: left ${leftPct.toFixed(1)}%, right ${rightPct.toFixed(1)}%`}
+            aria-label={`Balance: left ${formatPercent(leftPct)}, right ${formatPercent(rightPct)}`}
           >
             {/* Same hue at two weights — accent-soft vanishes on the dark
                 card; opacity keeps both halves visible in either theme. */}

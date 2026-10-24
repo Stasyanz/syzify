@@ -6,9 +6,10 @@ import { api } from "../../lib/tauri";
 import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
 import { formatDistance, formatDuration } from "../../lib/format";
-import { toDistance, distanceUnit, toElevation, elevationUnit, useUnits } from "../../lib/units";
+import { toDistance, distanceUnit, toElevation, elevationUnit, unitLabel, useUnits } from "../../lib/units";
 import { SPORT_LABELS, type SportType, type DaySummary, type RecoveryNight } from "../../lib/types";
-import { WEEKDAYS, buildMonthGrid, monthSports } from "../../lib/calendar";
+import { buildMonthGrid, monthSports, monthTitle, weekdayNames } from "../../lib/calendar";
+import { formatNumber } from "../../lib/i18n";
 import { useInvalidateOnNewDay, useMonthView, useToday } from "../../hooks/useToday";
 import { BAND_LABEL, BAND_TOKEN, formatDelta } from "../../lib/recovery";
 
@@ -72,10 +73,7 @@ export function MiniCalendar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, year]);
 
-  const monthLabel = new Date(year, month - 1).toLocaleString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
+  const monthLabel = monthTitle(year, month);
 
   const sessions = days.reduce((s, d) => s + d.activity_count, 0);
   const monthDistance = toDistance(days.reduce((s, d) => s + d.total_distance_m, 0));
@@ -102,7 +100,7 @@ export function MiniCalendar() {
             </div>
           </div>
           <div className="cal-grid">
-            {WEEKDAYS.map((w) => (
+            {weekdayNames().map((w) => (
               <div className="cal-dow" key={w}>
                 {w}
               </div>
@@ -184,15 +182,15 @@ export function MiniCalendar() {
             </div>
             <div>
               <div className="k">
-                {monthDistance.toFixed(0)}
-                <span>{distanceUnit()}</span>
+                {formatNumber(monthDistance, 0)}
+                <span>{unitLabel(distanceUnit())}</span>
               </div>
               <div className="l">Distance</div>
             </div>
             {/* No "h" suffix — the "Hours" label below already names the unit
                 (unlike Distance/Elev gain, whose labels don't carry km/m). */}
             <div>
-              <div className="k">{monthHours.toFixed(1)}</div>
+              <div className="k">{formatNumber(monthHours, 1)}</div>
               <div className="l">Hours</div>
             </div>
             {/* Hidden while zero: a flat-terrain (or elevation-less GPX)
@@ -200,8 +198,8 @@ export function MiniCalendar() {
             {monthElevGain > 0 && (
               <div>
                 <div className="k">
-                  {Math.round(monthElevGain).toLocaleString("en-US")}
-                  <span>{elevationUnit()}</span>
+                  {formatNumber(monthElevGain, 0)}
+                  <span>{unitLabel(elevationUnit())}</span>
                 </div>
                 <div className="l">Elev gain</div>
               </div>

@@ -80,6 +80,7 @@ import { api } from "../../lib/tauri";
 import { GRADE_COLORS, GRADE_COLORS_DARK } from "./chartZones";
 import { yAxisSize } from "./chartAxis";
 import { useActivityStore } from "../../stores/activityStore";
+import { useLanguageStore } from "../../lib/i18n";
 
 /** A trackpoint column set with every column null-filled to `n`, then the
  * given columns overlaid. */
@@ -229,7 +230,7 @@ describe("ChartPanel elevation layers", () => {
     };
     expect(hover(7)).toContain("—");
     expect(hover(7)).not.toMatch(/\b0 m\b/);
-    expect(hover(6)).toContain("1206 m");
+    expect(hover(6)).toContain("1,206 m");
     hover(null);
     // Focus from the map on the gap: the cursor still marks the x, and
     // no NaN is ever handed to the plot to place.
@@ -646,5 +647,43 @@ describe("first-slot grip", () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => (key === "chart_wide_height" ? "9999" : null));
     renderPanel(track(), vi.fn());
     await waitFor(() => expect(sizes.some((s) => s.height === WIDE_CHART_MAX_HEIGHT_PX)).toBe(true));
+  });
+});
+
+describe("ChartPanel in the interface language (#232)", () => {
+  beforeEach(() => built.splice(0));
+  afterEach(() => act(() => useLanguageStore.getState().setPref("system")));
+
+  type Axis = { label?: string; values?: (u: unknown, ticks: (number | null)[]) => string[] };
+  const plotOf = (prefix: string) => built.filter((b) => b.opts.series[1]?.label?.startsWith(prefix)).pop()!;
+
+  it("writes the hover tip, the tick labels and the x unit in Russian", () => {
+    act(() => useLanguageStore.getState().setPref("ru"));
+    const run = columns(N, {
+      t: seq((i) => i * 30),
+      distance_m: seq((i) => i * 100),
+      speed_mps: seq(() => 1000 / 300),
+      hr: seq(() => 150),
+    });
+    const { getByTestId, getByText } = renderPanel(run, vi.fn(), "run");
+    const hover = (prefix: string) => {
+      const hooks = plotOf(prefix).opts.hooks!;
+      act(() => hooks.setCursor![0]({ cursor: { idx: 3, left: 0 }, over: document.createElement("div") }));
+      const text = getByTestId("chart-tip").textContent;
+      act(() => hooks.setCursor![0]({ cursor: { idx: null }, over: document.createElement("div") }));
+      return text;
+    };
+    expect(hover("Pace")).toBe("5:00 /км");
+    expect(hover("Heart")).toBe("150 уд/мин");
+
+    const axes = plotOf("Heart").opts.axes as Axis[];
+    expect(axes[0].label).toBe("км");
+    expect(axes[1].values!({}, [1.5, 10000])).toEqual(["1,5", "10\xa0000"]);
+    // The pace axis keeps its own m:ss ticks.
+    expect((plotOf("Pace").opts.axes as Axis[])[1].values!({}, [5.5])).toEqual(["5:30"]);
+
+    fireEvent.click(getByText("Time"));
+    expect((plotOf("Heart").opts.axes as Axis[])[0].label).toBe("мин");
+    expect(plotOf("Heart").opts.series[0].label).toBe("Time (мин)");
   });
 });

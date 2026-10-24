@@ -1,6 +1,7 @@
 import type { Activity, TrackPointColumns } from "../../lib/types";
 import { SPORT_LABELS, type SportType } from "../../lib/types";
 import { formatDate } from "../../lib/format";
+import { currentLanguage } from "../../lib/i18n";
 import type { BlockPositions, BlockScales, CropRect } from "./shareLayout";
 import { fullCrop, defaultScales, clampBlockScale, normalizeStraighten, normalizeOrientation } from "./shareLayout";
 import { clampCropRotated } from "./cropOverlayMath";
@@ -198,7 +199,7 @@ function chipColors(theme: "dark" | "light") {
   };
 }
 
-function drawTitleBlock(
+export function drawTitleBlock(
   d: DrawCtx,
   pos: { x: number; y: number },
   activity: Activity,
@@ -209,7 +210,7 @@ function drawTitleBlock(
   const c = chipColors(theme);
   const sportLabel = SPORT_LABELS[activity.sport_type as SportType] ?? "Activity";
   const title = activity.title ?? sportLabel;
-  const metaStr = `${sportLabel.toUpperCase()} · ${formatDate(activity.start_time).toUpperCase()}`;
+  const metaStr = `${sportLabel.toUpperCase()} · ${formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}`;
   const padX = baseFs;
   const padY = baseFs * 0.7;
 

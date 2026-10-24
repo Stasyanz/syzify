@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { RenderResult } from "@testing-library/react";
 
 vi.mock("./lib/tauri", () => ({
@@ -135,6 +135,30 @@ describe("App boot", { timeout: 20_000 }, () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(watchVaultOpen.length).toBeGreaterThan(0);
     expect(watchVaultOpen).not.toContain(true);
+  });
+
+  /** Dates, numbers and units are written when a screen renders — some in
+   * memoized chart configs and uPlot axes no hook reaches. A language
+   * switch remounts the screens so all of it is written again (#232). */
+  it("remounts the screens on a language change, and only then", async () => {
+    await bootApp(UNLOCKED);
+    const main = await waitFor(() => {
+      const m = document.querySelector("main");
+      expect(m).toBeTruthy();
+      return m!;
+    });
+    // bootApp re-imported the module graph: this is the store App reads.
+    const { useLanguageStore } = await import("./lib/i18n");
+    try {
+      act(() => useLanguageStore.getState().setPref("en"));
+      expect(document.querySelector("main")).toBe(main);
+      act(() => useLanguageStore.getState().setPref("ru"));
+      const remounted = document.querySelector("main");
+      expect(remounted).toBeTruthy();
+      expect(remounted).not.toBe(main);
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("vault error screen switches to a picked vault and restarts", async () => {

@@ -2,17 +2,22 @@
 // merge/label logic is unit-testable without uPlot or a DOM).
 
 import type { PowerCurveEnvelopePoint, PowerCurvePoint } from "../../lib/types";
+import { formatDateTime, t } from "../../lib/i18n";
+import { formatPower } from "../../lib/format";
 
 /** X ticks worth labeling on the log axis — the anchors riders compare. */
 export const AXIS_SPLITS = [1, 5, 15, 60, 300, 1200, 3600];
 
-/** "45s", "1m", "1m30", "20m", "1h" — compact window labels for axis + tip. */
+/** "45s", "1m", "1m30", "20m", "1h" — compact window labels for axis + tip,
+ * in the interface language ("45 с", "1 мин", "1:30", "1 ч"). */
 export function formatWindow(s: number): string {
-  if (s < 60) return `${s}s`;
-  if (s === 3600) return "1h";
+  if (s < 60) return t("powerCurve.windowS", { s });
+  if (s === 3600) return t("format.durationH", { h: 1 });
   const m = Math.floor(s / 60);
   const rest = s % 60;
-  return rest === 0 ? `${m}m` : `${m}m${rest.toString().padStart(2, "0")}`;
+  return rest === 0
+    ? t("format.durationM", { m })
+    : t("powerCurve.windowMS", { m, s: rest.toString().padStart(2, "0") });
 }
 
 export interface MergedCurve {
@@ -50,11 +55,11 @@ export function mergeCurveData(
   };
 }
 
-/** Month + day of an ISO timestamp for the tooltip ("Aug 30"). */
+/** Month + day of an ISO timestamp for the tooltip ("Aug 30", "30 авг."). */
 export function shortDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDateTime(d, { month: "short", day: "numeric" });
 }
 
 /**
@@ -69,14 +74,14 @@ export function tooltipText(
   activityId: string,
 ): string {
   const parts: string[] = [];
-  if (activityW != null) parts.push(`${formatWindow(windowS)} · ${Math.round(activityW)} W`);
+  if (activityW != null) parts.push(`${formatWindow(windowS)} · ${formatPower(activityW)}`);
   else parts.push(formatWindow(windowS));
   if (record) {
     if (record.activity_id === activityId) {
-      parts.push("all-time best");
+      parts.push(t("powerCurve.allTimeBest"));
     } else {
       const label = record.title || shortDate(record.start_time);
-      parts.push(`best ${Math.round(record.watts)} W (${label})`);
+      parts.push(t("powerCurve.best", { power: formatPower(record.watts), label }));
     }
   }
   return parts.join(" — ");

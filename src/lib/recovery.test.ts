@@ -1,7 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, formatDelta, sparkline } from "./recovery";
+import { daysBetween, formatDelta, shortDate, sparkline } from "./recovery";
+import { useLanguageStore } from "./i18n";
 
 describe("wording", () => {
+  it("dates a night in the interface language (#232)", () => {
+    expect(shortDate("2026-09-05")).toBe("Sep 5");
+    useLanguageStore.getState().setPref("it");
+    try {
+      expect(shortDate("2026-09-05")).toBe("5 set");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
   it("formats the HR delta with a sign", () => {
     expect(formatDelta(2.6)).toBe("+3");
     expect(formatDelta(-1.4)).toBe("−1");

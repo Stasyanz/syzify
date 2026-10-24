@@ -9,7 +9,7 @@ import { useUnits } from "../../lib/units";
 import { SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
 import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
-import { WEEKDAYS, buildMonthGrid } from "../../lib/calendar";
+import { buildMonthGrid, monthTitle, weekdayNames } from "../../lib/calendar";
 import { useMonthView, useToday } from "../../hooks/useToday";
 
 export function CalendarView() {
@@ -61,10 +61,7 @@ export function CalendarView() {
   }, [prevMonth, nextMonth]);
 
 
-  const monthLabel = new Date(year, month - 1).toLocaleString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
+  const monthLabel = monthTitle(year, month);
 
   const cells = buildMonthGrid(year, month);
 
@@ -87,7 +84,7 @@ export function CalendarView() {
 
       {/* Grid (overflow visible so day popups can escape the cells) */}
       <div className="grid grid-cols-7 gap-1.5">
-        {WEEKDAYS.map((wd) => (
+        {weekdayNames().map((wd) => (
           <div key={wd} className="cal-dow">
             {wd}
           </div>

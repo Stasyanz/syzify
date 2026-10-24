@@ -13,7 +13,37 @@ import {
   LB_PER_KG,
   M_PER_MILE,
   FT_PER_M,
+  unitLabel,
+  type UnitSymbol,
 } from "./units";
+import { useLanguageStore } from "./i18n";
+
+describe("unitLabel (#232)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  const ALL: UnitSymbol[] = [
+    "km", "mi", "m", "ft", "yd", "km/h", "mph", "kg", "lb", "bpm", "W", "rpm", "spm", "strokes/min", "kcal", "h",
+    "min", "mm",
+  ];
+
+  it("says a symbol as it is in English, strokes as steps", () => {
+    expect(ALL.map(unitLabel)).toEqual(ALL.map((u) => (u === "strokes/min" ? "spm" : u)));
+  });
+
+  it("writes the Russian symbols", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect(ALL.map(unitLabel)).toEqual([
+      "км", "ми", "м", "фт", "ярд", "км/ч", "ми/ч", "кг", "фнт", "уд/мин", "Вт", "об/мин", "шаг/мин", "гр/мин",
+      "ккал", "ч", "мин", "мм",
+    ]);
+  });
+
+  it("keeps the international symbols in Italian, steps and strokes per minute aside", () => {
+    useLanguageStore.getState().setPref("it");
+    const own: Partial<Record<UnitSymbol, string>> = { spm: "ppm", "strokes/min": "br/min" };
+    expect(ALL.map(unitLabel)).toEqual(ALL.map((u) => own[u] ?? u));
+  });
+});
 
 describe("units store", () => {
   afterEach(() => useUnitsStore.setState({ mode: "metric" }));

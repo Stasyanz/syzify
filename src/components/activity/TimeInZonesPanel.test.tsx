@@ -4,6 +4,7 @@ import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import type { TimeInZone } from "../../lib/types";
 import { HR_ZONE_COLORS, POWER_ZONE_COLORS } from "./chartZones";
 import { TimeInZonesPanel } from "./TimeInZonesPanel";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -105,6 +106,18 @@ describe("TimeInZonesPanel", () => {
     expect(z7.text).toContain("<1%");
     expect(z7.label).toBe("Z7 Neuromuscular, > 353 W, 0:08, <1%");
     expect(rowsOf(container)[6].text).toContain("31%");
+  });
+
+  it("writes shares and ranges in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = render(<TimeInZonesPanel timeInZones={POWER} durationS={DURATION} />);
+      const z7 = rowsOf(container)[0];
+      expect(z7.label).toBe("Z7 Neuromuscular, > 353 Вт, 0:08, <1\xa0%");
+      expect(rowsOf(container)[6].text).toContain("31\xa0%");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("keeps the other list mounted but hidden so the card height does not jump", () => {

@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { t } from "./i18n";
+import type { MessageKey } from "../locales/types";
 
 export type UnitsMode = "metric" | "imperial";
 
@@ -76,4 +78,40 @@ export function weightUnit(): "kg" | "lb" {
 /** Kilograms → the display weight number (kg or lb). */
 export function toWeight(kg: number): number {
   return isImperial() ? kg * LB_PER_KG : kg;
+}
+
+/** The symbols the units above and the formatters speak in. A symbol is
+ * what logic compares; `unitLabel` is what the screen shows. Each is the
+ * English text but "strokes/min", which English, like steps, writes "spm". */
+export type UnitSymbol =
+  | ReturnType<typeof distanceUnit>
+  | ReturnType<typeof elevationUnit>
+  | ReturnType<typeof speedUnit>
+  | ReturnType<typeof weightUnit>
+  | "yd" | "bpm" | "W" | "rpm" | "spm" | "strokes/min" | "kcal" | "h" | "min" | "mm";
+
+const UNIT_KEYS: Record<UnitSymbol, Extract<MessageKey, `units.${string}`>> = {
+  km: "units.km",
+  mi: "units.mi",
+  m: "units.m",
+  ft: "units.ft",
+  yd: "units.yd",
+  "km/h": "units.kmh",
+  mph: "units.mph",
+  kg: "units.kg",
+  lb: "units.lb",
+  bpm: "units.bpm",
+  W: "units.w",
+  rpm: "units.rpm",
+  spm: "units.spm",
+  "strokes/min": "units.strokesPerMin",
+  kcal: "units.kcal",
+  h: "units.h",
+  min: "units.min",
+  mm: "units.mm",
+};
+
+/** A unit symbol as the interface language writes it ("км" in Russian). */
+export function unitLabel(unit: UnitSymbol): string {
+  return t(UNIT_KEYS[unit]);
 }

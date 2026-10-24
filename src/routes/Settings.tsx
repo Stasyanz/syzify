@@ -21,7 +21,15 @@ import { useToastStore } from "../stores/toastStore";
 import { useFeedbackStore } from "../stores/feedbackStore";
 import { useThemeStore, type ThemeMode } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
-import { LANGUAGES, LANGUAGE_NAMES, useLanguageStore, useT, type LanguagePref } from "../lib/i18n";
+import {
+  LANGUAGES,
+  LANGUAGE_NAMES,
+  currentLanguage,
+  formatNumber,
+  useLanguageStore,
+  useT,
+  type LanguagePref,
+} from "../lib/i18n";
 import type { MessageKey } from "../locales/types";
 import { Select } from "../components/ui/Select";
 import { Toggle } from "../components/ui/Toggle";
@@ -49,6 +57,11 @@ const THEME_MODES = [
   ["system", "settings.general.themeSystem"],
 ] as const satisfies readonly (readonly [ThemeMode, MessageKey])[];
 
+/** Set when the language picker changed the interface language: the app
+ * remounts under the new language (#232), and the new Settings page puts the
+ * focus back on the picker the keyboard left. */
+let refocusLanguagePicker = false;
+
 export function SettingsPage() {
   const t = useT();
   const queryClient = useQueryClient();
@@ -61,6 +74,18 @@ export function SettingsPage() {
   const setUnitsMode = useUnitsStore((s) => s.setMode);
   const languagePref = useLanguageStore((s) => s.pref);
   const setLanguagePref = useLanguageStore((s) => s.setPref);
+  const languageRowRef = useRef<HTMLDivElement>(null);
+  function chooseLanguage(pref: LanguagePref) {
+    const before = currentLanguage();
+    setLanguagePref(pref);
+    // "System" may resolve to the language already shown: no remount then.
+    if (currentLanguage() !== before) refocusLanguagePicker = true;
+  }
+  useEffect(() => {
+    if (!refocusLanguagePicker) return;
+    refocusLanguagePicker = false;
+    languageRowRef.current?.querySelector("button")?.focus();
+  }, []);
 
   // The open tab lives in the URL (`?tab=vault`): a plugin page links back
   // to Plugins, and a reload keeps the section. General has no param.
@@ -202,8 +227,8 @@ export function SettingsPage() {
       (e) => {
         const { processed, total } = e.payload;
         const pct = total > 0 ? Math.floor((processed / total) * 100) : 100;
-        const mb = (processed / 1048576).toFixed(0);
-        const totalMb = (total / 1048576).toFixed(0);
+        const mb = formatNumber(processed / 1048576, 0);
+        const totalMb = formatNumber(total / 1048576, 0);
         updateToast(toastId, {
           message: `Creating backup… ${pct}% (${mb}/${totalMb} MB)`,
         });
@@ -401,7 +426,7 @@ export function SettingsPage() {
                 ))}
               </div>
             </div>
-            <div className="set-row">
+            <div className="set-row" ref={languageRowRef}>
               <div>
                 <div className="sl">{t("settings.general.language")}</div>
                 <div className="sd">{t("settings.general.languageHint")}</div>
@@ -409,8 +434,11 @@ export function SettingsPage() {
               <Select
                 ariaLabel={t("settings.general.language")}
                 className="w-40"
+                // The remount a new language brings would cut short an
+                // operation of this page and lose its progress.
+                disabled={clearing || backingUp || restoring || encBusy}
                 value={languagePref}
-                onChange={(v) => setLanguagePref(v as LanguagePref)}
+                onChange={(v) => chooseLanguage(v as LanguagePref)}
                 options={[
                   { value: "system", label: t("settings.general.languageSystem") },
                   ...LANGUAGES.map((l) => ({ value: l, label: LANGUAGE_NAMES[l] })),

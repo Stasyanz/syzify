@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TimeInZone } from "../../lib/types";
 import { formatDuration } from "../../lib/format";
+import { formatPercent } from "../../lib/i18n";
 import { timeInZoneRows, type ZoneRow, type ZoneType } from "./timeInZones";
 
 interface Props {
@@ -13,8 +14,8 @@ const TAB_LABEL: Record<ZoneType, string> = { hr: "Heart rate", power: "Power" }
 
 /** "53%", and "<1%" for a sliver that would otherwise read as nothing. */
 function pctLabel(pct: number): string {
-  if (pct > 0 && pct < 0.5) return "<1%";
-  return `${Math.round(pct)}%`;
+  if (pct > 0 && pct < 0.5) return `<${formatPercent(1, 0)}`;
+  return formatPercent(pct, 0);
 }
 
 /**

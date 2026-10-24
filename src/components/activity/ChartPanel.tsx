@@ -67,8 +67,9 @@ import {
 import { SaveSegmentPopover } from "./SaveSegmentPopover";
 import { useResolvedDark } from "../../lib/theme";
 import { tipTransform } from "./chartTip";
-import { yAxisSize } from "./chartAxis";
-import { useUnits, isImperial, distanceUnit, M_PER_MILE, MPH_PER_MPS } from "../../lib/units";
+import { axisValues, yAxisSize } from "./chartAxis";
+import { useUnits, isImperial, distanceUnit, unitLabel, M_PER_MILE, MPH_PER_MPS } from "../../lib/units";
+import { formatNumber } from "../../lib/i18n";
 
 export type { SummaryAverages } from "./chartConfigs";
 
@@ -196,12 +197,9 @@ function SingleChart({
 
   // Format the value under the cursor for the hover popup.
   const fmtVal = (v: number) => {
-    if (config.valueFmt) {
-      const suffix = config.unit.startsWith("min/") ? ` /${config.unit.slice(4)}` : "";
-      return `${config.valueFmt(v)}${suffix}`;
-    }
+    if (config.valueFmt) return `${config.valueFmt(v)} ${config.tipSuffix}`;
     const dec = config.key === "speed" ? 1 : 0;
-    return `${v.toFixed(dec)} ${config.unit}`;
+    return `${formatNumber(v, dec)} ${config.unit}`;
   };
 
   useEffect(() => {
@@ -506,6 +504,7 @@ function SingleChart({
           stroke: tickColor,
           grid: { stroke: gridColor, width: 1 },
           ticks: { stroke: gridColor, width: 1 },
+          values: axisValues,
         },
         {
           size: yAxisSize,
@@ -515,7 +514,7 @@ function SingleChart({
           ticks: { stroke: gridColor, width: 1 },
           values: config.valueFmt
             ? (_u, ticks) => ticks.map((v) => config.valueFmt!(v))
-            : undefined,
+            : axisValues,
         },
       ],
       series: [{ label: xLabel }, ...(climbs ? gradeLayers(main) : [main])],
@@ -767,12 +766,12 @@ export function ChartPanel({
       ELEVATION(),
       HR,
       showSwimPace ? SWIM_PACE() : showPace ? PACE() : SPEED(),
-      CADENCE,
+      CADENCE(sport),
       POWER,
     ],
     // `units` re-creates the factory configs with the right conversions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showPace, showSwimPace, units],
+    [showPace, showSwimPace, units, sport],
   );
   // Materialize each metric's series ONCE and share it with chartData below —
   // getData runs an O(N) pass (pace/speed also derive speedSeries), so calling
@@ -1078,8 +1077,9 @@ export function ChartPanel({
     );
     return s && formatSelectionStats(s);
   };
-  const xLabel = xAxis === "time" ? "Time (min)" : `Distance (${distanceUnit()})`;
-  const xUnit = xAxis === "time" ? "min" : distanceUnit();
+  const onTime = xAxis === "time";
+  const xUnit = unitLabel(onTime ? "min" : distanceUnit());
+  const xLabel = `${onTime ? "Time" : "Distance"} (${xUnit})`;
 
   return (
     <div ref={panelRef} className="space-y-3">

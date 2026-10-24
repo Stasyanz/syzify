@@ -7,17 +7,14 @@ import { confirmDialog } from "../../stores/confirmStore";
 import { useToastStore } from "../../stores/toastStore";
 import { dateOfDayKey } from "../../lib/calendar";
 import { errorText } from "../../lib/errors";
+import { formatDateTime } from "../../lib/i18n";
 
 const INPUT =
   "text-sm bg-card border border-border-2 rounded-[9px] px-2.5 py-1.5 outline-none focus:border-accent";
 
 /** "Sep 5, 2026" from a "YYYY-MM-DD" key. */
 export function longDate(key: string): string {
-  return dateOfDayKey(key).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatDateTime(dateOfDayKey(key), { year: "numeric", month: "short", day: "numeric" });
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

@@ -17,6 +17,7 @@ import {
   useUnits,
   distanceUnit,
   elevationUnit,
+  unitLabel,
   M_PER_MILE,
   FT_PER_M,
 } from "../../lib/units";
@@ -343,7 +344,7 @@ export function FilterDrawer() {
 
           {/* Distance */}
           <div className="fgroup">
-            <div className="fh">Distance · {distanceUnit()}</div>
+            <div className="fh">Distance · {unitLabel(distanceUnit())}</div>
             <RangeField
               // Round the derived display value (3.1068… → 3.1); the exact
               // stored metres are untouched unless the field is edited.
@@ -375,7 +376,7 @@ export function FilterDrawer() {
 
           {/* Elevation */}
           <div className="fgroup">
-            <div className="fh">Elevation · {elevationUnit()}</div>
+            <div className="fh">Elevation · {unitLabel(elevationUnit())}</div>
             <RangeField
               minValue={
                 filters.elev_gain_min != null

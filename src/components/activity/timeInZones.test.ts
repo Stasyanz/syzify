@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { TimeInZone } from "../../lib/types";
 import { HR_ZONE_COLORS, POWER_ZONE_COLORS, hrZoneRanges, powerZoneRanges } from "./chartZones";
 import { hasTimeInZones, timeInZoneRows } from "./timeInZones";
+import { useLanguageStore } from "../../lib/i18n";
 
 function row(
   zone_type: string,
@@ -56,6 +57,16 @@ describe("timeInZoneRows", () => {
     expect(rows.map((r) => Math.round(r.timeS))).toEqual([2674, 4602, 1357, 0, 0]);
     expect(rows.map((r) => Math.round(r.pct))).toEqual([31, 53, 16, 0, 0]);
     expect(rows.map((r) => r.color)).toEqual(HR_ZONE_COLORS);
+  });
+
+  it("writes the range's unit in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(timeInZoneRows(HR_RIDE, "hr", DURATION)![0].range).toBe("93–112 уд/мин");
+      expect(timeInZoneRows(POWER_RIDE, "power", DURATION)![6].range).toBe("> 353 Вт");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("shows Z1–Z7 for power and never reads the sentinel ceiling", () => {

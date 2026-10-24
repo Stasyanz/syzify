@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   firstWeekday,
   daysInMonth,
@@ -6,7 +6,42 @@ import {
   monthSports,
   dayKey,
   dateOfDayKey,
+  weekdayNames,
+  monthNames,
+  monthTitle,
 } from "./calendar";
+import { useLanguageStore } from "./i18n";
+
+describe("names in the interface language (#232)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("names the weekdays Monday-first, whole or cut to a narrow column", () => {
+    expect(weekdayNames()).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(weekdayNames(2)).toEqual(["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]);
+    useLanguageStore.getState().setPref("ru");
+    expect(weekdayNames()).toEqual(["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]);
+    useLanguageStore.getState().setPref("it");
+    expect(weekdayNames()).toEqual(["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]);
+    expect(weekdayNames(2)).toEqual(["Lu", "Ma", "Me", "Gi", "Ve", "Sa", "Do"]);
+  });
+
+  it("names the months, capitalized, in the nominative", () => {
+    expect(monthNames()[0]).toBe("January");
+    expect(monthNames()).toHaveLength(12);
+    useLanguageStore.getState().setPref("ru");
+    expect(monthNames().slice(0, 3)).toEqual(["Январь", "Февраль", "Март"]);
+    useLanguageStore.getState().setPref("it");
+    expect(monthNames()[11]).toBe("Dicembre");
+  });
+
+  it("titles a calendar month with the name and the bare year", () => {
+    expect(monthTitle(2026, 8)).toBe("August 2026");
+    useLanguageStore.getState().setPref("ru");
+    expect(monthTitle(2026, 8)).toBe("Август 2026");
+    useLanguageStore.getState().setPref("it");
+    expect(monthTitle(2026, 1)).toBe("Gennaio 2026");
+  });
+});
 
 describe("dayKey", () => {
   it("formats the LOCAL date, zero-padded", () => {

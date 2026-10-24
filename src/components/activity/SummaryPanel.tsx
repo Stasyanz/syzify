@@ -6,6 +6,7 @@ import {
   paceOrSpeedLabel,
   formatElevation,
   formatHR,
+  formatWhole,
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { CornerRings } from "../brand/CornerRings";
@@ -43,7 +44,7 @@ export function SummaryPanel({ activity }: Props) {
     metrics.push({ label: "Avg HR", value: formatHR(activity.avg_hr) });
   }
   if (activity.calories != null) {
-    metrics.push({ label: "Calories", value: `${Math.round(activity.calories)} kcal` });
+    metrics.push({ label: "Calories", value: formatWhole(activity.calories, "kcal") });
   }
 
   return (

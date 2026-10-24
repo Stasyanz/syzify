@@ -17,8 +17,11 @@ vi.mock("../lib/tauri", () => ({
     disableEncryption: vi.fn(),
     startGeocoding: vi.fn(),
     runImportDatasource: vi.fn(),
+    backupVault: vi.fn(),
+    restoreVault: vi.fn(),
   },
 }));
+vi.mock("../stores/confirmStore", () => ({ confirmDialog: vi.fn(async () => true) }));
 vi.mock("../lib/contact", () => ({ CONTACT_EMAIL: "hi@example.com", GITHUB_ISSUES_URL: "https://example.com/issues" }));
 vi.mock("../stores/toastStore", () => {
   const addToast = vi.fn(() => "t1");
@@ -51,7 +54,8 @@ import { useThemeStore } from "../lib/theme";
 import { useUnitsStore } from "../lib/units";
 import { useLanguageStore } from "../lib/i18n";
 import { useFeedbackStore } from "../stores/feedbackStore";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 /** Every row label on the open tab, in order — a row that drifts to another
@@ -421,12 +425,104 @@ describe("SettingsPage tabs", () => {
         "Кэш карты",
       ]);
       await waitFor(() => expect(screen.getByText("Тайлы карты на диске: 2 KB")).toBeTruthy());
+      // Dates and numbers follow the language too (#232), and the hint says so.
+      expect(screen.getByText("Язык интерфейса, дат и чисел")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Язык" }));
       fireEvent.click(screen.getByRole("option", { name: "Italiano" }));
       expect(screen.getByRole("button", { name: "Scuro" })).toBeTruthy();
     } finally {
       act(() => useLanguageStore.getState().setPref("system"));
     }
+  });
+
+  it("gives the focus back to the language picker after the remount a new language brings (#232)", () => {
+    const picker = (name: string) => screen.getByRole("button", { name });
+    const choose = (picker: HTMLElement, option: string) => {
+      fireEvent.click(picker);
+      fireEvent.click(screen.getByRole("option", { name: option }));
+    };
+    // App remounts the whole shell under a new language; here a fresh render
+    // of the page stands in for it.
+    const remount = () => {
+      cleanup();
+      renderAt("/settings");
+    };
+    try {
+      renderAt("/settings");
+      // English is what "System" already shows: nothing remounts, nothing to refocus.
+      choose(picker("Language"), "English");
+      remount();
+      expect(document.activeElement).not.toBe(picker("Language"));
+      choose(picker("Language"), "Русский");
+      remount();
+      expect(document.activeElement).toBe(picker("Язык"));
+      // Once only: the next visit to Settings leaves the focus alone.
+      remount();
+      expect(document.activeElement).not.toBe(picker("Язык"));
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  describe("locks the language picker while an operation of the page runs (#232)", () => {
+    const picker = () => screen.getByRole("button", { name: "Language" }) as HTMLButtonElement;
+    const toGeneral = () => fireEvent.click(screen.getByRole("tab", { name: "General" }));
+
+    it("clearing the tile cache", async () => {
+      let finish!: () => void;
+      vi.mocked(api.clearTileCache).mockReturnValue(new Promise<void>((r) => (finish = r)));
+      renderAt("/settings");
+      expect(picker().disabled).toBe(false);
+      // Enabled once the cache size is known.
+      await waitFor(() => expect(screen.getByText(/2 KB/)).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: /Clear Cache/ }));
+      await waitFor(() => expect(picker().disabled).toBe(true));
+      await act(async () => finish());
+      await waitFor(() => expect(picker().disabled).toBe(false));
+    });
+
+    it("making a backup", async () => {
+      vi.mocked(listen).mockResolvedValue(() => {});
+      vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
+      let finish!: () => void;
+      vi.mocked(api.backupVault).mockReturnValue(new Promise<void>((r) => (finish = r)));
+      renderAt("/settings?tab=vault");
+      fireEvent.click(screen.getByRole("button", { name: /Backup/ }));
+      await waitFor(() => expect(api.backupVault).toHaveBeenCalled());
+      toGeneral();
+      expect(picker().disabled).toBe(true);
+      await act(async () => finish());
+      await waitFor(() => expect(picker().disabled).toBe(false));
+    });
+
+    it("restoring a backup", async () => {
+      vi.mocked(open).mockResolvedValue("/tmp/backup.zip");
+      let fail!: (e: unknown) => void;
+      vi.mocked(api.restoreVault).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      renderAt("/settings?tab=vault");
+      fireEvent.click(screen.getByRole("button", { name: /Restore/ }));
+      await waitFor(() => expect(api.restoreVault).toHaveBeenCalled());
+      toGeneral();
+      expect(picker().disabled).toBe(true);
+      await act(async () => fail("disk full"));
+      await waitFor(() => expect(picker().disabled).toBe(false));
+    });
+
+    it("switching encryption", async () => {
+      let fail!: (e: unknown) => void;
+      vi.mocked(api.enableEncryption).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      renderAt("/settings?tab=vault");
+      await waitFor(() => expect(screen.getByLabelText("Enable encryption")).toBeTruthy());
+      fireEvent.click(screen.getByLabelText("Enable encryption"));
+      fireEvent.change(screen.getByPlaceholderText("Password (min 8 characters)"), { target: { value: "hunter2hunter2" } });
+      fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "hunter2hunter2" } });
+      fireEvent.click(screen.getByRole("button", { name: "Enable Encryption" }));
+      await waitFor(() => expect(api.enableEncryption).toHaveBeenCalled());
+      toGeneral();
+      expect(picker().disabled).toBe(true);
+      await act(async () => fail("bad key"));
+      await waitFor(() => expect(picker().disabled).toBe(false));
+    });
   });
 
   it("reports a data source import that failed outright or for some files", async () => {
@@ -491,6 +587,30 @@ describe("SettingsPage tabs", () => {
     expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Current password")).toBeNull();
+  });
+
+  it("counts the backup's megabytes in the interface language (#232)", async () => {
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      let progress: ((e: { payload: { processed: number; total: number } }) => void) | undefined;
+      vi.mocked(listen).mockImplementation(async (_event, handler) => {
+        progress = handler as typeof progress;
+        return () => {};
+      });
+      vi.mocked(save).mockResolvedValue("/tmp/backup.zip");
+      let finish!: () => void;
+      vi.mocked(api.backupVault).mockReturnValue(new Promise<void>((r) => (finish = r)));
+      renderAt("/settings?tab=vault");
+      fireEvent.click(screen.getByRole("button", { name: /Backup/ }));
+      await waitFor(() => expect(progress).toBeDefined());
+      progress!({ payload: { processed: 1.5 * 1048576, total: 12345 * 1048576 } });
+      expect(useToastStore.getState().updateToast).toHaveBeenCalledWith("t1", {
+        message: "Creating backup… 0% (2/12\xa0345 MB)",
+      });
+      await act(async () => finish());
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("About opens the feedback form and routes the email link through the opener", async () => {

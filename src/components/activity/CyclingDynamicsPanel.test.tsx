@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import type { Activity } from "../../lib/types";
 import { CyclingDynamicsPanel, hasCyclingDynamics } from "./CyclingDynamicsPanel";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -52,10 +53,26 @@ describe("CyclingDynamicsPanel", () => {
     expect(text).toContain("2:39:26");
     expect(text).toContain("19:17");
     expect(text).toContain("×90");
-    expect(text).toContain("231 / 1013 W");
+    expect(text).toContain("231 / 1,013 W");
     expect(text).toContain("55 / 105 rpm");
     // Both phase gauges drew their arcs.
     expect(container.querySelectorAll("svg path").length).toBe(4);
+  });
+
+  it("writes percentages, units and missing readings in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const a = dynamicsActivity({ avg_left_pco_mm: null, max_power_standing_w: null, avg_cadence_seated: null });
+      const { container, getByRole } = render(<CyclingDynamicsPanel activity={a} />);
+      const text = container.textContent!;
+      expect(text).toContain("57,4\xa0%");
+      expect(getByRole("img").getAttribute("aria-label")).toBe("Balance: left 57,4\xa0%, right 42,6\xa0%");
+      expect(text).toContain("--+9 мм");
+      expect(text).toContain("161 / -- Вт");
+      expect(text).toContain("-- / 111 об/мин");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("renders nothing without any dynamics data", () => {

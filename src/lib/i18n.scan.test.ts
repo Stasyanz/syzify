@@ -199,13 +199,10 @@ const NOT_YET_TRANSLATED: Record<string, number> = {
  * takes it off, and the epic ends with this empty too.
  */
 const TRACKED_BY_HAND: string[] = [
-  "components/activity/powerCurve.ts", // "Aug 30" dates — #232
-  "lib/calendar.ts", // weekday names — #232
   "lib/errors.ts", // "Unknown error"
-  "lib/format.ts", // "Pace" / "Speed" — #232
   "lib/gear.ts", // the wear tooltip: "of", "past the limit"
-  "lib/importSummary.ts", // "Imported", "Nothing imported", dates
-  "lib/recovery.ts", // the verdicts and their dates
+  "lib/importSummary.ts", // "Imported", "Nothing imported"
+  "lib/recovery.ts", // the verdicts
   "lib/types.ts", // sport names, gear rule hints
   "stores/confirmStore.ts", // the default confirm label
 ];

@@ -2,8 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
+  capitalize,
   currentLanguage,
+  formatDateTime,
   formatMessage,
+  formatNumber,
+  formatPercent,
   initLanguage,
   readStoredLanguage,
   resolveLanguage,
@@ -65,9 +69,10 @@ describe("formatMessage", () => {
   });
 
   it("writes a number the language's way and a string as it is", () => {
+    // The grouping policy of formatNumber, for parameters too (#232).
     expect(formatMessage("{v}", "en", { v: 1234.5 })).toBe("1,234.5");
-    expect(formatMessage("{v}", "ru", { v: 1234.5 })).toBe(new Intl.NumberFormat("ru").format(1234.5));
-    expect(formatMessage("{v}", "ru", { v: 1234.5 })).toMatch(/^1\s234,5$/u);
+    expect(formatMessage("{v}", "ru", { v: 1234.5 })).toBe("1234,5");
+    expect(formatMessage("{v}", "ru", { v: 12345.5 })).toBe("12\xa0345,5");
     expect(formatMessage("{v}", "it", { v: 2.5 })).toBe("2,5");
     expect(formatMessage("{v}", "ru", { v: "2026" })).toBe("2026");
   });
@@ -91,6 +96,98 @@ describe("formatMessage", () => {
     const m: PluralMessage = { one: "{count} file", other: "{count} files" };
     expect(formatMessage(m, "en", { count: "1" })).toBe("1 files");
     expect(formatMessage(m, "en")).toBe("{count} files");
+  });
+});
+
+describe("numbers and dates in the language (#232)", () => {
+  it("write a number with exact or up to three fraction digits", () => {
+    expect(formatNumber(1.5, 2, "en")).toBe("1.50");
+    expect(formatNumber(1.5, 2, "ru")).toBe("1,50");
+    expect(formatNumber(1.5, 2, "it")).toBe("1,50");
+    expect(formatNumber(2.1234, undefined, "en")).toBe("2.123");
+    expect(formatNumber(2.1234, undefined, "ru")).toBe("2,123");
+    expect(formatNumber(42.4, 0, "en")).toBe("42");
+  });
+
+  it("group thousands by one policy per language", () => {
+    // English groups every thousand; Italian (CLDR) and Russian (its
+    // typography) leave four digits whole.
+    expect(formatNumber(1214, 0, "en")).toBe("1,214");
+    expect(formatNumber(1214, 0, "ru")).toBe("1214");
+    expect(formatNumber(1214, 0, "it")).toBe("1214");
+    expect(formatNumber(12345.6, 1, "en")).toBe("12,345.6");
+    expect(formatNumber(12345.6, 1, "ru")).toBe("12\xa0345,6");
+    expect(formatNumber(12345.6, 1, "it")).toBe("12.345,6");
+  });
+
+  it("round a tie away from zero on the decimal value, unlike toFixed", () => {
+    // 1.005 is 1.00499… in binary: toFixed(2) says "1.00".
+    expect((1.005).toFixed(2)).toBe("1.00");
+    expect(formatNumber(1.005, 2, "en")).toBe("1.01");
+    expect(formatNumber(-2.5, 0, "en")).toBe("-3");
+  });
+
+  it("write a value that rounds to zero without a sign", () => {
+    expect(formatNumber(-0.4, 0, "en")).toBe("0");
+    expect(formatNumber(-0, undefined, "ru")).toBe("0");
+    expect(formatNumber(-0.04, 1, "ru")).toBe("0,0");
+    expect(formatNumber(-0.6, 0, "en")).toBe("-1");
+    expect(formatPercent(-0.04, 1, "en")).toBe("0.0%");
+    expect(formatMessage("{n}", "it", { n: -0.0001 })).toBe("0");
+    expect(formatMessage("{n}", "it", { n: -1.5 })).toBe("-1,5");
+    expect(formatNumber(-Infinity, 0, "en")).toBe("-∞");
+  });
+
+  it("ask no formatter for an option an engine before NumberFormat v3 refuses", () => {
+    // An older WebKit throws a RangeError on `signDisplay: "negative"` —
+    // a blank window. Stand in for it, with options no other test caches.
+    const Original = Intl.NumberFormat;
+    const seen: (Intl.NumberFormatOptions | undefined)[] = [];
+    Intl.NumberFormat = function (locales?: string | string[], options?: Intl.NumberFormatOptions) {
+      seen.push(options);
+      if (options?.signDisplay !== undefined) throw new RangeError("signDisplay");
+      return new Original(locales, options);
+    } as unknown as typeof Intl.NumberFormat;
+    try {
+      expect(formatNumber(-0.000004, 5, "it")).toBe("0,00000");
+      expect(formatNumber(-1.23456, 5, "ru")).toBe("-1,23456");
+      expect(formatPercent(-0.0004, 3, "en")).toBe("0.000%");
+    } finally {
+      Intl.NumberFormat = Original;
+    }
+    expect(seen).toHaveLength(3);
+  });
+
+  it("use the language in use when none is given", () => {
+    expect(formatNumber(1.5, 1)).toBe("1.5");
+    act(() => useLanguageStore.getState().setPref("ru"));
+    expect(formatNumber(1.5, 1)).toBe("1,5");
+    expect(formatPercent(52.34)).toBe("52,3\xa0%");
+    expect(formatDateTime(new Date(2026, 8, 5), { month: "short", day: "numeric" })).toBe("5 сент.");
+    expect(capitalize("пн")).toBe("Пн");
+  });
+
+  it("write a percentage", () => {
+    expect(formatPercent(52.34, 1, "en")).toBe("52.3%");
+    expect(formatPercent(52.34, 1, "it")).toBe("52,3%");
+    expect(formatPercent(-2, 1, "en")).toBe("-2.0%");
+    expect(formatPercent(45.4, 0, "en")).toBe("45%");
+  });
+
+  it("write a date with the language's names and order", () => {
+    const d = new Date(2026, 7, 20, 18, 5);
+    const short = { month: "short", day: "numeric" } as const;
+    expect(formatDateTime(d, short, "en")).toBe("Aug 20");
+    expect(formatDateTime(d, short, "ru")).toBe("20 авг.");
+    expect(formatDateTime(d, short, "it")).toBe("20 ago");
+    expect(formatDateTime(d, { hour: "numeric", minute: "2-digit" }, "ru")).toBe("18:05");
+    // The same options twice reuse one formatter and say the same.
+    expect(formatDateTime(d, short, "en")).toBe("Aug 20");
+  });
+
+  it("capitalize a name the language's way", () => {
+    expect(capitalize("gennaio", "it")).toBe("Gennaio");
+    expect(capitalize("", "en")).toBe("");
   });
 });
 
@@ -123,11 +220,19 @@ describe("the dictionaries", () => {
     expect(DICTIONARIES[lang]["settings.general.geocodingHint"]).toContain("nominatim.openstreetmap.org");
   });
 
+  // A message identical to English is usually a forgotten one; these are
+  // the same on purpose — Italian writes the international unit symbols.
+  const SAME_ON_PURPOSE: Record<"ru" | "it", string[]> = {
+    ru: [],
+    it: [
+      "units.km", "units.mi", "units.m", "units.ft", "units.yd", "units.kmh", "units.mph", "units.kg",
+      "units.lb", "units.bpm", "units.w", "units.rpm", "units.kcal", "units.h", "units.min", "units.mm",
+    ],
+  };
+
   it.each(["ru", "it"] as const)("%s translates rather than copies", (lang) => {
-    // A message identical to English is usually a forgotten one; the few
-    // that are the same on purpose would be listed here.
     const copied = Object.entries(en).filter(([k, m]) => typeof m === "string" && DICTIONARIES[lang][k] === m);
-    expect(copied.map(([k]) => k)).toEqual([]);
+    expect(copied.map(([k]) => k)).toEqual(SAME_ON_PURPOSE[lang]);
   });
 });
 

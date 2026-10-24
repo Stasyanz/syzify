@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatImportSummary } from "./importSummary";
 import type { ImportResult } from "./types";
+import { useLanguageStore } from "./i18n";
 
 const base: ImportResult = {
   imported: 0,
@@ -13,6 +14,16 @@ const base: ImportResult = {
 };
 
 describe("formatImportSummary", () => {
+  it("dates the monitoring range in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const r = { ...base, monitoring_files: 30, monitoring_days: 12, monitoring_range: ["2026-08-20", "2026-09-05"] as [string, string], monitoring_night: true };
+      expect(formatImportSummary(r).text).toContain("(20 авг. – 5 сент.,");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
   it("keeps the activity wording", () => {
     expect(formatImportSummary({ ...base, imported: 3 })).toEqual({
       level: "success",

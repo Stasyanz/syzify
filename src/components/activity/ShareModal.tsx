@@ -6,7 +6,7 @@ import { fitRotatedScale, clampCropRotated } from "./cropOverlayMath";
 import { X, Download, Check, Undo2, Crop as CropIcon } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
-import type { Activity, Photo, TrackPointColumns } from "../../lib/types";
+import { cadenceUnit, type Activity, type Photo, type TrackPointColumns } from "../../lib/types";
 import {
   formatDistance,
   formatDuration,
@@ -14,6 +14,8 @@ import {
   paceOrSpeedLabel,
   formatElevation,
   formatHR,
+  formatPower,
+  formatWhole,
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { photoUrl } from "./photoUrl";
@@ -54,7 +56,9 @@ interface Field {
   group: "basic" | "advanced";
 }
 
-function buildFields(activity: Activity): Field[] {
+/** The stats a share card can carry, formatted for the screen. Exported
+ * for its tests. */
+export function buildFields(activity: Activity): Field[] {
   const fields: Field[] = [
     { key: "distance", label: "Distance", value: formatDistance(activity.distance_m), group: "basic" },
     { key: "duration", label: "Duration", value: formatDuration(activity.duration_s), group: "basic" },
@@ -77,7 +81,7 @@ function buildFields(activity: Activity): Field[] {
     fields.push({
       key: "avg_power",
       label: "Avg Power",
-      value: `${Math.round(activity.avg_power_w)} W`,
+      value: formatPower(activity.avg_power_w),
       group: "advanced",
     });
   }
@@ -85,7 +89,7 @@ function buildFields(activity: Activity): Field[] {
     fields.push({
       key: "max_power",
       label: "Max Power",
-      value: `${Math.round(activity.max_power_w)} W`,
+      value: formatPower(activity.max_power_w),
       group: "advanced",
     });
   }
@@ -93,7 +97,7 @@ function buildFields(activity: Activity): Field[] {
     fields.push({
       key: "avg_cadence",
       label: "Avg Cadence",
-      value: `${Math.round(activity.avg_cadence)} spm`,
+      value: formatWhole(activity.avg_cadence, cadenceUnit(activity.sport_type)),
       group: "advanced",
     });
   }
@@ -101,7 +105,7 @@ function buildFields(activity: Activity): Field[] {
     fields.push({
       key: "calories",
       label: "Calories",
-      value: `${Math.round(activity.calories)} kcal`,
+      value: formatWhole(activity.calories, "kcal"),
       group: "advanced",
     });
   }

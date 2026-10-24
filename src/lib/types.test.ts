@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { elevationIsNoise, hasSimulatedCourse, isPaceSport, isTrainerRide, isWaterSport, SPORT_TYPES, triathlonDiscipline } from "./types";
+import { cadenceUnit, elevationIsNoise, hasSimulatedCourse, isCyclingSport, isPaceSport, isTrainerRide, isWaterSport, SPORT_TYPES, triathlonDiscipline } from "./types";
 
 describe("isPaceSport", () => {
   it("covers every running form, matching the backend RUNNING_SPORTS", () => {
@@ -18,6 +18,26 @@ describe("isPaceSport", () => {
 
   it("every known sport is classified without throwing", () => {
     for (const s of SPORT_TYPES) expect(typeof isPaceSport(s)).toBe("boolean");
+  });
+});
+
+describe("isCyclingSport and cadenceUnit (#232)", () => {
+  it("count a swim's and a paddle's cadence in strokes", () => {
+    for (const s of ["swim", "open_water", "paddle"]) {
+      expect(isCyclingSport(s)).toBe(false);
+      expect(cadenceUnit(s)).toBe("strokes/min");
+    }
+  });
+
+  it("count a ride's cadence in crank turns, anything else in steps", () => {
+    for (const s of ["ride", "mountain_bike", "indoor_ride", "virtual_ride"]) {
+      expect(isCyclingSport(s)).toBe(true);
+      expect(cadenceUnit(s)).toBe("rpm");
+    }
+    for (const s of ["run", "trail_run", "virtual_run", "walk", "hike"]) {
+      expect(isCyclingSport(s)).toBe(false);
+      expect(cadenceUnit(s)).toBe("spm");
+    }
   });
 });
 

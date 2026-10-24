@@ -46,6 +46,7 @@ vi.mock("../components/activity/InlineTitle", () => ({
 import { api } from "../lib/tauri";
 import { useToastStore } from "../stores/toastStore";
 import { ActivityDetailPage } from "./ActivityDetail";
+import { useLanguageStore } from "../lib/i18n";
 
 afterEach(cleanup);
 
@@ -101,6 +102,22 @@ beforeEach(() => {
   vi.mocked(api.getAdjacentActivities).mockResolvedValue({ prev_id: null, next_id: null });
   vi.mocked(api.listGear).mockResolvedValue([]);
   vi.mocked(api.getActivityRecordBadges).mockResolvedValue([]);
+});
+
+describe("ActivityDetailPage in the interface language (#232)", () => {
+  it("dates the activity in Russian, short in the meta line and long in its tooltip", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      vi.mocked(api.getActivityDetail).mockResolvedValue(detail());
+      renderPage();
+      // 18:00 at +03:00 is 15 July wherever the test runs from UTC−12 to +6.
+      // A 24-hour clock: no AM/PM whatever the system's region.
+      const meta = await screen.findByText(/^ср, 15 июл\. 2026 г\. · \d{1,2}:\d\d$/);
+      expect(meta.getAttribute("title")).toMatch(/^среда, 15 июля 2026 г\. в \d{1,2}:\d\d$/);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
 });
 
 describe("ActivityDetailPage refusals (#182)", () => {

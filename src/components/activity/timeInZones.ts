@@ -1,5 +1,6 @@
 import type { TimeInZone } from "../../lib/types";
 import { HR_ZONE_COLORS, POWER_ZONE_COLORS, zoneIndexOffset } from "./chartZones";
+import { unitLabel, type UnitSymbol } from "../../lib/units";
 
 export type ZoneType = "hr" | "power";
 
@@ -29,7 +30,7 @@ export const POWER_ZONE_NAMES = [
   "Neuromuscular",
 ];
 
-const UNIT: Record<ZoneType, string> = { hr: "bpm", power: "W" };
+const UNIT: Record<ZoneType, UnitSymbol> = { hr: "bpm", power: "W" };
 const NAMES: Record<ZoneType, string[]> = { hr: HR_ZONE_NAMES, power: POWER_ZONE_NAMES };
 const COLORS: Record<ZoneType, string[]> = { hr: HR_ZONE_COLORS, power: POWER_ZONE_COLORS };
 
@@ -78,7 +79,7 @@ export function timeInZoneRows(
   const names = NAMES[type];
   const n = names.length;
   const offset = zoneIndexOffset(secs.keys(), n);
-  const unit = UNIT[type];
+  const unit = unitLabel(UNIT[type]);
   const total = durationS != null && durationS > 0 ? durationS : null;
 
   const rows: ZoneRow[] = [];

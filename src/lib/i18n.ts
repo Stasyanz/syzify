@@ -65,14 +65,48 @@ export type ArgsOf<M> = [M] extends [string]
 /** The parameters a key needs, checked by `tsc`. */
 export type MessageArgs<K extends MessageKey> = ArgsOf<(typeof en)[K]>;
 
-// One formatter per language, not one per message: lists format hundreds.
-const pluralRules = new Map<Language, Intl.PluralRules>();
-const numberFormats = new Map<Language, Intl.NumberFormat>();
+// One formatter per language and options, not one per call: lists format
+// hundreds.
+const pluralRules = new Map<string, Intl.PluralRules>();
+const numberFormats = new Map<string, Intl.NumberFormat>();
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
 
-function cached<T>(cache: Map<Language, T>, lang: Language, make: () => T): T {
-  let v = cache.get(lang);
-  if (!v) cache.set(lang, (v = make()));
+function cached<T>(cache: Map<string, T>, key: string, make: () => T): T {
+  let v = cache.get(key);
+  if (!v) cache.set(key, (v = make()));
   return v;
+}
+
+/** How each language groups thousands — one policy for every number the
+ * app writes, message parameters included. English and Italian as CLDR
+ * has them ("auto": "1,214", but "1214" in Italian, whose CLDR data starts
+ * groups at five digits); Russian typography leaves a four-digit number
+ * whole too ("1214", "12 345"), which CLDR's Russian data does not. An
+ * engine before NumberFormat v3 reads either string as `true` and groups
+ * every thousand instead — no error. */
+const GROUPING: Record<Language, Intl.NumberFormatOptions["useGrouping"]> = {
+  en: "auto",
+  ru: "min2",
+  it: "auto",
+};
+
+/** `value` by a cached formatter in `lang` with the language's grouping.
+ * A value that rounds to zero ("-0.4" to no digits) is written "0", not
+ * "-0": its minus is dropped from the parts, since `signDisplay:
+ * "negative"` is NumberFormat v3 and an older WebKit throws a RangeError on
+ * it. Parts, not the string: a language's minus may be U+2212. */
+function formatIn(lang: Language, value: number, options: Intl.NumberFormatOptions = {}): string {
+  const full: Intl.NumberFormatOptions = { useGrouping: GROUPING[lang], ...options };
+  const parts = cached(numberFormats, lang + JSON.stringify(full), () => new Intl.NumberFormat(lang, full)).formatToParts(
+    value,
+  );
+  const digits = parts.filter((p) => p.type === "integer" || p.type === "fraction");
+  // No digits at all is infinity, not zero: "-∞" keeps its sign.
+  const zero = digits.length > 0 && digits.every((p) => !/[1-9]/.test(p.value));
+  return parts
+    .filter((p) => !(zero && p.type === "minusSign"))
+    .map((p) => p.value)
+    .join("");
 }
 
 /** Fill a message in `lang`: pick the plural form by `count`, then
@@ -97,8 +131,52 @@ export function formatMessage(
   return text.replace(/\{(\w+)\}/g, (whole, name: string) => {
     const v = params[name];
     if (v === undefined) return whole;
-    return typeof v === "number" ? cached(numberFormats, lang, () => new Intl.NumberFormat(lang)).format(v) : v;
+    return typeof v === "number" ? formatIn(lang, v) : v;
   });
+}
+
+// ── Numbers and dates ───────────────────────────────────────────────────
+// Written the interface language's way (#232), not the OS region's: a
+// decimal comma and its grouping in Russian and Italian, month and weekday
+// names in the language. `lang` defaults to the language in use; tests
+// and callers that hold one pass it.
+
+/** A number as the language writes it: `digits` fraction digits exactly
+ * (`1,50` in Russian for 2), or up to three when left out — what a chart
+ * axis wants — grouped by the language's policy above. Ties round away
+ * from zero on the decimal value as written (ICU's half-expand): 1.005 to
+ * two digits is "1.01", where `toFixed` reads the binary 1.00499… and
+ * writes "1.00". */
+export function formatNumber(value: number, digits?: number, lang: Language = currentLanguage()): string {
+  const options = digits === undefined ? {} : { minimumFractionDigits: digits, maximumFractionDigits: digits };
+  return formatIn(lang, value, options);
+}
+
+/** A percentage from a value in percent (52.3 → "52.3%", Russian
+ * "52,3 %"), `digits` fraction digits exactly. */
+export function formatPercent(value: number, digits = 1, lang: Language = currentLanguage()): string {
+  return formatIn(lang, value / 100, {
+    style: "percent",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/** A date (or its time) in the language: `options` say which parts and
+ * how long, as `toLocaleDateString` takes them. */
+export function formatDateTime(
+  date: Date,
+  options: Intl.DateTimeFormatOptions,
+  lang: Language = currentLanguage(),
+): string {
+  return cached(dateFormats, lang + JSON.stringify(options), () => new Intl.DateTimeFormat(lang, options)).format(date);
+}
+
+/** The first letter upper-cased the language's way: Russian and Italian
+ * write month and weekday names in lower case, a header or a column of
+ * them starts with a capital. */
+export function capitalize(text: string, lang: Language = currentLanguage()): string {
+  return text.charAt(0).toLocaleUpperCase(lang) + text.slice(1);
 }
 
 /** A key's message in `lang`. Pure — what `t` and `useT` both call. */

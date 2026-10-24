@@ -13,6 +13,7 @@ import {
   drawMapBlock,
   drawElevationBlock,
   drawBrandMark,
+  drawTitleBlock,
   BRAND_MARK_PATH,
   BRAND_ACCENT,
   BRAND_WORDMARK,
@@ -20,6 +21,7 @@ import {
   type DrawCtx,
 } from "./shareCanvas";
 import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
+import { useLanguageStore } from "../../lib/i18n";
 
 const ROUTE = [
   { lat: 50.0, lon: 30.0 },
@@ -359,6 +361,20 @@ describe("title block visibility", () => {
     // drawn, not typed); the accessible name stays the clean BRAND_WORDMARK.
     expect(off.container.textContent).toBe(BRAND_WORDMARK_TYPESET);
     expect(off.container.querySelector(`[aria-label="${BRAND_WORDMARK}"]`)).toBeTruthy();
+  });
+
+  it("capitalises the date by the interface language's rules, alike on canvas and preview (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { ctx, calls } = makeFakeCtx();
+      const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 20 };
+      drawTitleBlock(d, { x: 0, y: 0 }, activity);
+      const meta = calls.texts[0];
+      expect(meta).toMatch(/^RUN · 1 МАЯ 2026 Г\., \d{1,2}:\d\d$/);
+      expect(renderWithTitle(true).container.textContent).toContain(meta);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });
 

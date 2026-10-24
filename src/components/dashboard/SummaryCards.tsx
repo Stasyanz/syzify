@@ -1,6 +1,7 @@
 import type { DashboardData } from "../../lib/types";
 import { formatDistance, formatElevation, formatHR } from "../../lib/format";
-import { useUnits } from "../../lib/units";
+import { unitLabel, useUnits } from "../../lib/units";
+import { formatNumber } from "../../lib/i18n";
 import { CornerRings } from "../brand/CornerRings";
 
 interface Props {
@@ -17,7 +18,7 @@ function splitValueUnit(s: string): { value: string; unit?: string } {
 export function SummaryCards({ data }: Props) {
   useUnits();
   const w = data.week;
-  const hours = `${(w.duration_s / 3600).toFixed(1)} h`;
+  const hours = `${formatNumber(w.duration_s / 3600, 1)} ${unitLabel("h")}`;
 
   const cards = [
     { label: "Activities", value: String(w.activities) },

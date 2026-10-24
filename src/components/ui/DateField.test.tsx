@@ -7,6 +7,7 @@ vi.mock("../../lib/tauri", () => ({ api: { getActivityYearRange: vi.fn() } }));
 
 import { DateField } from "./DateField";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 
 function renderIt(props: Partial<Parameters<typeof DateField>[0]> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -87,10 +88,42 @@ describe("DateField", () => {
     expect(screen.getByLabelText("Month")).toBeTruthy();
   });
 
+  it("names the date, the months and the weekdays in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      renderIt({ value: "2026-01-10" });
+      const field = screen.getByRole("button", { name: /Purchased/ });
+      expect(field.textContent).toContain("10 янв. 2026 г.");
+      fireEvent.click(field);
+      expect(screen.getByLabelText("Month").textContent).toBe("Январь");
+      expect(Array.from(document.querySelectorAll(".dp-dow"), (el) => el.textContent)).toEqual([
+        "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс",
+      ]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  for (const [lang, shown] of [
+    ["en", "Sep 5, 2026"],
+    ["ru", "5 сент. 2026 г."],
+    ["it", "5 set 2026"],
+  ] as const) {
+    it(`writes a one-digit day without a leading zero in ${lang}`, () => {
+      useLanguageStore.getState().setPref(lang);
+      try {
+        renderIt({ value: "2026-09-05" });
+        expect(screen.getByRole("button", { name: /Purchased/ }).textContent).toContain(shown);
+      } finally {
+        useLanguageStore.getState().setPref("system");
+      }
+    });
+  }
+
   it("pages across the year boundary both ways and jumps by the month menu", () => {
     renderIt({ value: "2026-01-10" });
     const field = screen.getByRole("button", { name: /Purchased/ });
-    expect(field.textContent).toContain("10 Jan 2026");
+    expect(field.textContent).toContain("Jan 10, 2026");
     fireEvent.click(field);
     const shown = () => `${screen.getByLabelText("Month").textContent} ${screen.getByLabelText("Year").textContent}`;
     expect(shown()).toBe("January 2026");

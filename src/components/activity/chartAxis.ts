@@ -1,4 +1,12 @@
 import type uPlot from "uplot";
+import { formatNumber } from "../../lib/i18n";
+
+/** Numeric tick labels as uPlot writes them by default — up to three
+ * decimals, grouped — but in the interface language rather than the
+ * browser's (#232): "1,5" and "1 000" in Russian. */
+export function axisValues(_u: uPlot, ticks: (number | null)[]): string[] {
+  return ticks.map((v) => (v == null ? "" : formatNumber(v)));
+}
 
 /** Fit the y-axis to its actual tick labels instead of reserving a fixed
  * 48px: "80" needs half of what "20:00" does, and the difference is plot

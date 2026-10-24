@@ -38,8 +38,9 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 // Isolate the preview <img> under test from the overlay/canvas logic.
 vi.mock("./DraggableShareBlocks", () => ({ DraggableShareBlocks: () => null, BrandMark: () => null }));
 
-import { ShareModal } from "./ShareModal";
+import { ShareModal, buildFields } from "./ShareModal";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 
 // The preview wrapper's measured size (clientWidth/clientHeight stubbed below).
 const WRAP = { w: 800, h: 600 };
@@ -318,5 +319,59 @@ describe("ShareModal EXIF orientation (natural ≠ stored dims)", () => {
       const toasts = useToastStore.getState().toasts;
       expect(toasts.some((t) => t.type === "error" && t.message.includes("Failed to load photo preview"))).toBe(true);
     });
+  });
+});
+
+describe("buildFields (#232)", () => {
+  const full = (sport: string) =>
+    ({
+      sport_type: sport,
+      distance_m: 42195,
+      duration_s: 5400,
+      avg_speed_mps: 7.8,
+      elev_gain_m: 1214,
+      avg_hr: 150,
+      max_hr: 181,
+      avg_power_w: 212.6,
+      max_power_w: 1013,
+      avg_cadence: 88.4,
+      calories: 1240.4,
+      avg_temperature_c: 21.4,
+      training_stress_score: 96.2,
+    }) as unknown as Activity;
+  const values = (a: Activity) => Object.fromEntries(buildFields(a).map((f) => [f.key, f.value]));
+
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("formats every stat a full ride carries, cadence in crank rpm", () => {
+    expect(values(full("ride"))).toMatchObject({
+      distance: "42.20 km",
+      elev_gain: "1,214 m",
+      avg_power: "213 W",
+      max_power: "1,013 W",
+      avg_cadence: "88 rpm",
+      calories: "1,240 kcal",
+      temp: "21°C",
+      tss: "96",
+    });
+  });
+
+  it("writes them in Russian, a run's cadence in steps", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect(values(full("ride"))).toMatchObject({
+      distance: "42,20 км",
+      elev_gain: "1214 м",
+      avg_power: "213 Вт",
+      max_power: "1013 Вт",
+      avg_cadence: "88 об/мин",
+      calories: "1240 ккал",
+    });
+    expect(values(full("run")).avg_cadence).toBe("88 шаг/мин");
+  });
+
+  it("counts a swim's cadence in strokes", () => {
+    expect(values(full("swim")).avg_cadence).toBe("88 spm");
+    useLanguageStore.getState().setPref("ru");
+    expect(values(full("open_water")).avg_cadence).toBe("88 гр/мин");
   });
 });

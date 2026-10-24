@@ -1,8 +1,30 @@
 // Shared month-grid math for the calendar views (library CalendarView, dashboard
 // MiniCalendar, FilterDrawer date picker). Monday-first, 1-based month.
 
-/** Weekday headers, Monday-first. */
-export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+import { capitalize, formatDateTime } from "./i18n";
+
+/** Weekday headers, Monday-first whatever the language's custom, named in
+ * the interface language: "Mon"… ("Пн", "Lun"), or cut to `letters` for a
+ * narrow column ("Mo", "Пн", "Lu"). */
+export function weekdayNames(letters?: number): string[] {
+  // 1 January 2024 was a Monday.
+  return Array.from({ length: 7 }, (_, i) => {
+    const name = capitalize(formatDateTime(new Date(2024, 0, 1 + i), { weekday: "short" }));
+    return letters ? name.slice(0, letters) : name;
+  });
+}
+
+/** The twelve month names, January first, in the interface language. */
+export function monthNames(): string[] {
+  return Array.from({ length: 12 }, (_, m) => capitalize(formatDateTime(new Date(2000, m, 1), { month: "long" })));
+}
+
+/** A calendar's title: "January 2026", "Январь 2026". `month` is 1-based.
+ * The month's own name (Russian's nominative, not "января") and the year
+ * as a number — no "г." after it. */
+export function monthTitle(year: number, month: number): string {
+  return `${monthNames()[month - 1]} ${year}`;
+}
 
 /** The LOCAL calendar day of a Date as "YYYY-MM-DD" — the key the backend's
  * day buckets use (`date(start_time, 'localtime')`), so a frontend date and a

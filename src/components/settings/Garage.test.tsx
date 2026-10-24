@@ -158,7 +158,7 @@ describe("Garage", () => {
     expect(bike.textContent).toContain("Road");
     expect(bike.textContent).toContain("Canyon Ultimate");
     // 1 000 km before Syzify + 50 km in it.
-    expect(bike.textContent).toContain("1050.00 km");
+    expect(bike.textContent).toContain("1,050.00 km");
     expect(bike.textContent).toContain("(50.00 km in Syzify)");
     expect(bike.textContent).toContain("1h 40m");
     expect(bike.textContent).toContain("2 activities");
@@ -240,7 +240,7 @@ describe("Garage", () => {
     const picker = dialog.querySelector(".dp")!;
     expect(picker.className).toContain("dp-down");
     fireEvent.click(within(dialog).getByRole("button", { name: "1" }));
-    expect(within(dialog).getByRole("button", { name: /Purchased/ }).textContent).toContain("01 Oct 2026");
+    expect(within(dialog).getByRole("button", { name: /Purchased/ }).textContent).toContain("Oct 1, 2026");
     fireEvent.change(within(dialog).getByLabelText("Mileage before Syzify (mi)"), { target: { value: "10" } });
     fireEvent.change(within(dialog).getByLabelText("Replace at (mi)"), { target: { value: "500" } });
     fireEvent.click(within(dialog).getByLabelText("Default for"));

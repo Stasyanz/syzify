@@ -4,6 +4,7 @@ import { render, cleanup, fireEvent, act } from "@testing-library/react";
 import type { VolumeBucket } from "../../lib/types";
 import { VolumeChart, formatVolumeValue, weekSports } from "./VolumeChart";
 import { getSportColor } from "../../lib/sportColors";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -27,6 +28,18 @@ describe("formatVolumeValue", () => {
     expect(formatVolumeValue(85, "min")).toBe("1h 25m");
     expect(formatVolumeValue(120, "min")).toBe("2h");
     expect(formatVolumeValue(60, "min")).toBe("1h");
+  });
+
+  it("writes the value in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(formatVolumeValue(9.43, "km")).toBe("9,4 км");
+      expect(formatVolumeValue(26.2, "mi")).toBe("26 ми");
+      expect(formatVolumeValue(24, "min")).toBe("24 мин");
+      expect(formatVolumeValue(85, "min")).toBe("1 ч 25 мин");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });
 
@@ -125,5 +138,17 @@ describe("VolumeChart day rollover", () => {
     const after = dayLabels(container);
     expect(after[6]).toBe(short(new Date(2026, 8, 4)));
     expect(after[5]).toBe(labels[6]);
+  });
+
+  it("names the days and the unit in the interface language (#232)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = render(<VolumeChart weekVolume={[]} />);
+      // Friday 28 August → Thursday 3 September.
+      expect(dayLabels(container)).toEqual(["Пт", "Сб", "Вс", "Пн", "Вт", "Ср", "Чт"]);
+      expect(container.textContent).toContain("Last 7 days · км");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

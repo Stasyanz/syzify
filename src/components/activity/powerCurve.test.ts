@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { formatWindow, mergeCurveData, shortDate, tooltipText } from "./powerCurve";
+import { useLanguageStore } from "../../lib/i18n";
 import type { PowerCurveEnvelopePoint } from "../../lib/types";
 
 const env = (
@@ -74,5 +75,23 @@ describe("tooltipText", () => {
 describe("shortDate", () => {
   it("degrades to empty on garbage", () => {
     expect(shortDate("not-a-date")).toBe("");
+  });
+});
+
+describe("in the interface language (#232)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("labels the windows and the tooltip in Russian", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect([1, 45, 60, 90, 1200, 3600].map(formatWindow)).toEqual(["1 с", "45 с", "1 мин", "1:30", "20 мин", "1 ч"]);
+    expect(tooltipText(60, 339, env(60, 346), "me")).toBe("1 мин · 339 Вт — рекорд 346 Вт (Sapadere)");
+    expect(tooltipText(300, 280, env(300, 280, "me"), "me")).toBe("5 мин · 280 Вт — лучшее за всё время");
+    expect(tooltipText(60, null, env(60, 346, "other", null), "me")).toBe("1 мин — рекорд 346 Вт (30 авг.)");
+  });
+
+  it("labels the windows and the tooltip in Italian", () => {
+    useLanguageStore.getState().setPref("it");
+    expect([45, 90, 3600].map(formatWindow)).toEqual(["45 s", "1:30", "1 h"]);
+    expect(tooltipText(300, 280, env(300, 280, "me"), "me")).toBe("5 min · 280 W — record assoluto");
   });
 });

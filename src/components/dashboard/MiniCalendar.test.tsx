@@ -11,6 +11,8 @@ vi.mock("../../lib/tauri", () => ({
 
 import { MiniCalendar } from "./MiniCalendar";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
+import { monthTitle } from "../../lib/calendar";
 
 const day = (date: string, elev: number, distance = 10000): DaySummary => ({
   date,
@@ -173,6 +175,29 @@ describe("MiniCalendar month stats", () => {
     // Two 3600 s days → 2.0 decimal hours, the This Week Duration shape.
     getByText("Hours");
     getByText("2.0");
+  });
+
+  it("writes the month, the weekdays and the numbers in the interface language (#232)", async () => {
+    vi.mocked(api.getCalendarData).mockResolvedValue([
+      day("2026-08-29", 6375, 12345),
+      day("2026-08-30", 6839, 10000),
+    ]);
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      const { getByText, container } = renderCal();
+      await waitFor(() => getByText("Elev gain"));
+      const now = new Date();
+      getByText(monthTitle(now.getFullYear(), now.getMonth() + 1));
+      expect(Array.from(container.querySelectorAll(".cal-dow"), (el) => el.textContent)).toEqual([
+        "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс",
+      ]);
+      // Sessions; 22.345 km → "22"; 2,0 hours; 13 214 m grouped the
+      // Russian way; active days.
+      const stats = Array.from(container.querySelectorAll(".cal-sum .k"), (el) => el.textContent);
+      expect(stats).toEqual(["2", "22км", "2,0", "13\xa0214м", "2"]);
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("hides the row for a month with zero climbing", async () => {

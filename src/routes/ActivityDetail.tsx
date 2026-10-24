@@ -13,6 +13,7 @@ import {
   paceOrSpeedLabel,
 } from "../lib/format";
 import { useUnits } from "../lib/units";
+import { formatDateTime } from "../lib/i18n";
 import { SportBadge } from "../components/activity/SportBadge";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
@@ -182,23 +183,18 @@ export function ActivityDetailPage() {
   // Meta line "Tue, Jun 2, 2026 · 18:05 · Amsterdam" — weekday/date · time · place.
   const start = new Date(activity.start_time);
   const metaParts = [
-    start.toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }),
-    start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    formatDateTime(start, { weekday: "short", month: "short", day: "numeric", year: "numeric" }),
+    formatDateTime(start, { hour: "numeric", minute: "2-digit" }),
   ];
   if (activity.location_name) metaParts.push(activity.location_name);
   const metaLine = metaParts.join(" · ");
   // Long-form date for the meta tooltip (full weekday/month names).
-  const metaTitle = start.toLocaleString(undefined, {
+  const metaTitle = formatDateTime(start, {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
   });
 

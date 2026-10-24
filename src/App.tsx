@@ -21,6 +21,7 @@ import { AppShell } from "./components/layout/AppShell";
 import { UpdateCheck } from "./components/settings/UpdateCheck";
 import { settingsPath } from "./lib/settingsTabs";
 import { errorText } from "./lib/errors";
+import { useLanguageStore } from "./lib/i18n";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -141,6 +142,7 @@ function DropImportOverlay() {
 
 function AppContent() {
   const qc = useQueryClient();
+  const language = useLanguageStore((s) => s.language);
   usePluginImportRefresh();
   const { data: encStatus, isLoading } = useQuery({
     queryKey: ["encryptionStatus"],
@@ -193,7 +195,11 @@ function AppContent() {
 
   return (
     <BrowserRouter>
-      <AppShell>
+      {/* Keyed on the language: a switch remounts the screens, so every
+          date, number and unit already shown — memoized chart configs and
+          uPlot axes included — is written again in the new language. The
+          router keeps the place, React Query keeps the data. */}
+      <AppShell key={language}>
         {pendingFiles.length > 0 && (
           <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-accent-soft border-b border-border text-sm shrink-0">
             <span className="text-ink">

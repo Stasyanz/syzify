@@ -3,8 +3,8 @@ import { useNavigate } from "react-router";
 import { Ruler, Clock, Mountain, Timer, Dumbbell, ChevronRight, type LucideIcon } from "lucide-react";
 import type { SportRecords, PersonalRecord } from "../../lib/types";
 import { SPORT_LABELS, type SportType } from "../../lib/types";
-import { formatDistance, formatDurationHM, formatElevation, formatPace } from "../../lib/format";
-import { useUnits, toWeight, weightUnit } from "../../lib/units";
+import { formatDistance, formatDurationHM, formatElevation, formatPace, formatWeight } from "../../lib/format";
+import { useUnits } from "../../lib/units";
 
 interface Props {
   recordsBySport: SportRecords[];
@@ -107,10 +107,7 @@ export function PersonalRecords({ recordsBySport }: Props) {
               label="Heaviest set"
               icon={Dumbbell}
               record={r.heaviest_set}
-              formatter={(v) => {
-                const w = toWeight(v);
-                return `${Number.isInteger(w) ? w : w.toFixed(1)} ${weightUnit()}`;
-              }}
+              formatter={formatWeight}
               onClick={goToActivity}
             />
             <RecordRow

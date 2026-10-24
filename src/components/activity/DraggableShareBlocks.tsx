@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity, TrackPointColumns } from "../../lib/types";
 import { SPORT_LABELS, type SportType } from "../../lib/types";
 import { formatDate } from "../../lib/format";
+import { currentLanguage } from "../../lib/i18n";
 import { avoidZone, clampBlockScale, type BlockKind, type BlockPositions, type BlockScales } from "./shareLayout";
 import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
 import {
@@ -263,7 +264,7 @@ function TitleBlock(props: Props) {
       }}
     >
       <div style={{ fontSize: baseFs * 0.75, color: subtextColor(theme), letterSpacing: 1, fontWeight: 500 }}>
-        {sportLabel.toUpperCase()} · {formatDate(activity.start_time).toUpperCase()}
+        {sportLabel.toUpperCase()} · {formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}
       </div>
       <div style={{ fontSize: baseFs * 1.7, fontWeight: 700, marginTop: baseFs * 0.15, lineHeight: 1.1 }}>{title}</div>
       {activity.location_name && (
