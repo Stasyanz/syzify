@@ -25,6 +25,21 @@ vi.mock("../../stores/toastStore", () => ({
 import { EditActivityModal, stepHighlight, LOCATION_SEARCH_DEBOUNCE_MS } from "./EditActivityModal";
 import { api } from "../../lib/tauri";
 import type { LocationHit } from "../../lib/types";
+import { useLanguageStore } from "../../lib/i18n";
+
+describe("the sport picker in the interface language (#233)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("names the sports in Russian, sorted the Russian way", () => {
+    useLanguageStore.getState().setPref("ru");
+    renderModal();
+    fireEvent.click(screen.getByLabelText("Sport type"));
+    const names = screen.getAllByRole("option").map((o) => o.textContent!);
+    expect(names[0]).toBe("Альпинизм");
+    expect(names).toContain("Бег");
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "ru")));
+  });
+});
 
 afterEach(() => {
   cleanup();

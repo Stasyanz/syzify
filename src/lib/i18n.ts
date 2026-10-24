@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { createElement, Fragment, useCallback, type ReactNode } from "react";
 import { create } from "zustand";
 import { en } from "../locales/en";
 import { ru } from "../locales/ru";
@@ -64,6 +64,11 @@ export type ArgsOf<M> = [M] extends [string]
   : [params: Record<Exclude<Placeholders<M[keyof M]>, "count">, string | number> & { count: number }];
 /** The parameters a key needs, checked by `tsc`. */
 export type MessageArgs<K extends MessageKey> = ArgsOf<(typeof en)[K]>;
+/** What `useRichT` takes for a message: every placeholder, each a value or
+ * an element — and a numeric `count` for a plural one. */
+export type RichArgsOf<M> = [M] extends [string]
+  ? Record<Placeholders<M>, ReactNode>
+  : Record<Exclude<Placeholders<M[keyof M]>, "count">, ReactNode> & { count: number };
 
 // One formatter per language and options, not one per call: lists format
 // hundreds.
@@ -119,20 +124,42 @@ export function formatMessage(
   lang: Language,
   params: Record<string, string | number> = {},
 ): string {
-  let text: string;
-  if (typeof message === "string") {
-    text = message;
-  } else if (typeof params.count === "number") {
-    const count = params.count;
-    text = message[cached(pluralRules, lang, () => new Intl.PluralRules(lang)).select(count)] ?? message.other;
-  } else {
-    text = message.other;
-  }
-  return text.replace(/\{(\w+)\}/g, (whole, name: string) => {
+  return pickForm(message, lang, params.count).replace(/\{(\w+)\}/g, (whole, name: string) => {
     const v = params[name];
     if (v === undefined) return whole;
     return typeof v === "number" ? formatIn(lang, v) : v;
   });
+}
+
+/** The text of a message: the plural form `count` picks, else `other`. */
+function pickForm(message: string | PluralMessage, lang: Language, count: unknown): string {
+  if (typeof message === "string") return message;
+  if (typeof count !== "number") return message.other;
+  return message[cached(pluralRules, lang, () => new Intl.PluralRules(lang)).select(count)] ?? message.other;
+}
+
+/** A message with some of its text rendered apart (bold, a link): the
+ * form is picked and the message cut at its `{name}`s BEFORE anything is
+ * filled, so a translation puts the part where its word order wants it.
+ * A string or number value is filled as `formatMessage` fills it; any
+ * other value (an element) takes its placeholder's place as it is. Pure —
+ * `useRichT` keys the parts for React. */
+export function richParts(
+  message: string | PluralMessage,
+  lang: Language,
+  params: Record<string, ReactNode> = {},
+): ReactNode[] {
+  const parts: ReactNode[] = [];
+  for (const piece of pickForm(message, lang, params.count).split(/(\{\w+\})/)) {
+    const name = /^\{(\w+)\}$/.exec(piece)?.[1];
+    const v = name === undefined ? piece : params[name];
+    const part = v === undefined ? piece : typeof v === "number" ? formatIn(lang, v) : v;
+    const last = parts.length - 1;
+    // Text next to text is one string: what a test or a screen reader reads whole.
+    if (typeof part === "string" && typeof parts[last] === "string") parts[last] += part;
+    else if (part !== "") parts.push(part);
+  }
+  return parts;
 }
 
 // ── Numbers and dates ───────────────────────────────────────────────────
@@ -219,11 +246,29 @@ export function t<K extends MessageKey>(key: K, ...args: MessageArgs<K>): string
   return translate(currentLanguage(), key, ...args);
 }
 
+/** A `t`: the module's, a component's `useT()`, or one a test holds. */
+export type Translator = <K extends MessageKey>(key: K, ...args: MessageArgs<K>) => string;
+
 /** Subscribe the calling component to the language and return its `t`. */
-export function useT(): <K extends MessageKey>(key: K, ...args: MessageArgs<K>) => string {
+export function useT(): Translator {
   const language = useLanguageStore((s) => s.language);
   return useCallback(
     <K extends MessageKey>(key: K, ...args: MessageArgs<K>) => translate(language, key, ...args),
+    [language],
+  );
+}
+
+/** Subscribe the calling component to the language and return a `t` for a
+ * message with elements inside: `rt("app.watch.found", { count, files:
+ * <strong>5</strong> })`. One message per phrase, never one cut in two
+ * around the bold part — the translation keeps its own word order. */
+export function useRichT(): <K extends MessageKey>(key: K, params: RichArgsOf<(typeof en)[K]>) => ReactNode {
+  const language = useLanguageStore((s) => s.language);
+  return useCallback(
+    <K extends MessageKey>(key: K, params: RichArgsOf<(typeof en)[K]>) =>
+      richParts(DICTIONARIES[language][key], language, params as Record<string, ReactNode>).map((part, i) =>
+        createElement(Fragment, { key: i }, part),
+      ),
     [language],
   );
 }

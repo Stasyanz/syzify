@@ -1,5 +1,6 @@
 import { SPORT_TYPES, type GearItem, type GearKind, type GearRule, type RuleCandidates, type SportType } from "./types";
 import { formatDistance } from "./format";
+import { t } from "./i18n";
 
 /** The sports an item of a kind is offered to be the default for — and
  * the kinds an activity of a sport is offered in Edit Activity. Offered,
@@ -76,13 +77,14 @@ export function wearFraction(item: Pick<GearItem, "initial_distance_m" | "stats"
 }
 
 /** The wear bar's tooltip: "7305.82 km of 8000.00 km · 91 %", or "past
- * the limit" once over it. */
+ * the limit" once over it — in the interface language, since the
+ * dashboard's reminder says it too. */
 export function wearTip(item: Pick<GearItem, "initial_distance_m" | "stats" | "distance_limit_m">, wear: number): string {
-  const odo = formatDistance(odometerM(item));
+  const odometer = formatDistance(odometerM(item));
   const limit = formatDistance(item.distance_limit_m);
-  const over = odometerM(item) >= (item.distance_limit_m ?? Infinity);
+  if (odometerM(item) >= (item.distance_limit_m ?? Infinity)) return t("gear.wear.over", { odometer, limit });
   // floor: 99.6 % must not read as 100 % while the limit is not reached.
-  return `${odo} of ${limit} · ${over ? "past the limit" : `${Math.floor(wear * 100)} %`}`;
+  return t("gear.wear.tip", { odometer, limit, percent: Math.floor(wear * 100) });
 }
 
 /** From this share of its limit an item is "wearing out" and the dashboard

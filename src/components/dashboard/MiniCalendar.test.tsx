@@ -129,6 +129,50 @@ describe("MiniCalendar recovery", () => {
   });
 });
 
+describe("MiniCalendar in the interface language (#233)", () => {
+  it("writes the card, the night and the workouts in Russian; the buttons page the month", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 6, 30, 12, 0, 0));
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const titled = day("2026-07-25", 100);
+      titled.activities = [
+        { ...titled.activities[0], title: "Утро" },
+        { ...titled.activities[0], id: "b", title: null, sport_type: "kitesurf" },
+      ];
+      vi.mocked(api.getCalendarData).mockResolvedValue([titled]);
+      vi.mocked(api.getRecoveryNights).mockResolvedValue([
+        night("2026-07-25", 86),
+        { ...night("2026-07-29", 58), stress: null, load: null },
+      ]);
+      const { container, getByText, getByTitle } = renderCal();
+      await waitFor(() => expect(container.querySelectorAll(".cal-cell.rec")).toHaveLength(2));
+      getByText("Календарь тренировок");
+      getByText("Этот месяц");
+      for (const label of ["Тренировки", "Дистанция", "Время, ч", "Набор высоты", "Активные дни"]) getByText(label);
+      const [good, rest] = container.querySelectorAll<HTMLElement>(".cal-cell.rec");
+      const pop = good.querySelector(".cal-pop-card")!;
+      expect(pop.textContent).toContain("Можно интервалы");
+      expect(pop.textContent).toContain("Ночной пульс 53 · база 51 (+2)");
+      expect(pop.textContent).toContain("Ночной стресс 13 · Нагрузка вчера 22 TSS, CTL 48");
+      // A workout by its title, one without by its sport — an unknown one as it came.
+      expect(Array.from(pop.querySelectorAll(".cal-pop-t"), (el) => el.textContent)).toEqual(["Утро", "kitesurf"]);
+      expect(rest.textContent).toContain("Нет данных о стрессе · нет истории тренировок");
+      expect(rest.textContent).toContain("Ночной пульс заметно выше базового");
+      // The legend names the month's sports.
+      expect(container.querySelector(".cal-legend")!.textContent).toContain("Велосипед");
+
+      fireEvent.click(getByTitle("Следующий месяц"));
+      getByText(monthTitle(2026, 8));
+      fireEvent.click(getByTitle("Предыдущий месяц"));
+      getByText(monthTitle(2026, 7));
+    } finally {
+      useLanguageStore.getState().setPref("system");
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("MiniCalendar keyboard paging", () => {
   it("arrow keys flip the month like the Library calendar", async () => {
     vi.mocked(api.getCalendarData).mockResolvedValue([]);
@@ -185,7 +229,7 @@ describe("MiniCalendar month stats", () => {
     act(() => useLanguageStore.getState().setPref("ru"));
     try {
       const { getByText, container } = renderCal();
-      await waitFor(() => getByText("Elev gain"));
+      await waitFor(() => getByText("Набор высоты"));
       const now = new Date();
       getByText(monthTitle(now.getFullYear(), now.getMonth() + 1));
       expect(Array.from(container.querySelectorAll(".cal-dow"), (el) => el.textContent)).toEqual([

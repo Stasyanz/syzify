@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { createElement } from "react";
+import { act, render, renderHook } from "@testing-library/react";
 import {
   capitalize,
   currentLanguage,
@@ -11,9 +12,11 @@ import {
   initLanguage,
   readStoredLanguage,
   resolveLanguage,
+  richParts,
   t,
   translate,
   useLanguageStore,
+  useRichT,
   useT,
   type ArgsOf,
   type Language,
@@ -96,6 +99,54 @@ describe("formatMessage", () => {
     const m: PluralMessage = { one: "{count} file", other: "{count} files" };
     expect(formatMessage(m, "en", { count: "1" })).toBe("1 files");
     expect(formatMessage(m, "en")).toBe("{count} files");
+  });
+});
+
+describe("richParts and useRichT", () => {
+  const bold = createElement("strong", null, "5");
+
+  it("cuts the message at its placeholders before filling, an element taking its place as it is", () => {
+    expect(richParts("Found {files} new {what}", "en", { files: bold, what: "files" })).toEqual([
+      "Found ",
+      bold,
+      " new files",
+    ]);
+    // At either end: no empty text beside the element.
+    expect(richParts("{files}", "en", { files: bold })).toEqual([bold]);
+    expect(richParts("{files} found", "en", { files: bold })).toEqual([bold, " found"]);
+  });
+
+  it("picks the plural form first, so the element lands where the translation puts it", () => {
+    const m: PluralMessage = {
+      one: "Found {files} new file",
+      few: "В папках найдено {files} новых файла",
+      many: "В папках найдено {files} новых файлов",
+      other: "Found {files} files",
+    };
+    expect(richParts(m, "ru", { count: 5, files: bold })).toEqual(["В папках найдено ", bold, " новых файлов"]);
+    expect(richParts(m, "ru", { count: 3, files: bold })).toEqual(["В папках найдено ", bold, " новых файла"]);
+    // Without a numeric count, the other form.
+    expect(richParts(m, "ru", { files: bold })).toEqual(["Found ", bold, " files"]);
+  });
+
+  it("fills a number the language's way and leaves a missing placeholder visible", () => {
+    expect(richParts("{v} km, {gone}", "ru", { v: 1234.5 })).toEqual(["1234,5 km, {gone}"]);
+    expect(richParts("plain", "en")).toEqual(["plain"]);
+  });
+
+  it("renders one message in the language in use, and again when it changes", () => {
+    const { result } = renderHook(() => useRichT());
+    const view = () => {
+      const { container, unmount } = render(
+        createElement("p", null, result.current("app.watch.found", { count: 5, files: createElement("strong", null, "5") })),
+      );
+      const text = [container.textContent, container.querySelector("strong")!.textContent];
+      unmount();
+      return text;
+    };
+    expect(view()).toEqual(["Found 5 new workout files in watch folders", "5"]);
+    act(() => useLanguageStore.getState().setPref("ru"));
+    expect(view()).toEqual(["В папках наблюдения найдено 5 новых файлов тренировок", "5"]);
   });
 });
 
@@ -215,18 +266,50 @@ describe("the dictionaries", () => {
     expect(odd).toEqual([]);
   });
 
+  /** The forms CLDR gives a language that a count written in digits may
+   * pick and its messages can do without: Italian "many" is the "di" of
+   * a spelled-out million ("un milione di file") — select(1000000) is
+   * "many" — and with digits "1000000 file" is the `other` form, which
+   * formatMessage falls back to. Russian has no such form: its "other" is
+   * a fraction's (1,5 файла), and it, too, is required. */
+  const FALLS_BACK_TO_OTHER: Record<Language, string[]> = { en: [], ru: [], it: ["many"] };
+
+  it.each(["en", "ru", "it"] as const)("%s gives every plural message each form the language has", (lang) => {
+    const forms = new Intl.PluralRules(lang).resolvedOptions().pluralCategories as string[];
+    const needed = forms.filter((f) => !FALLS_BACK_TO_OTHER[lang].includes(f));
+    const plurals = Object.entries(en).filter(([, m]) => typeof m !== "string");
+    expect(plurals.length).toBeGreaterThan(0);
+    const short = plurals
+      .map(([k]) => [k, DICTIONARIES[lang][k]] as const)
+      .filter(([, m]) => typeof m === "string" || needed.some((f) => !(f in m)))
+      .map(([k]) => k);
+    expect(short).toEqual([]);
+  });
+
+  it("falls back to the other form for Italian many, which digits never want", () => {
+    // "many" since CLDR 38; an older ICU says "other", and the text is the same.
+    expect(new Intl.PluralRules("it").select(1000000)).toMatch(/^(many|other)$/);
+    expect(translate("it", "dashboard.sport.activities", { count: 1000000 })).toBe("attività");
+    expect(translate("it", "library.filter.bulkDone", { count: 1000000, name: "Bici" })).toBe(
+      "Bici assegnata a 1.000.000 attività",
+    );
+  });
+
   // The privacy disclosure (PRD §16) names the endpoint in every language.
   it.each(["en", "ru", "it"] as const)("%s names the geocoding service it discloses", (lang) => {
     expect(DICTIONARIES[lang]["settings.general.geocodingHint"]).toContain("nominatim.openstreetmap.org");
   });
 
   // A message identical to English is usually a forgotten one; these are
-  // the same on purpose — Italian writes the international unit symbols.
+  // the same on purpose — Italian writes the international unit symbols,
+  // and takes these words from English as its own.
   const SAME_ON_PURPOSE: Record<"ru" | "it", string[]> = {
     ru: [],
     it: [
       "units.km", "units.mi", "units.m", "units.ft", "units.yd", "units.kmh", "units.mph", "units.kg",
       "units.lb", "units.bpm", "units.w", "units.rpm", "units.kcal", "units.h", "units.min", "units.mm",
+      "sport.triathlon", "sport.cardio", "sport.yoga", "sport.snowboard", "sport.golf",
+      "unlock.password", "dashboard.records.sprint", "dashboard.volume.title",
     ],
   };
 

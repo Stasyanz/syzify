@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { describeDevice, deviceLabel, garminProduct } from "./devices";
+import { useLanguageStore } from "./i18n";
 
 // The strings below are what the parsers really store: the FIT SDK's
 // `garmin_product` enum names behind "Garmin " (see parser/fit.rs
@@ -166,6 +167,21 @@ describe("describeDevice", () => {
     expect(describeDevice("My Garmin-like tracker")).toMatchObject({ form: "generic" });
     expect(describeDevice("ELEMNT RIVAL")).toMatchObject({ form: "watch_round" });
     expect(describeDevice("ELEMNT ROAM")).toMatchObject({ form: "bike_computer" });
+  });
+});
+
+describe("the words around a device's name (#233)", () => {
+  it("are in the interface language; the names stay as they are", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(describeDevice("Garmin 1620")?.full_name).toBe("Garmin (продукт 1620)");
+      expect(describeDevice("Wahoo_fitness 31")?.full_name).toBe("Wahoo (продукт 31)");
+      expect(describeDevice("WorkOutDoors")?.full_name).toBe("WorkOutDoors (приложение для Apple Watch)");
+      expect(describeDevice("StravaGPX")?.full_name).toBe("Приложение Strava");
+      expect(describeDevice("Garmin fenix6x")?.full_name).toBe("Garmin fenix 6X Pro");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });
 

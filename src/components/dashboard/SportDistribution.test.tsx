@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@testing-library/react";
 import type { SportShare } from "../../lib/types";
 import { SportDistribution } from "./SportDistribution";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -64,5 +65,47 @@ describe("SportDistribution", () => {
   it("shows the empty state without week activity", () => {
     const { getByText } = render(<SportDistribution distribution={[]} />);
     expect(getByText("No activities")).toBeTruthy();
+  });
+});
+
+describe("SportDistribution in the interface language (#233)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  /** The word under the week's total. */
+  const under = (shares: SportShare[]) => {
+    const { container } = render(<SportDistribution distribution={shares} />);
+    const word = container.querySelector(".text-faint[style]")?.textContent;
+    cleanup();
+    return word;
+  };
+
+  it("counts the total in the Russian form for one, few and many", () => {
+    useLanguageStore.getState().setPref("ru");
+    expect(under([share("run", 1, 100)])).toBe("тренировка");
+    expect(under([share("run", 3, 100)])).toBe("тренировки");
+    expect(under([share("run", 5, 100)])).toBe("тренировок");
+    expect(under([share("run", 21, 100)])).toBe("тренировка");
+  });
+
+  it("says one activity in English and names the sports and the card in Russian", () => {
+    expect(under([share("run", 1, 100)])).toBe("activity");
+    useLanguageStore.getState().setPref("ru");
+    const { getByText, getAllByText } = render(<SportDistribution distribution={[share("kitesurf", 2, 100), ...distribution]} />);
+    getByText("По видам спорта");
+    getByText("Последние 7 дней");
+    getAllByText("Велосипед");
+    getAllByText("Открытая вода");
+    // A sport the app does not know is named as it came.
+    getAllByText("kitesurf");
+    cleanup();
+    render(<SportDistribution distribution={[]} />).getByText("Нет тренировок");
+  });
+
+  it("writes the hovered share the language's way", () => {
+    useLanguageStore.getState().setPref("ru");
+    const { container, getByText } = render(<SportDistribution distribution={distribution} />);
+    fireEvent.mouseEnter(container.querySelectorAll("circle")[0]);
+    // Russian puts a no-break space before the sign (getByText reads it as a space).
+    expect(getByText("29 %").textContent).toBe("29 %");
   });
 });

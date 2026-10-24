@@ -17,6 +17,7 @@ import { ImportDialog } from "../import/ImportDialog";
 import { OnboardingOverlay } from "./OnboardingOverlay";
 import { useActivityStore } from "../../stores/activityStore";
 import { useThemeStore, resolveDark, systemPrefersDark } from "../../lib/theme";
+import { useT } from "../../lib/i18n";
 
 /**
  * Trailhead app shell — navbar with a centered icon-only nav-rail and a right
@@ -26,16 +27,18 @@ import { useThemeStore, resolveDark, systemPrefersDark } from "../../lib/theme";
  * its own route. The filter button (and right drawer) only show on the library
  * views and toggle `activityStore.filtersOpen`.
  */
+type RailKey = "dashboard" | "calendar" | "library" | "map" | "segments";
 type RailItem =
-  | { key: string; label: string; icon: typeof List; path: string }
-  | { key: string; label: string; icon: typeof List; view: "list" | "calendar" | "map" };
+  | { key: RailKey; icon: typeof List; path: string }
+  | { key: RailKey; icon: typeof List; view: "list" | "calendar" | "map" };
 
+// The label is the item's `nav.<key>` message.
 const RAIL: RailItem[] = [
-  { key: "dashboard", label: "Dashboard", icon: PieChart, path: "/" },
-  { key: "calendar", label: "Calendar", icon: Calendar, view: "calendar" },
-  { key: "library", label: "Library", icon: List, view: "list" },
-  { key: "map", label: "Map", icon: MapIcon, view: "map" },
-  { key: "segments", label: "Segments", icon: RouteIcon, path: "/segments" },
+  { key: "dashboard", icon: PieChart, path: "/" },
+  { key: "calendar", icon: Calendar, view: "calendar" },
+  { key: "library", icon: List, view: "list" },
+  { key: "map", icon: MapIcon, view: "map" },
+  { key: "segments", icon: RouteIcon, path: "/segments" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -49,7 +52,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const mode = useThemeStore((s) => s.mode);
   const setMode = useThemeStore((s) => s.setMode);
 
+  const t = useT();
   const isDark = resolveDark(mode, systemPrefersDark());
+  const themeTip = isDark ? t("nav.switchToLight") : t("nav.switchToDark");
   const onLibrary = pathname === "/library";
   const activeFilters = countActiveFilters(filters);
 
@@ -93,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 key={item.key}
                 className={`ri${isActive(item) ? " on" : ""}`}
                 onClick={() => go(item)}
-                title={item.label}
+                title={t(`nav.${item.key}`)}
               >
                 <Icon size={20} />
               </div>
@@ -107,8 +112,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <button
               className={`filter-icon-btn${filtersOpen ? " on" : ""}`}
               onClick={toggleFilters}
-              data-tip="Filters"
-              aria-label="Filters"
+              data-tip={t("nav.filters")}
+              aria-label={t("nav.filters")}
             >
               <SlidersHorizontal size={17} />
               {activeFilters > 0 && !filtersOpen && (
@@ -119,8 +124,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             className="themebtn"
             onClick={() => setMode(isDark ? "light" : "dark")}
-            data-tip={isDark ? "Switch to light" : "Switch to dark"}
-            aria-label={isDark ? "Switch to light" : "Switch to dark"}
+            data-tip={themeTip}
+            aria-label={themeTip}
           >
             {isDark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
@@ -129,8 +134,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             // Already there: a click keeps the open tab instead of resetting
             // the query to General.
             onClick={() => pathname !== "/settings" && navigate("/settings")}
-            data-tip="Settings"
-            aria-label="Settings"
+            data-tip={t("nav.settings")}
+            aria-label={t("nav.settings")}
           >
             <Settings size={20} />
           </div>

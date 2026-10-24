@@ -1,26 +1,26 @@
 import { useState } from "react";
 import type { SportShare } from "../../lib/types";
 import { getSportColor } from "../../lib/sportColors";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
+import { formatNumber, formatPercent, useT } from "../../lib/i18n";
 
 interface Props {
   /** Last-7-days sport split (5 busiest, shares sum to 100), from the backend. */
   distribution: SportShare[];
 }
 
-const sportLabel = (sport: string) => SPORT_LABELS[sport as SportType] ?? sport;
-
 export function SportDistribution({ distribution }: Props) {
+  const t = useT();
   // Index of the donut segment under the cursor.
   const [hover, setHover] = useState<number | null>(null);
 
   if (distribution.length === 0) {
     return (
       <div className="dash-card">
-        <h3>By sport</h3>
-        <div className="text-[11px] font-medium text-faint mt-0.5">Last 7 days</div>
+        <h3>{t("dashboard.sport.title")}</h3>
+        <div className="text-[11px] font-medium text-faint mt-0.5">{t("common.last7Days")}</div>
         <div className="h-48 flex items-center justify-center text-sm text-faint">
-          No activities
+          {t("dashboard.sport.empty")}
         </div>
       </div>
     );
@@ -40,8 +40,8 @@ export function SportDistribution({ distribution }: Props) {
 
   return (
     <div className="dash-card">
-      <h3>By sport</h3>
-      <div className="text-[11px] font-medium text-faint mt-0.5">Last 7 days</div>
+      <h3>{t("dashboard.sport.title")}</h3>
+      <div className="text-[11px] font-medium text-faint mt-0.5">{t("common.last7Days")}</div>
 
       {/* Donut centered in the middle of the card. Stroked SVG arcs (one per
           sport) + center hole; the hovered arc is drawn last and thicker so it
@@ -85,7 +85,7 @@ export function SportDistribution({ distribution }: Props) {
             {hovered ? (
               <div className="text-center px-2">
                 <div className="font-num font-extrabold leading-none" style={{ fontSize: 18 }}>
-                  {hovered.share}%
+                  {formatPercent(hovered.share, 0)}
                 </div>
                 <div className="text-muted leading-tight mt-0.5" style={{ fontSize: 9 }}>
                   {sportLabel(hovered.sport_type)}
@@ -94,10 +94,10 @@ export function SportDistribution({ distribution }: Props) {
             ) : (
               <div className="text-center">
                 <div className="font-num font-extrabold leading-none" style={{ fontSize: 19 }}>
-                  {total}
+                  {formatNumber(total, 0)}
                 </div>
                 <div className="text-faint" style={{ fontSize: 9 }}>
-                  activities
+                  {t("dashboard.sport.activities", { count: total })}
                 </div>
               </div>
             )}

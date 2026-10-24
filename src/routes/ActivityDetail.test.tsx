@@ -38,8 +38,8 @@ vi.mock("../components/activity/SummaryPanel", () => ({ SummaryPanel: () => null
 vi.mock("../components/plugins/PluginContributions", () => ({ PluginContributions: () => null }));
 // The title editor is reduced to one button that saves a new title.
 vi.mock("../components/activity/InlineTitle", () => ({
-  InlineTitle: ({ onSave }: { onSave: (t: string) => void }) => (
-    <button onClick={() => onSave("Renamed")}>rename</button>
+  InlineTitle: ({ title, onSave }: { title: string; onSave: (t: string) => void }) => (
+    <button data-title={title} onClick={() => onSave("Renamed")}>rename</button>
   ),
 }));
 
@@ -114,6 +114,30 @@ describe("ActivityDetailPage in the interface language (#232)", () => {
       // A 24-hour clock: no AM/PM whatever the system's region.
       const meta = await screen.findByText(/^ср, 15 июл\. 2026 г\. · \d{1,2}:\d\d$/);
       expect(meta.getAttribute("title")).toMatch(/^среда, 15 июля 2026 г\. в \d{1,2}:\d\d$/);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  /** #233: an untitled activity of a sport the app does not know is named
+   * by the dictionaries' word, not an English "Activity". */
+  it("names an untitled activity of an unknown sport in the language", async () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      vi.mocked(api.getActivityDetail).mockResolvedValue(
+        detail({ is_multisport: false, activity: { ...detail().activity, sport_type: "kitesurf", title: null } }),
+      );
+      vi.mocked(api.getActivityRecordBadges).mockResolvedValue([
+        { kind: "distance", all_time: true },
+        { kind: "duration", all_time: false },
+      ]);
+      renderPage();
+      expect((await screen.findByText("rename")).getAttribute("data-title")).toBe("Тренировка");
+      // The badges' sentences are #234's; the sport in them is already the word.
+      await waitFor(() => expect(document.querySelectorAll(".badge-pill")).toHaveLength(2));
+      const tips = Array.from(document.querySelectorAll(".badge-pill"), (b) => b.getAttribute("data-tip"));
+      expect(tips[0]).toContain("all-time Тренировка record");
+      expect(tips[1]).toContain("Тренировка personal best");
     } finally {
       useLanguageStore.getState().setPref("system");
     }

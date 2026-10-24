@@ -19,8 +19,13 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
+// What the drop hook and the watch listener report; a test sets it and
+// puts it back.
+const drop = vi.hoisted(() => ({ dragging: false, kind: "workout" as "workout" | "photo" }));
+const watch = vi.hoisted(() => ({ pendingFiles: [] as string[], importing: false }));
+
 vi.mock("./hooks/useDropImport", () => ({
-  useDropImport: () => ({ dragging: false }),
+  useDropImport: () => ({ ...drop }),
 }));
 
 // Every `vaultOpen` the app hands the watch listener, render by render.
@@ -30,8 +35,8 @@ vi.mock("./hooks/useWatchFolderListener", () => ({
   useWatchFolderListener: (vaultOpen: boolean) => {
     watchVaultOpen.push(vaultOpen);
     return {
-      pendingFiles: [],
-      importing: false,
+      pendingFiles: watch.pendingFiles,
+      importing: watch.importing,
       handleImport: vi.fn(),
       handleDismiss: vi.fn(),
     };
@@ -158,6 +163,107 @@ describe("App boot", { timeout: 20_000 }, () => {
       expect(remounted).not.toBe(main);
     } finally {
       act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  /** The text around the screens (#233): the watch-folder banner counts
+   * its files in the number's form, the drop overlay names what it takes. */
+  it("speaks the interface language around the screens", async () => {
+    try {
+      watch.pendingFiles = ["a.fit"];
+      drop.dragging = true;
+      drop.kind = "photo";
+      await bootApp(UNLOCKED);
+      // bootApp re-imported the module graph: this is the store App reads.
+      const fresh = await import("./lib/i18n");
+      act(() => fresh.useLanguageStore.getState().setPref("ru"));
+      const banner = await waitFor(() => {
+        const el = screen.getByText(/папках наблюдения/).closest("span");
+        expect(el).toBeTruthy();
+        return el!;
+      });
+      // One message, the bold number where Russian puts it.
+      expect(banner.textContent).toBe("В папках наблюдения найден 1 новый файл тренировки");
+      expect(banner.querySelector("strong")!.textContent).toBe("1");
+      screen.getByText("Импортировать");
+      screen.getByText("Скрыть");
+      screen.getByText("Отпустите фото, чтобы добавить их к тренировке");
+      screen.getByText("JPG, PNG, WebP, HEIC");
+
+      cleanup();
+      watch.pendingFiles = ["a.fit", "b.fit", "c.fit", "d.fit", "e.fit"];
+      watch.importing = true;
+      drop.kind = "workout";
+      await bootApp(UNLOCKED);
+      const again = await import("./lib/i18n");
+      act(() => again.useLanguageStore.getState().setPref("ru"));
+      await waitFor(() =>
+        expect(screen.getByText(/папках наблюдения/).closest("span")!.textContent).toBe(
+          "В папках наблюдения найдено 5 новых файлов тренировок",
+        ),
+      );
+      screen.getByText("Импорт…");
+      screen.getByText("Отпустите файлы тренировок, чтобы импортировать их");
+      screen.getByText("GPX, FIT, TCX");
+    } finally {
+      watch.pendingFiles = [];
+      watch.importing = false;
+      drop.dragging = false;
+      const last = await import("./lib/i18n");
+      act(() => last.useLanguageStore.getState().setPref("system"));
+    }
+  });
+
+  it("writes the vault error screen and the splash's name in the interface language", async () => {
+    await bootApp(UNLOCKED, "Permission denied: /Users/me/Documents/Syzify");
+    await screen.findByText("Can't open your vault");
+    const { useLanguageStore } = await import("./lib/i18n");
+    try {
+      act(() => useLanguageStore.getState().setPref("ru"));
+      screen.getByText("Не удаётся открыть хранилище");
+      screen.getByText("Полный доступ к диску");
+      expect(screen.getByText("Полный доступ к диску").parentElement!.textContent).toBe(
+        "Хранилище лежит в защищённой папке. Дайте Syzify Полный доступ к диску в Системных настройках → Конфиденциальность и безопасность и откройте снова — или верните хранилище в незащищённое место.",
+      );
+      screen.getByText("Открыть снова");
+      screen.getByText("Создать новое хранилище…");
+      screen.getByText("Файлы текущего хранилища остаются на месте.");
+
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      vi.mocked(open).mockResolvedValue(null);
+      fireEvent.click(screen.getByText("Открыть другое хранилище…"));
+      await waitFor(() =>
+        expect(open).toHaveBeenLastCalledWith({ directory: true, title: "Откройте папку существующего хранилища" }),
+      );
+      fireEvent.click(screen.getByText("Создать новое хранилище…"));
+      await waitFor(() =>
+        expect(open).toHaveBeenLastCalledWith({ directory: true, title: "Выберите пустую папку для нового хранилища" }),
+      );
+      // Later tests count the picker's calls.
+      vi.mocked(open).mockClear();
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+
+    cleanup();
+    await bootApp(UNLOCKED, "Failed to run migrations: DatabaseTooFarAhead");
+    await screen.findByText("Can't open your vault");
+    const again = await import("./lib/i18n");
+    try {
+      act(() => again.useLanguageStore.getState().setPref("it"));
+      screen.getByText(/una versione più recente di Syzify/);
+    } finally {
+      act(() => again.useLanguageStore.getState().setPref("system"));
+    }
+
+    cleanup();
+    await bootApp(new Promise(() => {}));
+    const splash = await import("./lib/i18n");
+    try {
+      act(() => splash.useLanguageStore.getState().setPref("ru"));
+      expect(screen.getByRole("status").getAttribute("aria-label")).toBe("Загрузка");
+    } finally {
+      act(() => splash.useLanguageStore.getState().setPref("system"));
     }
   });
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, getByText as getByTextIn, render } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import type { SportRecords } from "../../lib/types";
 import { PersonalRecords } from "./PersonalRecords";
@@ -49,6 +49,29 @@ describe("PersonalRecords in the interface language (#232)", () => {
     cleanup();
     useLanguageStore.getState().setPref("ru");
     expect(values(renderRecords([strength]).container)).toEqual(["22,5 кг · Morning", "1 ч 23 мин · Morning"]);
+  });
+
+  it("names the card, the sports, the records and the distance classes in Russian (#233)", () => {
+    const pb = (label: string) => ({ ...run.distance_pbs[0], label });
+    const races: SportRecords = {
+      ...run,
+      distance_pbs: [pb("Marathon"), pb("Half marathon"), pb("10 km"), pb("Sprint"), pb("Hill climb")],
+    };
+    useLanguageStore.getState().setPref("ru");
+    const { container, getByText } = renderRecords([races, strength]);
+    getByText("Личные рекорды");
+    expect(Array.from(container.querySelectorAll(".chip"), (el) => el.textContent)).toEqual(["Бег", "Силовая"]);
+    // A class by its name, a race distance with the language's unit, an
+    // unknown label as the backend sent it.
+    expect(Array.from(container.querySelectorAll(".rl"), (el) => el.textContent)).toEqual([
+      "Марафон", "Полумарафон", "10 км", "Спринт", "Hill climb",
+    ]);
+    fireEvent.click(getByText("Силовая"));
+    expect(Array.from(container.querySelectorAll(".rl"), (el) => el.textContent)).toEqual([
+      "Самый тяжёлый подход", "Самая долгая тренировка",
+    ]);
+    cleanup();
+    getByTextIn(renderRecords([]).container, "Рекордов пока нет");
   });
 
   it("writes a distance best's time and pace in Italian", () => {

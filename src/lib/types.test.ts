@@ -1,5 +1,46 @@
 import { describe, it, expect } from "vitest";
-import { cadenceUnit, elevationIsNoise, hasSimulatedCourse, isCyclingSport, isPaceSport, isTrainerRide, isWaterSport, SPORT_TYPES, triathlonDiscipline } from "./types";
+import { cadenceUnit, elevationIsNoise, hasSimulatedCourse, isCyclingSport, isPaceSport, isSportType, isTrainerRide, isWaterSport, sportLabel, SPORT_TYPES, triathlonDiscipline } from "./types";
+import { translate, useLanguageStore, type Translator } from "./i18n";
+
+describe("sportLabel (#233)", () => {
+  it("names a known sport in the interface language", () => {
+    expect(sportLabel("trail_run")).toBe("Trail Run");
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(SPORT_TYPES.slice(0, 5).map((s) => sportLabel(s))).toEqual([
+        "Бег", "Трейл", "Беговая дорожка", "Виртуальный бег", "Велосипед",
+      ]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+    useLanguageStore.getState().setPref("it");
+    try {
+      expect(sportLabel("hike")).toBe("Escursionismo");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("shows an id it does not know as it came, or by the caller's word", () => {
+    expect(isSportType("kitesurf")).toBe(false);
+    expect(isSportType("run")).toBe(true);
+    expect(sportLabel("kitesurf")).toBe("kitesurf");
+    expect(sportLabel("kitesurf", "Activity")).toBe("Activity");
+    expect(sportLabel("run", "Activity")).toBe("Run");
+  });
+
+  it("speaks the caller's t when given one, whatever the store says", () => {
+    const ru: Translator = (key, ...args) => translate("ru", key, ...args);
+    expect(sportLabel("swim", "swim", ru)).toBe("Плавание");
+    expect(sportLabel("kitesurf", "Тренировка", ru)).toBe("Тренировка");
+  });
+
+  it("keeps the display order, every sport once", () => {
+    expect(SPORT_TYPES[0]).toBe("run");
+    expect(SPORT_TYPES[SPORT_TYPES.length - 1]).toBe("other");
+    expect(new Set(SPORT_TYPES).size).toBe(SPORT_TYPES.length);
+  });
+});
 
 describe("isPaceSport", () => {
   it("covers every running form, matching the backend RUNNING_SPORTS", () => {

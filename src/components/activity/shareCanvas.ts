@@ -1,7 +1,7 @@
 import type { Activity, TrackPointColumns } from "../../lib/types";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
 import { formatDate } from "../../lib/format";
-import { currentLanguage } from "../../lib/i18n";
+import { currentLanguage, t } from "../../lib/i18n";
 import type { BlockPositions, BlockScales, CropRect } from "./shareLayout";
 import { fullCrop, defaultScales, clampBlockScale, normalizeStraighten, normalizeOrientation } from "./shareLayout";
 import { clampCropRotated } from "./cropOverlayMath";
@@ -208,9 +208,9 @@ export function drawTitleBlock(
   const { ctx, W, theme } = d;
   const baseFs = d.baseFs * scale;
   const c = chipColors(theme);
-  const sportLabel = SPORT_LABELS[activity.sport_type as SportType] ?? "Activity";
-  const title = activity.title ?? sportLabel;
-  const metaStr = `${sportLabel.toUpperCase()} · ${formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}`;
+  const sport = sportLabel(activity.sport_type, t("common.activity"));
+  const title = activity.title ?? sport;
+  const metaStr = `${sport.toUpperCase()} · ${formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}`;
   const padX = baseFs;
   const padY = baseFs * 0.7;
 

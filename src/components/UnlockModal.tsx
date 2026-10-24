@@ -3,12 +3,15 @@ import { Lock, Loader2 } from "lucide-react";
 import { api } from "../lib/tauri";
 import { Logo } from "./brand/Logo";
 import { errorText } from "../lib/errors";
+import { useT } from "../lib/i18n";
 
 interface Props {
   onUnlocked: () => void;
 }
 
 export function UnlockModal({ onUnlocked }: Props) {
+  // Above the keyed AppShell: useT re-renders it on a language change.
+  const t = useT();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,15 +42,13 @@ export function UnlockModal({ onUnlocked }: Props) {
           <h1 className="flex justify-center">
             <Logo size={26} />
           </h1>
-          <p className="text-sm text-muted">
-            Your vault is encrypted. Enter your password to unlock.
-          </p>
+          <p className="text-sm text-muted">{t("unlock.prompt")}</p>
         </div>
 
         <div className="space-y-3">
           <input
             type="password"
-            placeholder="Password"
+            placeholder={t("unlock.password")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
@@ -63,7 +64,7 @@ export function UnlockModal({ onUnlocked }: Props) {
             className="w-full inline-flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg bg-accent text-accent-ink hover:bg-accent-2 disabled:opacity-50 font-medium"
           >
             {busy && <Loader2 size={15} className="animate-spin" />}
-            {busy ? "Unlocking…" : "Unlock"}
+            {busy ? t("unlock.unlocking") : t("unlock.unlock")}
           </button>
         </div>
       </div>

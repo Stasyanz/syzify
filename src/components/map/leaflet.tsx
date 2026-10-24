@@ -70,6 +70,9 @@ interface MapContainerProps {
   attributionControl?: boolean;
   /** Without a tile layer nothing caps the zoom; tiles stop at 18. */
   maxZoom?: number;
+  /** Leaflet's own +/− buttons, titled in English; a map that names them
+   * in the interface language turns them off and adds a <ZoomControl>. */
+  zoomControl?: boolean;
   children?: ReactNode;
 }
 
@@ -81,6 +84,7 @@ export function MapContainer({
   scrollWheelZoom = true,
   attributionControl = true,
   maxZoom,
+  zoomControl = true,
   children,
 }: MapContainerProps) {
   const divRef = useRef<HTMLDivElement>(null);
@@ -88,7 +92,7 @@ export function MapContainer({
   // These props are only the map's initial state; from then on the user and
   // fitBounds drive it, so prop changes must not touch the instance — a
   // caller that needs other options remounts the container.
-  const initial = useRef({ center, zoom, scrollWheelZoom, attributionControl, maxZoom });
+  const initial = useRef({ center, zoom, scrollWheelZoom, attributionControl, maxZoom, zoomControl });
 
   useEffect(() => {
     const el = divRef.current;
@@ -107,6 +111,19 @@ export function MapContainer({
       {map && <MapCtx.Provider value={map}>{children}</MapCtx.Provider>}
     </div>
   );
+}
+
+/** The +/− buttons with titles of the caller's (Leaflet's own say "Zoom
+ * in" in every language). Goes with `zoomControl={false}`. */
+export function ZoomControl({ zoomInTitle, zoomOutTitle }: { zoomInTitle: string; zoomOutTitle: string }) {
+  const map = useMap();
+  useEffect(() => {
+    const control = L.control.zoom({ zoomInTitle, zoomOutTitle }).addTo(map);
+    return () => {
+      control.remove();
+    };
+  }, [map, zoomInTitle, zoomOutTitle]);
+  return null;
 }
 
 export function TileLayer({ url, attribution }: { url: string; attribution?: string }) {

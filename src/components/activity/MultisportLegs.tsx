@@ -2,7 +2,7 @@ import { useNavigate } from "react-router";
 import { ChevronRight } from "lucide-react";
 import { isFocusableLeg } from "./legFocus";
 import type { MultisportLeg } from "../../lib/types";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
 import { SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
 import {
@@ -58,7 +58,7 @@ export function legRows(legs: MultisportLeg[]): LegRow[] {
     }
     return {
       key: leg.leg_number,
-      label: SPORT_LABELS[leg.sport_type as SportType] ?? leg.sport_type,
+      label: sportLabel(leg.sport_type),
       sport: leg.sport_type,
       isTransition: false,
       link: leg.source_activity_id,

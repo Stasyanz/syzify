@@ -7,6 +7,7 @@ vi.mock("../../lib/tauri", () => ({
   api: {
     getActivityYearRange: vi.fn(),
     getDetectedDevices: vi.fn(),
+    getUsedSportTypes: vi.fn().mockResolvedValue([]),
     listGear: vi.fn(),
     countGearTargets: vi.fn(),
     assignGearToFiltered: vi.fn(),
@@ -23,6 +24,7 @@ import { api } from "../../lib/tauri";
 import { confirmDialog } from "../../stores/confirmStore";
 import { useActivityStore } from "../../stores/activityStore";
 import type { GearItem } from "../../lib/types";
+import { useLanguageStore } from "../../lib/i18n";
 
 const gearItem = (id: string, name: string, kind: GearItem["kind"], activities: number, retired = false): GearItem => ({
   id,
@@ -101,14 +103,15 @@ describe("FilterDrawer device filter", () => {
     expect(trigger.textContent).toContain("All devices");
     fireEvent.click(trigger);
     const labels = getAllByRole("option").map((o) => o.textContent);
-    expect(labels).toEqual(["All devices", "fenix 6X Pro (1200)", "Edge 840 (40)", "No device (12)"]);
+    // The count is a number written the language's way (#232).
+    expect(labels).toEqual(["All devices", "fenix 6X Pro (1,200)", "Edge 840 (40)", "No device (12)"]);
     expect(getByRole("listbox").querySelectorAll("svg[data-form]").length).toBe(3);
 
     fireEvent.click(getAllByRole("option")[1]);
     expect(useActivityStore.getState().filters.devices).toEqual(["Garmin fenix6x", "Garmin fenix6x_asia"]);
     fireEvent.click(getAllByRole("option")[3]);
     expect(useActivityStore.getState().filters.devices).toEqual(["Garmin fenix6x", "Garmin fenix6x_asia", ""]);
-    expect(trigger.textContent).toContain("fenix 6X Pro (1200), No device (12)");
+    expect(trigger.textContent).toContain("fenix 6X Pro (1,200), No device (12)");
 
     // Un-ticking the last option clears the facet entirely.
     fireEvent.click(getAllByRole("option")[1]);
@@ -261,5 +264,106 @@ describe("FilterDrawer gear", () => {
       expect(addToast).toHaveBeenCalledWith("error", "Could not assign gear: Bring the gear back before assigning activities to it"),
     );
     expect(vi.mocked(confirmDialog).mock.calls[0][0].message).not.toContain("moved");
+  });
+});
+
+describe("FilterDrawer in the interface language (#233)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(confirmDialog).mockReset();
+    vi.mocked(api.getActivityYearRange).mockResolvedValue([2026, 2026]);
+    vi.mocked(api.getUsedSportTypes).mockResolvedValue(["swim", "run", "ride"]);
+    vi.mocked(api.getDetectedDevices).mockResolvedValue([
+      { device_name: "Garmin edge_840", activity_count: 4, last_activity: "2026-09-16T08:00:00+00:00" },
+      { device_name: "", activity_count: 1, last_activity: "2026-09-16T08:00:00+00:00" },
+    ]);
+    vi.mocked(api.listGear).mockResolvedValue([gearItem("g-road", "Road", "bike", 37), gearItem("g-old", "Old road", "bike", 5, true)]);
+    useActivityStore.getState().resetFilters();
+    useLanguageStore.getState().setPref("ru");
+  });
+  afterEach(() => {
+    cleanup();
+    useLanguageStore.getState().setPref("system");
+  });
+
+  it("names every facet in Russian, the sports sorted the Russian way", async () => {
+    const { findByLabelText, getByText, getByTitle, getByPlaceholderText, getAllByRole, getByLabelText } = renderDrawer();
+    const sport = await findByLabelText("Вид спорта");
+    for (const text of ["Фильтры", "Сортировка", "GPS-трек", "Дистанция · км", "Время · мин", "Набор высоты · м", "Период", "Сбросить фильтры"]) {
+      getByText(text);
+    }
+    for (const text of ["Любой", "С треком", "Без трека", "С", "По"]) getByText(text);
+    getByTitle("Закрыть");
+    getByTitle("По убыванию");
+    act(() => useActivityStore.getState().setFilters({ sort_dir: "asc", search: "утро" }));
+    getByTitle("По возрастанию");
+    getByTitle("Очистить поиск");
+    getByPlaceholderText("Поиск тренировок…");
+
+    fireEvent.click(getByLabelText("Сортировка"));
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["Дата", "Дистанция", "Время", "Набор высоты"]);
+    fireEvent.click(getAllByRole("option")[0]);
+
+    await waitFor(() => expect(sport.textContent).toContain("Все виды спорта"));
+    fireEvent.click(sport);
+    await waitFor(() =>
+      expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["Все виды спорта", "Бег", "Велосипед", "Плавание"]),
+    );
+    fireEvent.click(sport);
+
+    const device = await findByLabelText("Устройство");
+    fireEvent.click(device);
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["Все устройства", "Edge 840 (4)", "Без устройства (1)"]);
+    fireEvent.click(device);
+
+    const gear = await findByLabelText("Снаряжение");
+    fireEvent.click(gear);
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Всё снаряжение", "Road (37)", "Old road (снаряжение списано) (5)", "Без снаряжения",
+    ]);
+  });
+
+  it("asks, works and reports the bulk assignment in Russian, counting in the number's form", async () => {
+    vi.mocked(api.countGearTargets).mockResolvedValue({ eligible: 3, moved_from: [{ name: "Gravel", count: 2 }] });
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    let assigned: (n: number) => void = () => {};
+    vi.mocked(api.assignGearToFiltered).mockReturnValue(new Promise((r) => (assigned = r)));
+    const { findByLabelText, getByLabelText, getByRole, getAllByRole, findByText } = renderDrawer();
+    await findByLabelText("Снаряжение");
+    act(() => useActivityStore.getState().setFilters({ sport_types: ["ride"] }));
+    const putOn = await waitFor(() => getByLabelText("Назначить отфильтрованным тренировкам"));
+    expect(putOn.textContent).toContain("Назначить…");
+    fireEvent.click(putOn);
+    fireEvent.click(getAllByRole("option").find((o) => o.textContent === "Road")!);
+    fireEvent.click(getByRole("button", { name: "Назначить" }));
+    await findByText("Назначение…");
+    expect(vi.mocked(confirmDialog).mock.calls[0][0]).toEqual({
+      title: "Назначить Road на 3 тренировки?",
+      message:
+        "Все тренировки, подходящие под фильтры (за все даты, если период не задан), на которых ещё нет Road; мультиспортивные события не затрагиваются. Будут перенесены: 2 с Gravel.",
+      confirmLabel: "Назначить",
+    });
+    await act(async () => assigned(1));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("success", "Снаряжение «Road» назначено на 1 тренировку"));
+  });
+
+  it("says nothing is to assign, and why an assignment failed, in Russian", async () => {
+    vi.mocked(api.countGearTargets).mockResolvedValueOnce({ eligible: 0, moved_from: [] });
+    const { findByLabelText, getByLabelText, getByRole, getAllByRole } = renderDrawer();
+    await findByLabelText("Снаряжение");
+    act(() => useActivityStore.getState().setFilters({ sport_types: ["ride"] }));
+    await waitFor(() => getByLabelText("Назначить отфильтрованным тренировкам"));
+    fireEvent.click(getByLabelText("Назначить отфильтрованным тренировкам"));
+    fireEvent.click(getAllByRole("option").find((o) => o.textContent === "Road")!);
+    fireEvent.click(getByRole("button", { name: "Назначить" }));
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith(
+        "info",
+        "Нечего назначать: на всех подходящих тренировках уже есть Road, или им нельзя назначить снаряжение",
+      ),
+    );
+    vi.mocked(api.countGearTargets).mockRejectedValueOnce("database is locked");
+    fireEvent.click(getByRole("button", { name: "Назначить" }));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("error", "Не удалось назначить снаряжение: database is locked"));
   });
 });

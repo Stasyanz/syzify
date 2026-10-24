@@ -7,6 +7,7 @@ import type { ActivitySummary } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { useToastStore } from "../../stores/toastStore";
 import { ActivityList } from "./ActivityList";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -159,6 +160,47 @@ describe("ActivityList merge refusal (#182)", () => {
       expect(screen.getByText("2 selected")).toBeTruthy();
     });
   }
+});
+
+describe("ActivityList in the interface language (#233)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("says it is loading, then that the library is empty", async () => {
+    let answer: (rows: ActivitySummary[]) => void = () => {};
+    vi.mocked(api.getActivities).mockReturnValue(new Promise((r) => (answer = r)));
+    useLanguageStore.getState().setPref("ru");
+    renderList();
+    screen.getByText("Загрузка тренировок…");
+    answer([]);
+    await screen.findByText("Тренировок пока нет");
+    screen.getByText("Импортируйте файлы GPX или FIT, чтобы начать");
+  });
+
+  it("writes the merge toolbar, its reasons and Load more in Russian", async () => {
+    vi.mocked(api.getActivities).mockResolvedValue([
+      { ...summary(0), sport_type: "swim" },
+      { ...summary(1), sport_type: "ride" },
+      ...page(20).slice(2),
+    ]);
+    let finish: (id: string) => void = () => {};
+    vi.mocked(api.mergeIntoTriathlon).mockReturnValue(new Promise((r) => (finish = r)));
+    useLanguageStore.getState().setPref("ru");
+    renderList();
+    await screen.findByText("Run #0");
+    screen.getByRole("button", { name: "Загрузить ещё" });
+    fireEvent.keyDown(document.body, { key: "m", ctrlKey: true });
+    screen.getByText("Выбрано: 0");
+    screen.getByText("Отмена");
+    const merge = screen.getByRole("button", { name: "Объединить в триатлон" });
+    expect(merge.getAttribute("data-tip")).toBe("Выберите хотя бы две тренировки");
+    fireEvent.click(screen.getByText("Run #0"));
+    fireEvent.click(screen.getByText("Run #1"));
+    screen.getByText("Выбрано: 2");
+    expect(merge.getAttribute("data-tip")).toBe("Объединить выбранные тренировки в один дуатлон или триатлон");
+    fireEvent.click(merge);
+    await screen.findByText("Объединение…");
+    finish("t-1");
+  });
 });
 
 describe("ActivityList device line setting", () => {

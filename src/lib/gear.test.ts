@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GearItem } from "./types";
-import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel, wearState, wornItems, WEAR_COLORS, WEAR_WARN } from "./gear";
+import { gearChoicesFor, kindSports, kindsForSport, rulesSummary, sensorLabel, wearState, wearTip, wornItems, WEAR_COLORS, WEAR_WARN } from "./gear";
+import { useLanguageStore } from "./i18n";
 
 const item = (id: string, kind: GearItem["kind"], retired = false): GearItem => ({
   id,
@@ -107,5 +108,27 @@ describe("wornItems", () => {
     expect(wearState(0.999)).toBe("warn");
     expect(wearState(1)).toBe("over");
     expect(WEAR_COLORS.over).toBe("var(--danger)");
+  });
+});
+
+describe("wearTip in the interface language (#233)", () => {
+  const worn = (distance_m: number, limit: number | null): GearItem => ({
+    ...item("road", "bike"),
+    distance_limit_m: limit,
+    stats: { activities: 1, distance_m, duration_s: 0, elev_gain_m: 0, last_used: null },
+  });
+
+  it("says the share of the limit or that it is past it, in Russian", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(wearTip(worn(700_000, 800_000), 0.875)).toBe("700,00 км из 800,00 км · 87 %");
+      expect(wearTip(worn(900_000, 800_000), 1)).toBe("900,00 км из 800,00 км · сверх лимита");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("is never past a limit the item does not have", () => {
+    expect(wearTip(worn(900_000, null), 0)).toMatch(/^900\.00 km of .* · 0 %$/);
   });
 });

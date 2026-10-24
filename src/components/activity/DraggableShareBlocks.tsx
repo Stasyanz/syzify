@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity, TrackPointColumns } from "../../lib/types";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
 import { formatDate } from "../../lib/format";
-import { currentLanguage } from "../../lib/i18n";
+import { currentLanguage, useT } from "../../lib/i18n";
 import { avoidZone, clampBlockScale, type BlockKind, type BlockPositions, type BlockScales } from "./shareLayout";
 import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
 import {
@@ -247,8 +247,9 @@ function TitleBlock(props: Props) {
   const { activity, theme, positions, onPositionChange, scales, onScaleChange, previewWidth, previewHeight, exportWidth, transparentBg } = props;
   const { ref, onMouseDown } = useDraggable("title", positions, onPositionChange, previewWidth, previewHeight, props.avoidRef);
   const { onHandleDown, active } = useScalable("title", scales, onScaleChange, ref);
-  const sportLabel = SPORT_LABELS[activity.sport_type as SportType] ?? "Activity";
-  const title = activity.title ?? sportLabel;
+  const t = useT();
+  const sport = sportLabel(activity.sport_type, t("common.activity"), t);
+  const title = activity.title ?? sport;
   const baseFs = exportScaled(14, exportWidth * 0.018, previewWidth, exportWidth) * scales.title;
 
   return (
@@ -264,7 +265,7 @@ function TitleBlock(props: Props) {
       }}
     >
       <div style={{ fontSize: baseFs * 0.75, color: subtextColor(theme), letterSpacing: 1, fontWeight: 500 }}>
-        {sportLabel.toUpperCase()} · {formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}
+        {sport.toUpperCase()} · {formatDate(activity.start_time).toLocaleUpperCase(currentLanguage())}
       </div>
       <div style={{ fontSize: baseFs * 1.7, fontWeight: 700, marginTop: baseFs * 0.15, lineHeight: 1.1 }}>{title}</div>
       {activity.location_name && (

@@ -6,6 +6,7 @@ import {
   type SparkHistoryPoint,
   type SparkPoint,
 } from "../../lib/recovery";
+import { useT } from "../../lib/i18n";
 
 /** Sparkline box: the width follows the space left in the row (measured),
  * the height is fixed so a wider row stretches the time axis only. */
@@ -44,6 +45,7 @@ export function RecoverySparkline({
   history: SparkHistoryPoint[];
   computedFor: string;
 }) {
+  const t = useT();
   const [hover, setHover] = useState<SparkPoint | null>(null);
   const { ref, width } = useMeasuredWidth<HTMLDivElement>(260);
   const { points, segments, guides } = sparkline(history, computedFor, {
@@ -56,7 +58,7 @@ export function RecoverySparkline({
   if (!last) {
     return (
       <div className="ml-auto self-center text-xs text-faint" data-testid="spark-empty">
-        No nights in the last 28 days
+        {t("dashboard.spark.empty")}
       </div>
     );
   }
@@ -69,9 +71,11 @@ export function RecoverySparkline({
           viewBox={`0 0 ${width} ${SPARK.height}`}
           className="block"
           role="img"
-          aria-label={`Recovery index, last 28 days: ${points.length} night${
-            points.length === 1 ? "" : "s"
-          }, latest ${last.index} on ${shortDate(last.date)}`}
+          aria-label={t("dashboard.spark.label", {
+            count: points.length,
+            index: last.index,
+            date: shortDate(last.date),
+          })}
         >
           {[
             ["80", guides.y80],
@@ -128,8 +132,8 @@ export function RecoverySparkline({
         )}
       </div>
       <div className="flex justify-between text-[10px] text-faint uppercase tracking-wide mt-1">
-        <span>4 weeks ago</span>
-        <span>Today</span>
+        <span>{t("dashboard.spark.weeksAgo")}</span>
+        <span>{t("dashboard.spark.today")}</span>
       </div>
     </div>
   );

@@ -8,9 +8,11 @@ import { MiniCalendar } from "../components/dashboard/MiniCalendar";
 import { GearWear } from "../components/dashboard/GearWear";
 import { PluginContributions } from "../components/plugins/PluginContributions";
 import { useInvalidateOnNewDay } from "../hooks/useToday";
+import { useT } from "../lib/i18n";
 import "../lib/chartSetup";
 
 export function DashboardPage() {
+  const t = useT();
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api.getDashboardData(),
@@ -26,7 +28,7 @@ export function DashboardPage() {
         <div className="p-6 space-y-5">
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
-              <p className="text-sm text-faint">Loading dashboard...</p>
+              <p className="text-sm text-faint">{t("dashboard.loading")}</p>
             </div>
           ) : data ? (
             <>
@@ -42,7 +44,7 @@ export function DashboardPage() {
             </>
           ) : (
             <div className="flex items-center justify-center h-64">
-              <p className="text-sm text-faint">No data available</p>
+              <p className="text-sm text-faint">{t("dashboard.noData")}</p>
             </div>
           )}
         </div>

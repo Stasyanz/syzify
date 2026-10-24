@@ -9,6 +9,7 @@ import type { ActivityLocation } from "../../lib/types";
 import { api } from "../../lib/tauri";
 import { MapContainer, useMap } from "../map/leaflet";
 import { ActivitiesMap, FitBounds, ViewTracker, lastMapView } from "./ActivitiesMap";
+import { useLanguageStore } from "../../lib/i18n";
 
 vi.mock("../../lib/tauri", () => ({
   api: {
@@ -82,6 +83,59 @@ function renderView(
   const utils = render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   return { ...utils, map: () => map! };
 }
+
+describe("ActivitiesMap in the interface language (#233)", () => {
+  afterEach(() => useLanguageStore.getState().setPref("system"));
+
+  it("says it is loading, and when no activity has a track", async () => {
+    let answer: (rows: ActivityLocation[]) => void = () => {};
+    vi.mocked(api.getActivityLocations).mockReturnValue(new Promise((r) => (answer = r)));
+    useLanguageStore.getState().setPref("ru");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ActivitiesMap />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    screen.getByText("Загрузка карты…");
+    answer([]);
+    await screen.findByText("Нет тренировок с GPS");
+  });
+
+  it("names the layers and the fullscreen button in Russian", async () => {
+    useLanguageStore.getState().setPref("ru");
+    renderMap();
+    const full = await waitFor(() => screen.getByLabelText("Карта на весь экран"));
+    fireEvent.click(full);
+    expect(screen.getByLabelText("Выйти из полноэкранного режима").getAttribute("data-tip")).toBe(
+      "Выйти из полноэкранного режима",
+    );
+    fireEvent.click(screen.getByTitle("Сменить слой карты"));
+    for (const name of ["Стандартная", "Топографическая", "Велосипедная", "Спутниковая", "Тёмная"]) {
+      screen.getByText(name);
+    }
+  });
+
+  it("titles the zoom buttons in Russian, once, and counts a crowd the language's way", async () => {
+    useLanguageStore.getState().setPref("ru");
+    vi.mocked(api.getActivityLocations).mockResolvedValue([loc, { ...loc, id: "a-2" }]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ActivitiesMap />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(container.querySelector(".mcl")?.textContent).toBe("2"));
+    // Leaflet's own English buttons are off: one pair, ours.
+    expect(container.querySelectorAll(".leaflet-control-zoom")).toHaveLength(1);
+    expect(container.querySelector(".leaflet-control-zoom-in")!.getAttribute("title")).toBe("Приблизить");
+    expect(container.querySelector(".leaflet-control-zoom-out")!.getAttribute("title")).toBe("Отдалить");
+  });
+});
 
 describe("map view persistence", () => {
   beforeEach(() => {

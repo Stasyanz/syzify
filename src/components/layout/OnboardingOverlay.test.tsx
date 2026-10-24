@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 import {
   OnboardingOverlay,
   ONBOARDING_KEY,
@@ -137,5 +138,22 @@ describe("OnboardingOverlay", () => {
       expect(screen.queryByText("Import your first workout")).toBeNull(),
     );
     expect(mocked.setSetting).toHaveBeenCalledWith(ONBOARDING_KEY, "1");
+  });
+
+  it("speaks the interface language (#233)", async () => {
+    mocked.getSetting.mockResolvedValue(null);
+    mocked.getActivities.mockResolvedValue([]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      renderOverlay();
+      expect(await screen.findByText("Импортируйте первую тренировку")).toBeTruthy();
+      expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe("Начало работы");
+      screen.getByText(/Перетащите файлы GPX, FIT или TCX/);
+      screen.getByLabelText("Закрыть");
+      fireEvent.click(screen.getByText("Понятно"));
+      expect(mocked.setSetting).toHaveBeenCalledWith(ONBOARDING_KEY, "1");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

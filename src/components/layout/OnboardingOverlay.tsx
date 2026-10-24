@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { useT } from "../../lib/i18n";
 
 /** Setting row marking the first-run onboarding as passed ("1"). Delete the
  * row (or the whole vault) to see the overlay again — the testing hook. */
@@ -52,6 +53,7 @@ export function arrowPath(x1: number, y1: number, x2: number, y2: number): strin
  * so does the X / "Got it".
  */
 export function OnboardingOverlay() {
+  const t = useT();
   const { data: done } = useQuery({
     queryKey: ["setting", ONBOARDING_KEY],
     queryFn: () => api.getSetting(ONBOARDING_KEY),
@@ -164,25 +166,22 @@ export function OnboardingOverlay() {
       <div
         className="dash-card pointer-events-auto absolute left-1/2 top-1/2 w-[380px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 shadow-2xl"
         role="dialog"
-        aria-label="Getting started"
+        aria-label={t("onboarding.label")}
       >
         <button
           onClick={finish}
-          aria-label="Close"
+          aria-label={t("common.close")}
           className="absolute right-3 top-3 text-faint hover:text-ink"
         >
           <X size={18} />
         </button>
-        <h2 className="!mb-2 text-lg font-bold">Import your first workout</h2>
-        <p className="mb-5 text-sm leading-relaxed text-muted">
-          Drag &amp; drop GPX, FIT or TCX files anywhere in this window — or click
-          the Import button in the top-right corner.
-        </p>
+        <h2 className="!mb-2 text-lg font-bold">{t("onboarding.title")}</h2>
+        <p className="mb-5 text-sm leading-relaxed text-muted">{t("onboarding.body")}</p>
         <button
           onClick={finish}
           className="rounded-lg bg-accent px-4 py-2 font-medium text-white transition-colors hover:bg-accent-2"
         >
-          Got it
+          {t("onboarding.gotIt")}
         </button>
       </div>
     </div>

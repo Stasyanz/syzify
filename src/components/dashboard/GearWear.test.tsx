@@ -9,6 +9,7 @@ vi.mock("../../lib/tauri", () => ({ api: { listGear: vi.fn() } }));
 
 import { GearWear } from "./GearWear";
 import { api } from "../../lib/tauri";
+import { useLanguageStore } from "../../lib/i18n";
 
 const shoes = (id: string, name: string, km: number, limitKm: number | null, retired = false): GearItem => ({
   id,
@@ -89,6 +90,25 @@ describe("GearWear", () => {
     await waitFor(() => expect(screen.getByTestId("gear-wear")).toBeTruthy());
     fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/settings?tab=garage"));
+  });
+
+  it("says it in the interface language (#233)", async () => {
+    vi.mocked(api.listGear).mockResolvedValue([shoes("a", "Pegasus", 700, 800), shoes("b", "Vomero", 900, 800)]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      renderIt();
+      await waitFor(() => expect(screen.getByTestId("gear-wear")).toBeTruthy());
+      screen.getByText("Износ снаряжения");
+      const rows = screen.getAllByRole("button");
+      expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual([
+        "Vomero: 900,00 км из 800,00 км · сверх лимита. Открыть гараж",
+        "Pegasus: 700,00 км из 800,00 км · 87 %. Открыть гараж",
+      ]);
+      expect(rows[0].textContent).toContain("Изношено");
+      expect(rows[1].textContent).toContain("Изнашивается");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("shows nothing when the registry cannot be read", async () => {

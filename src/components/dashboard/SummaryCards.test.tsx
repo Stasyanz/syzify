@@ -32,6 +32,14 @@ describe("SummaryCards (#232)", () => {
     ]);
   });
 
+  it("names the tiles in Russian (#233)", () => {
+    useLanguageStore.getState().setPref("ru");
+    const { container } = render(<SummaryCards data={data} />);
+    const labels = Array.from(container.querySelectorAll(".uppercase.whitespace-nowrap"), (el) => el.textContent);
+    expect(labels).toEqual(["Тренировки", "Дистанция", "Время", "Набор высоты", "Ср. пульс"]);
+    expect(container.textContent).toContain("на этой неделе");
+  });
+
   it("writes the numbers and units in Russian", () => {
     useLanguageStore.getState().setPref("ru");
     expect(tiles(render(<SummaryCards data={data} />).container)).toEqual([

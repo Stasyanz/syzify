@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, formatDelta, shortDate, sparkline } from "./recovery";
+import { bandLabel, daysBetween, formatDelta, shortDate, sparkline } from "./recovery";
 import { useLanguageStore } from "./i18n";
 
 describe("wording", () => {
@@ -8,6 +8,18 @@ describe("wording", () => {
     useLanguageStore.getState().setPref("it");
     try {
       expect(shortDate("2026-09-05")).toBe("5 set");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+
+  it("says the band's verdict in the interface language (#233)", () => {
+    expect(bandLabel("intervals_ok")).toBe("Intervals OK");
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect([bandLabel("intervals_ok"), bandLabel("easy_day"), bandLabel("rest")]).toEqual([
+        "Можно интервалы", "Лёгкий день", "Отдых",
+      ]);
     } finally {
       useLanguageStore.getState().setPref("system");
     }

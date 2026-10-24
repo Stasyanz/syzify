@@ -26,8 +26,9 @@ const SHOWN_ATTRIBUTES = new Set([
 const SHOWN_PROPERTIES = new Set([
   "label", "title", "message", "confirmLabel", "cancelLabel", "placeholder", "clearLabel", "ariaLabel", "description", "text", "name",
 ]);
-/** Calls whose argument at the index is shown as it is. */
-const SHOWN_ARGUMENTS: Record<string, number> = { addToast: 1, confirm: 0, alert: 0 };
+/** Calls whose argument at the index is shown as it is: `sportLabel`'s
+ * fallback is the name of a sport the app does not know. */
+const SHOWN_ARGUMENTS: Record<string, number> = { addToast: 1, confirm: 0, alert: 0, sportLabel: 1 };
 
 /** Text that reads the same in every language: names, formats, the
  * training abbreviations the epic keeps (#237). Grow it with care — an
@@ -127,8 +128,6 @@ export function untranslatedIn(fileName: string, text: string): string[] {
  * with an empty map. A file not listed must show no English of its own.
  */
 const NOT_YET_TRANSLATED: Record<string, number> = {
-  "App.tsx": 22,
-  "components/UnlockModal.tsx": 4,
   "components/activity/ChartPanel.tsx": 4,
   "components/activity/CropOverlay.tsx": 1,
   "components/activity/CyclingDynamicsPanel.tsx": 18,
@@ -152,23 +151,9 @@ const NOT_YET_TRANSLATED: Record<string, number> = {
   "components/activity/shareCanvas.ts": 2,
   "components/activity/shareLayout.ts": 1,
   "components/activity/timeInZones.ts": 1,
-  "components/dashboard/GearWear.tsx": 4,
-  "components/dashboard/MiniCalendar.tsx": 16,
-  "components/dashboard/PersonalRecords.tsx": 7,
-  "components/dashboard/RecoverySparkline.tsx": 4,
-  "components/dashboard/SportDistribution.tsx": 6,
-  "components/dashboard/SummaryCards.tsx": 6,
-  "components/dashboard/VolumeChart.tsx": 4,
   "components/feedback/FeedbackModal.tsx": 21,
   "components/import/ImportDialog.tsx": 6,
   "components/import/ImportProgressOverlay.tsx": 1,
-  "components/layout/AppShell.tsx": 13,
-  "components/layout/OnboardingOverlay.tsx": 5,
-  "components/library/ActivitiesMap.tsx": 12,
-  "components/library/ActivityList.tsx": 10,
-  "components/library/ActivityListItem.tsx": 5,
-  "components/library/CalendarView.tsx": 2,
-  "components/library/FilterDrawer.tsx": 43,
   "components/plugins/PluginWidget.tsx": 8,
   "components/settings/Garage.tsx": 87,
   "components/settings/LegalModal.tsx": 1,
@@ -182,12 +167,9 @@ const NOT_YET_TRANSLATED: Record<string, number> = {
   "components/ui/Toast.tsx": 1,
   "hooks/useDropImport.ts": 6,
   "hooks/useWatchFolderListener.ts": 1,
-  "lib/deviceFilter.ts": 1,
-  "lib/devices.ts": 48,
   "lib/importSummary.ts": 2,
   "lib/settingsTabs.ts": 5,
   "routes/ActivityDetail.tsx": 23,
-  "routes/Dashboard.tsx": 2,
   "routes/PluginPage.tsx": 3,
   "routes/Segments.tsx": 27,
   "routes/Settings.tsx": 58,
@@ -200,10 +182,8 @@ const NOT_YET_TRANSLATED: Record<string, number> = {
  */
 const TRACKED_BY_HAND: string[] = [
   "lib/errors.ts", // "Unknown error"
-  "lib/gear.ts", // the wear tooltip: "of", "past the limit"
+  "lib/gear.ts", // the Garage's rule summary and sensor names: "profile", "sensor", "Sensor"
   "lib/importSummary.ts", // "Imported", "Nothing imported"
-  "lib/recovery.ts", // the verdicts
-  "lib/types.ts", // sport names, gear rule hints
   "stores/confirmStore.ts", // the default confirm label
 ];
 

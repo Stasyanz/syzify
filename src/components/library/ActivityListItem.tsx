@@ -1,5 +1,6 @@
 import type { ActivitySummary } from "../../lib/types";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
+import { useT } from "../../lib/i18n";
 import { SportIcon } from "../brand/SportIcon";
 import { DeviceSilhouette } from "../brand/DeviceSilhouette";
 import { describeDevice } from "../../lib/devices";
@@ -30,7 +31,8 @@ interface Props {
 
 export function ActivityListItem({ activity, onClick, showDevice = true }: Props) {
   useUnits();
-  const label = SPORT_LABELS[activity.sport_type as SportType] ?? "Activity";
+  const t = useT();
+  const label = sportLabel(activity.sport_type, t("common.activity"));
   const device = showDevice ? describeDevice(activity.source_device) : null;
 
   return (
@@ -58,8 +60,8 @@ export function ActivityListItem({ activity, onClick, showDevice = true }: Props
           {device && (
             <span
               className="flex items-center gap-1 text-faint whitespace-nowrap shrink-0"
-              data-tip={`Recorded on ${device.full_name}`}
-              aria-label={`Recorded on ${device.full_name}`}
+              data-tip={t("library.item.recordedOn", { device: device.full_name })}
+              aria-label={t("library.item.recordedOn", { device: device.full_name })}
               data-testid="row-device"
             >
               <DeviceSilhouette form={device.form} size={16} />
@@ -71,11 +73,11 @@ export function ActivityListItem({ activity, onClick, showDevice = true }: Props
       <div className="flex items-center gap-6 text-sm text-muted shrink-0">
         <div className="text-right">
           <div className="font-num font-semibold text-ink">{formatDistance(activity.distance_m)}</div>
-          <div className="text-xs text-faint">distance</div>
+          <div className="text-xs text-faint">{t("library.item.distance")}</div>
         </div>
         <div className="text-right">
           <div className="font-num font-semibold text-ink">{formatDuration(activity.duration_s)}</div>
-          <div className="text-xs text-faint">time</div>
+          <div className="text-xs text-faint">{t("library.item.time")}</div>
         </div>
         <div className="text-right">
           <div className="font-num font-semibold text-ink">
@@ -87,7 +89,7 @@ export function ActivityListItem({ activity, onClick, showDevice = true }: Props
         </div>
         <div className="text-right">
           <div className="font-num font-semibold text-ink">{formatElevation(activity.elev_gain_m)}</div>
-          <div className="text-xs text-faint">elev</div>
+          <div className="text-xs text-faint">{t("library.item.elevation")}</div>
         </div>
       </div>
     </button>

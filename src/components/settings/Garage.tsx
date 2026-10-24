@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { History, Pencil, Plus, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../../lib/tauri";
 import {
-  SPORT_LABELS,
+  sportLabel,
   MAX_GEAR_NAME_LENGTH,
   type GearInput,
   type GearItem,
@@ -113,7 +113,7 @@ export function Garage() {
   /** The sentence the quick action offers: the item's default sports,
    * from its purchase date on (all time without one). */
   function historyOffer(item: GearItem): string {
-    const sports = item.default_for.map((s) => SPORT_LABELS[s] ?? s).join(", ");
+    const sports = item.default_for.map((s) => sportLabel(s)).join(", ");
     const since = item.purchased_at ? ` since ${formatDay(item.purchased_at + "T00:00:00")}` : "";
     return `Assign to all ${sports} activities${since}`;
   }
@@ -245,7 +245,7 @@ export function Garage() {
                     )}
                     {item.default_for.length > 0 && (
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
-                        <span>Default for {item.default_for.map((s) => SPORT_LABELS[s] ?? s).join(", ")}</span>
+                        <span>Default for {item.default_for.map((s) => sportLabel(s)).join(", ")}</span>
                         {!retired && (
                           // The way the history gets its gear: one click
                           // instead of a library filter (#165).
@@ -418,7 +418,7 @@ export function GearModal({
     onError: (e: unknown) => addToast("error", `Could not save gear: ${errorText(e)}`),
   });
 
-  const sportOptions = kindSports(kind).map((s) => ({ value: s, label: SPORT_LABELS[s] }));
+  const sportOptions = kindSports(kind).map((s) => ({ value: s, label: sportLabel(s) }));
   // A rule's value the vault has not seen (set elsewhere, files gone) stays
   // offered so the save keeps it.
   const profileOptions = [

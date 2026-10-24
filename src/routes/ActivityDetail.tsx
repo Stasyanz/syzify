@@ -13,7 +13,7 @@ import {
   paceOrSpeedLabel,
 } from "../lib/format";
 import { useUnits } from "../lib/units";
-import { formatDateTime } from "../lib/i18n";
+import { formatDateTime, useT } from "../lib/i18n";
 import { SportBadge } from "../components/activity/SportBadge";
 import { SummaryPanel } from "../components/activity/SummaryPanel";
 import { RouteMap } from "../components/activity/RouteMap";
@@ -42,7 +42,7 @@ import { ActionMenu } from "../components/ui/ActionMenu";
 import type { Photo } from "../lib/types";
 import { useActivityStore } from "../stores/activityStore";
 import { useToastStore } from "../stores/toastStore";
-import { SPORT_LABELS, type SportType } from "../lib/types";
+import { sportLabel } from "../lib/types";
 import { errorText } from "../lib/errors";
 
 /** Strava's smallest privacy-zone radius — hides this much track around the
@@ -51,6 +51,7 @@ const PRIVACY_RADIUS_M = 200;
 
 export function ActivityDetailPage() {
   useUnits();
+  const t = useT();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -177,8 +178,7 @@ export function ActivityDetailPage() {
   // A merged triathlon container: its legs link back to standalone activities
   // and it owns no track. Its map/charts/laps live on the legs' pages.
   const isMergedContainer = data.legs.some((l) => l.source_activity_id);
-  const sportLabel =
-    SPORT_LABELS[activity.sport_type as SportType] ?? "Activity";
+  const sport = sportLabel(activity.sport_type, t("common.activity"), t);
 
   // Meta line "Tue, Jun 2, 2026 · 18:05 · Amsterdam" — weekday/date · time · place.
   const start = new Date(activity.start_time);
@@ -279,7 +279,7 @@ export function ActivityDetailPage() {
           />
           <div className="min-w-0 flex-1">
             <InlineTitle
-              title={activity.title ?? sportLabel}
+              title={activity.title ?? sport}
               onSave={async (t) => {
                 try {
                   await api.updateActivity(activity.id, { title: t });
@@ -329,7 +329,7 @@ export function ActivityDetailPage() {
                   <div
                     key={b.kind}
                     className="badge-pill"
-                    data-tip={`${label} · ${b.all_time ? `all-time ${sportLabel} record` : `${sportLabel} personal best`}`}
+                    data-tip={`${label} · ${b.all_time ? `all-time ${sport} record` : `${sport} personal best`}`}
                   >
                     <Trophy size={13} />
                     <span>{value}</span>

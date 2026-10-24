@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, fireEvent, act } from "@testing-library/react";
 import { RecoverySparkline } from "./RecoverySparkline";
+import { useLanguageStore } from "../../lib/i18n";
 
 const history = [
   { date: "2026-06-09", index: 90, band: "intervals_ok" as const },
@@ -39,6 +40,35 @@ describe("RecoverySparkline", () => {
       "Recovery index, last 28 days: 1 night, latest 55 on Jun 10",
     );
     expect(container.querySelectorAll("svg line")).toHaveLength(2);
+  });
+
+  it("counts the nights in the Russian form for one, few and many (#233)", () => {
+    const nights = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        date: `2026-06-${String(10 - i).padStart(2, "0")}`,
+        index: 55,
+        band: "rest" as const,
+      }));
+    const label = (n: number) => {
+      const { container } = render(<RecoverySparkline history={nights(n)} computedFor="2026-06-10" />);
+      const text = container.querySelector("svg")?.getAttribute("aria-label");
+      cleanup();
+      return text;
+    };
+    act(() => useLanguageStore.getState().setPref("ru"));
+    try {
+      expect(label(1)).toBe("Индекс восстановления за 28 дней: 1 ночь, последний — 55, 10 июн.");
+      expect(label(3)).toBe("Индекс восстановления за 28 дней: 3 ночи, последний — 55, 10 июн.");
+      expect(label(5)).toBe("Индекс восстановления за 28 дней: 5 ночей, последний — 55, 10 июн.");
+      const { getByTestId } = render(<RecoverySparkline history={[]} computedFor="2026-06-10" />);
+      expect(getByTestId("spark-empty").textContent).toBe("Нет ночей за последние 28 дней");
+      cleanup();
+      expect(render(<RecoverySparkline history={nights(1)} computedFor="2026-06-10" />).container.textContent).toContain(
+        "4 недели назадСегодня",
+      );
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
   });
 
   it("labels a hovered point with its night and index", () => {

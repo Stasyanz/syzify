@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { X, MapPin, Trash2, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
 import {
-  SPORT_LABELS,
+  sportLabel,
   SPORT_TYPES,
   MAX_TITLE_LENGTH,
   type Activity,
@@ -15,6 +15,7 @@ import { GearKindIcon } from "./GearChip";
 import { gearChoicesFor } from "../../lib/gear";
 import { useToastStore } from "../../stores/toastStore";
 import { errorText } from "../../lib/errors";
+import { useLanguageStore } from "../../lib/i18n";
 
 interface Props {
   activity: Activity;
@@ -59,6 +60,8 @@ export function EditActivityModal({
   focusFtp = false,
 }: Props) {
   const addToast = useToastStore((s) => s.addToast);
+  // Sport names sort in the language they are written in.
+  const language = useLanguageStore((s) => s.language);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const [title, setTitle] = useState(activity.title ?? "");
@@ -409,10 +412,10 @@ export function EditActivityModal({
             value={sportType}
             onChange={changeSport}
             options={[...SPORT_TYPES]
-              .sort((a, b) => SPORT_LABELS[a].localeCompare(SPORT_LABELS[b]))
+              .sort((a, b) => sportLabel(a).localeCompare(sportLabel(b), language))
               .map((st) => ({
                 value: st,
-                label: SPORT_LABELS[st],
+                label: sportLabel(st),
                 icon: <SportIcon sport={st} size={18} />,
               }))}
           />

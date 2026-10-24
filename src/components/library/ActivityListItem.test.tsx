@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import type { ActivitySummary } from "../../lib/types";
 import { ActivityListItem, showDeviceFromSetting } from "./ActivityListItem";
+import { useLanguageStore } from "../../lib/i18n";
 
 afterEach(cleanup);
 
@@ -26,8 +27,8 @@ describe("ActivityListItem device line", () => {
     render(<ActivityListItem activity={summary("Garmin fenix6x")} onClick={() => {}} />);
     const dev = screen.getByTestId("row-device");
     expect(dev.textContent).toBe("fenix 6X Pro");
-    expect(dev.getAttribute("data-tip")).toBe("Recorded on Garmin fenix 6X Pro");
-    expect(dev.getAttribute("aria-label")).toBe("Recorded on Garmin fenix 6X Pro");
+    expect(dev.getAttribute("data-tip")).toBe("Recorded with Garmin fenix 6X Pro");
+    expect(dev.getAttribute("aria-label")).toBe("Recorded with Garmin fenix 6X Pro");
     expect(dev.querySelector("svg")!.getAttribute("data-form")).toBe("watch_multi");
     expect(dev.querySelector("svg")!.getAttribute("width")).toBe("16");
   });
@@ -45,6 +46,29 @@ describe("ActivityListItem device line", () => {
     render(<ActivityListItem activity={summary(null)} onClick={() => {}} />);
     expect(screen.queryByTestId("row-device")).toBeNull();
     expect(screen.getByText("Mahmutlar, Alanya")).toBeTruthy();
+  });
+
+  it("speaks the interface language, and names an untitled row by its sport (#233)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = render(
+        <ActivityListItem activity={{ ...summary("Garmin fenix6x"), title: null }} onClick={() => {}} />,
+      );
+      expect(screen.getByTestId("row-device").getAttribute("data-tip")).toBe("Записано: Garmin fenix 6X Pro");
+      expect(screen.getByText("Велосипед")).toBeTruthy();
+      const labels = Array.from(container.querySelectorAll(".text-right .text-xs"), (el) => el.textContent);
+      expect(labels).toEqual(["дистанция", "время", "скорость", "набор"]);
+      cleanup();
+      // An app reads as naturally as a device.
+      render(<ActivityListItem activity={summary("StravaGPX")} onClick={() => {}} />);
+      expect(screen.getByTestId("row-device").getAttribute("aria-label")).toBe("Записано: Приложение Strava");
+      cleanup();
+      // A sport the app does not know falls back to the plain word.
+      render(<ActivityListItem activity={{ ...summary(null), title: null, sport_type: "kitesurf" }} onClick={() => {}} />);
+      expect(screen.getByText("Тренировка")).toBeTruthy();
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("lets a long location truncate rather than push the device onto the numbers", () => {

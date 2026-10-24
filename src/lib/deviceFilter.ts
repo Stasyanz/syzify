@@ -1,5 +1,6 @@
 import { describeDevice, type DeviceForm } from "./devices";
 import type { DeviceStats } from "./types";
+import { t } from "./i18n";
 
 /** The `source_device` value the backend treats as "no device" in a filter. */
 export const NO_DEVICE = "";
@@ -31,7 +32,7 @@ export function groupDevices(stats: DeviceStats[]): DeviceGroup[] {
     const key = info ? info.label : NO_DEVICE;
     const group = groups.get(key) ?? {
       key,
-      label: info ? info.label : "No device",
+      label: info ? info.label : t("library.filter.noDevice"),
       form: info ? info.form : "generic",
       count: 0,
       raws: [],

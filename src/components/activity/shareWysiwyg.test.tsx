@@ -370,7 +370,7 @@ describe("title block visibility", () => {
       const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 20 };
       drawTitleBlock(d, { x: 0, y: 0 }, activity);
       const meta = calls.texts[0];
-      expect(meta).toMatch(/^RUN · 1 МАЯ 2026 Г\., \d{1,2}:\d\d$/);
+      expect(meta).toMatch(/^БЕГ · 1 МАЯ 2026 Г\., \d{1,2}:\d\d$/);
       expect(renderWithTitle(true).container.textContent).toContain(meta);
     } finally {
       useLanguageStore.getState().setPref("system");

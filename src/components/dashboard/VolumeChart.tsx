@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import type { VolumeBucket } from "../../lib/types";
 import { getSportColor } from "../../lib/sportColors";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
 import { useDashboardStore } from "../../stores/dashboardStore";
 import { useUnits, toDistance, distanceUnit, unitLabel } from "../../lib/units";
 import { dayKey, weekdayNames } from "../../lib/calendar";
-import { formatNumber } from "../../lib/i18n";
+import { formatNumber, useT } from "../../lib/i18n";
 import { formatMinutes } from "../../lib/format";
 import { useToday } from "../../hooks/useToday";
 
@@ -42,6 +42,7 @@ export function VolumeChart({ weekVolume }: Props) {
   const volumeMetric = useDashboardStore((s) => s.volumeMetric);
   const setVolumeMetric = useDashboardStore((s) => s.setVolumeMetric);
   const units = useUnits();
+  const t = useT();
   // Live day: the 7 day keys slide at midnight along with the refetched data.
   const today = useToday();
   // Segment under the cursor: { day index, segment index }.
@@ -85,9 +86,9 @@ export function VolumeChart({ weekVolume }: Props) {
     <div className="dash-card">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3>Volume</h3>
+          <h3>{t("dashboard.volume.title")}</h3>
           <div className="text-[11px] font-medium text-faint mt-0.5">
-            Last 7 days · {unitLabel(unit)}
+            {t("dashboard.volume.subtitle", { unit: unitLabel(unit) })}
           </div>
         </div>
         <div className="seg">
@@ -95,13 +96,13 @@ export function VolumeChart({ weekVolume }: Props) {
             onClick={() => setVolumeMetric("distance")}
             className={volumeMetric === "distance" ? "on" : ""}
           >
-            Dist
+            {t("dashboard.volume.distance")}
           </button>
           <button
             onClick={() => setVolumeMetric("duration")}
             className={volumeMetric === "duration" ? "on" : ""}
           >
-            Time
+            {t("dashboard.volume.time")}
           </button>
         </div>
       </div>
@@ -143,7 +144,7 @@ export function VolumeChart({ weekVolume }: Props) {
           {present.map((sp) => (
             <span key={sp}>
               <i style={{ background: getSportColor(sp) }} />
-              {SPORT_LABELS[sp as SportType] ?? sp}
+              {sportLabel(sp)}
             </span>
           ))}
         </div>

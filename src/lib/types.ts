@@ -1,3 +1,5 @@
+import { t, type Translator } from "./i18n";
+
 export interface Activity {
   id: string;
   /** The location point (typed, picked, or a suggestion), if any. */
@@ -526,39 +528,40 @@ export type SportType =
   | "basketball"
   | "other";
 
-export const SPORT_LABELS: Record<SportType, string> = {
-  run: "Run",
-  trail_run: "Trail Run",
-  treadmill: "Treadmill",
-  virtual_run: "Virtual Run",
-  ride: "Ride",
-  mountain_bike: "Mountain Bike",
-  indoor_ride: "Indoor Ride",
-  virtual_ride: "Virtual Ride",
-  walk: "Walk",
-  hike: "Hike",
-  mountaineering: "Mountaineering",
-  swim: "Swim",
-  open_water: "Open Water",
-  sailing: "Sailing",
-  paddle: "Paddling",
-  fishing: "Fishing",
-  triathlon: "Triathlon",
-  strength: "Strength",
-  cardio: "Cardio",
-  yoga: "Yoga",
-  ski: "Ski",
-  ski_xc: "XC Ski",
-  snowboard: "Snowboard",
-  golf: "Golf",
-  tennis: "Racquet",
-  soccer: "Soccer",
-  basketball: "Basketball",
-  other: "Other",
-};
+/** The list as it is — if it names every `SportType`. A sport added to the
+ * union and not here fails `tsc`, naming the sport ("missing"): a sport
+ * left out would be a known id no picker offers. */
+function everySport<const L extends readonly SportType[]>(
+  list: L & ([Exclude<SportType, L[number]>] extends [never] ? unknown : { missing: Exclude<SportType, L[number]> }),
+): SportType[] {
+  return [...list];
+}
 
 /** All sport types in display order (for filters, pickers). */
-export const SPORT_TYPES: SportType[] = Object.keys(SPORT_LABELS) as SportType[];
+export const SPORT_TYPES: SportType[] = everySport([
+  "run", "trail_run", "treadmill", "virtual_run",
+  "ride", "mountain_bike", "indoor_ride", "virtual_ride",
+  "walk", "hike", "mountaineering",
+  "swim", "open_water", "sailing", "paddle", "fishing",
+  "triathlon", "strength", "cardio", "yoga",
+  "ski", "ski_xc", "snowboard",
+  "golf", "tennis", "soccer", "basketball", "other",
+]);
+
+/** Whether a stored `sport_type` is one the app knows. */
+export function isSportType(sport: string): sport is SportType {
+  return (SPORT_TYPES as string[]).includes(sport);
+}
+
+/** A sport's name in the interface language (`sport.<id>` in the
+ * dictionaries); for an id the app does not know, `fallback` — the id as
+ * it came unless the caller has a word of its own. `translate` is the
+ * caller's `t` when it holds one (a component's `useT()`, a test's
+ * language), so the name and the sentence around it speak one language;
+ * left out, the language in use. */
+export function sportLabel(sport: string, fallback: string = sport, translate: Translator = t): string {
+  return isSportType(sport) ? translate(`sport.${sport}`) : fallback;
+}
 
 /** A ride that never left the room (#189): a trainer with no course, or a
  * smart trainer on a simulator. Cycling for power, gear and zones; not a

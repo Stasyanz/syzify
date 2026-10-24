@@ -6,7 +6,7 @@ import { errorText } from "../../lib/errors";
 import { useToastStore } from "../../stores/toastStore";
 import { SportIcon, SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
-import { SPORT_LABELS, SPORT_TYPES, type SportType } from "../../lib/types";
+import { sportLabel, SPORT_TYPES } from "../../lib/types";
 
 /** The sport icon in the activity header, and the menu to change the
  * sport behind it. Its own file so the refusal path has a test (#174). */
@@ -14,7 +14,7 @@ export function SportBadge({ activityId, sportType, onChanged }: { activityId: s
   const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const label = SPORT_LABELS[sportType as SportType] ?? sportType;
+  const label = sportLabel(sportType);
 
   useEffect(() => {
     if (!open) return;
@@ -63,7 +63,7 @@ export function SportBadge({ activityId, sportType, onChanged }: { activityId: s
                 >
                   <SportGlyph sport={st} size={13} />
                 </span>
-                <span className="truncate">{SPORT_LABELS[st]}</span>
+                <span className="truncate">{sportLabel(st)}</span>
                 {isSel && <Check size={14} className="ml-auto shrink-0" />}
               </button>
             );

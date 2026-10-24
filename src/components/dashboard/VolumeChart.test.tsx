@@ -146,7 +146,20 @@ describe("VolumeChart day rollover", () => {
       const { container } = render(<VolumeChart weekVolume={[]} />);
       // Friday 28 August → Thursday 3 September.
       expect(dayLabels(container)).toEqual(["Пт", "Сб", "Вс", "Пн", "Вт", "Ср", "Чт"]);
-      expect(container.textContent).toContain("Last 7 days · км");
+      expect(container.textContent).toContain("Последние 7 дней · км");
+      expect(container.querySelector("h3")!.textContent).toBe("Объём");
+      expect(Array.from(container.querySelectorAll(".seg button"), (b) => b.textContent)).toEqual(["Дист.", "Время"]);
+      cleanup();
+      const bucket: VolumeBucket = {
+        label: "",
+        start_date: todayYmd(),
+        distance_m: 9400,
+        duration_s: 5400,
+        activities: 1,
+        by_sport: { run: { distance_m: 9400, duration_s: 5400, activities: 1 } },
+      };
+      const legend = render(<VolumeChart weekVolume={[bucket]} />).container.querySelector(".vol-legend");
+      expect(legend!.textContent).toBe("Бег");
     } finally {
       useLanguageStore.getState().setPref("system");
     }

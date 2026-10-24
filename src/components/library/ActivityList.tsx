@@ -8,33 +8,34 @@ import { useActivityStore } from "../../stores/activityStore";
 import { useToastStore } from "../../stores/toastStore";
 import { ActivityListItem, LIBRARY_SHOW_DEVICE_KEY, showDeviceFromSetting } from "./ActivityListItem";
 import { ImportDialog } from "../import/ImportDialog";
-import { SPORT_LABELS, triathlonDiscipline, type ActivitySummary, type SportType } from "../../lib/types";
+import { sportLabel, triathlonDiscipline, type ActivitySummary } from "../../lib/types";
 import { errorText } from "../../lib/errors";
+import { useT, type Translator } from "../../lib/i18n";
 
 const DEFAULT_PAGE_SIZE = 20;
 
 /** Why the current selection can't merge into a du/triathlon, or null when
- * it can. Mirrors the backend gate (db/multisport_legs.rs) so the button
- * greys out with the reason instead of the request round-tripping to fail. */
+ * it can, in the language of `t`. Mirrors the backend gate
+ * (db/multisport_legs.rs) so the button greys out with the reason instead
+ * of the request round-tripping to fail. */
 export function mergeBlockReason(
   selected: Pick<ActivitySummary, "sport_type" | "start_time">[],
+  t: Translator,
 ): string | null {
-  if (selected.length < 2) return "Select at least two activities";
-  if (selected.length > 3) return "A multisport event has at most three legs";
+  if (selected.length < 2) return t("library.merge.tooFew");
+  if (selected.length > 3) return t("library.merge.tooMany");
   const bad = selected.find((a) => triathlonDiscipline(a.sport_type) == null);
-  if (bad) {
-    const label = SPORT_LABELS[bad.sport_type as SportType] ?? bad.sport_type;
-    return `${label} can't be a leg — only run, bike, swim and ski combine`;
-  }
+  if (bad) return t("library.merge.notLeg", { sport: sportLabel(bad.sport_type, bad.sport_type, t) });
   if (new Set(selected.map((a) => a.start_time.slice(0, 10))).size > 1) {
-    return "Legs of one event must share a day";
+    return t("library.merge.oneDay");
   }
   const disciplines = new Set(selected.map((a) => triathlonDiscipline(a.sport_type)));
-  if (disciplines.size < 2) return "Legs must span at least two disciplines";
+  if (disciplines.size < 2) return t("library.merge.disciplines");
   return null;
 }
 
 export function ActivityList() {
+  const t = useT();
   const filters = useActivityStore((s) => s.filters);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -123,7 +124,7 @@ export function ActivityList() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12 text-muted">
-        Loading activities...
+        {t("library.list.loading")}
       </div>
     );
   }
@@ -131,8 +132,8 @@ export function ActivityList() {
   if (!activities || activities.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-faint">
-        <p className="text-lg mb-2">No activities yet</p>
-        <p className="text-sm mb-5">Import GPX or FIT files to get started</p>
+        <p className="text-lg mb-2">{t("library.list.empty")}</p>
+        <p className="text-sm mb-5">{t("library.list.emptyHint")}</p>
         <ImportDialog />
       </div>
     );
@@ -143,27 +144,32 @@ export function ActivityList() {
   // in place (disabled) instead of blinking it away and back.
   const hasMore = activities.length === loadedCount || isFetching;
 
-  const mergeBlock = mergeBlockReason(activities.filter((a) => selected.has(a.id)));
+  const mergeBlock = mergeBlockReason(
+    activities.filter((a) => selected.has(a.id)),
+    t,
+  );
 
   return (
     <div>
       {/* Selection toolbar — only visible in merge mode (toggled by Ctrl+M). */}
       {selecting && (
         <div className="flex items-center justify-end gap-2 px-4 py-2 text-sm">
-          <span className="mr-auto text-muted">{selected.size} selected</span>
+          <span className="mr-auto text-muted">
+            {t("library.list.selected", { count: selected.size })}
+          </span>
           <button
             onClick={exitSelect}
             className="px-3 py-1.5 rounded-lg border border-border text-muted hover:bg-card-2"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             onClick={doMerge}
             disabled={mergeBlock != null || merging}
             className="px-3 py-1.5 rounded-lg bg-accent text-white font-medium hover:bg-accent-2 disabled:opacity-50"
-            data-tip={mergeBlock ?? "Combine the selected activities into one du/triathlon"}
+            data-tip={mergeBlock ?? t("library.list.mergeTip")}
           >
-            {merging ? "Merging…" : "Merge into triathlon"}
+            {merging ? t("library.list.merging") : t("library.list.merge")}
           </button>
         </div>
       )}
@@ -206,7 +212,7 @@ export function ActivityList() {
             disabled={isFetching}
             className="text-sm font-medium px-4 py-2 rounded-lg border border-border bg-card text-muted hover:bg-card-2 hover:text-ink transition-colors disabled:opacity-60"
           >
-            {isFetching ? "Loading…" : "Load more"}
+            {isFetching ? t("library.list.loadingMore") : t("library.list.loadMore")}
           </button>
         </div>
       )}

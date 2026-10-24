@@ -21,7 +21,7 @@ import { AppShell } from "./components/layout/AppShell";
 import { UpdateCheck } from "./components/settings/UpdateCheck";
 import { settingsPath } from "./lib/settingsTabs";
 import { errorText } from "./lib/errors";
-import { useLanguageStore } from "./lib/i18n";
+import { formatNumber, useLanguageStore, useRichT, useT } from "./lib/i18n";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -50,6 +50,9 @@ export function isVaultTooNew(message: string): boolean {
  * (both update commands are vault-independent).
  */
 export function VaultErrorScreen({ message }: { message: string }) {
+  // Above the keyed AppShell: useT re-renders this screen on a language change.
+  const t = useT();
+  const rt = useRichT();
   const tooNew = isVaultTooNew(message);
   const protectedFolder = !tooNew && /Documents|Desktop|Downloads/.test(message);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -60,9 +63,7 @@ export function VaultErrorScreen({ message }: { message: string }) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       directory: true,
-      title: expectExisting
-        ? "Open an existing vault folder"
-        : "Choose an empty folder for the new vault",
+      title: expectExisting ? t("app.vaultError.pickExisting") : t("app.vaultError.pickEmpty"),
     });
     if (typeof selected !== "string") return;
     try {
@@ -76,13 +77,10 @@ export function VaultErrorScreen({ message }: { message: string }) {
   return (
     <div className="h-screen flex items-center justify-center bg-bg p-8">
       <div className="max-w-md text-center space-y-4">
-        <h1 className="text-xl font-bold text-ink">Can't open your vault</h1>
+        <h1 className="text-xl font-bold text-ink">{t("app.vaultError.title")}</h1>
         {tooNew ? (
           <>
-            <p className="text-sm text-muted">
-              This vault was last used by a newer version of Syzify. Update the
-              app to open it.
-            </p>
+            <p className="text-sm text-muted">{t("app.vaultError.tooNew")}</p>
             <UpdateCheck centered />
           </>
         ) : (
@@ -90,10 +88,7 @@ export function VaultErrorScreen({ message }: { message: string }) {
         )}
         {protectedFolder && (
           <p className="text-sm text-muted">
-            The vault is in a protected folder. Grant Syzify{" "}
-            <strong>Full Disk Access</strong> in System Settings → Privacy &amp;
-            Security, then reopen — or move the vault back to an unprotected
-            location.
+            {rt("app.vaultError.protected", { access: <strong>{t("app.vaultError.protectedAccess")}</strong> })}
           </p>
         )}
         {/* Reopening can't fix a too-new vault — don't dress it as the
@@ -102,19 +97,17 @@ export function VaultErrorScreen({ message }: { message: string }) {
           onClick={() => api.restartApp().catch(() => {})}
           className={`btn ${tooNew ? "ghost" : "primary"} mx-auto`}
         >
-          Reopen
+          {t("app.vaultError.reopen")}
         </button>
         <div className="flex items-center justify-center gap-2">
           <button onClick={() => pickVault(true)} className="btn ghost">
-            Open another vault…
+            {t("app.vaultError.openAnother")}
           </button>
           <button onClick={() => pickVault(false)} className="btn ghost">
-            Create new vault…
+            {t("app.vaultError.createNew")}
           </button>
         </div>
-        <p className="text-xs text-muted">
-          The current vault's files stay where they are.
-        </p>
+        <p className="text-xs text-muted">{t("app.vaultError.filesStay")}</p>
         {switchError && <p className="text-sm text-red-500">{switchError}</p>}
       </div>
     </div>
@@ -124,15 +117,17 @@ export function VaultErrorScreen({ message }: { message: string }) {
 // Needs the router context (the drop target depends on the current route),
 // so it lives inside <BrowserRouter> rather than in AppContent itself.
 function DropImportOverlay() {
+  const t = useT();
   const { dragging, kind } = useDropImport();
   if (!dragging) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-accent/15 backdrop-blur-sm pointer-events-none">
       <div className="bg-card rounded-card shadow-2xl px-10 py-8 text-center border-2 border-dashed border-accent">
         <p className="text-lg font-semibold text-accent-2">
-          {kind === "photo" ? "Drop photos to add to this activity" : "Drop workout files to import"}
+          {kind === "photo" ? t("app.drop.photos") : t("app.drop.workouts")}
         </p>
-        <p className="text-sm text-muted mt-1">
+        {/* File formats: names, the same in every language. */}
+        <p className="text-sm text-muted mt-1" translate="no">
           {kind === "photo" ? "JPG, PNG, WebP, HEIC" : "GPX, FIT, TCX"}
         </p>
       </div>
@@ -143,6 +138,8 @@ function DropImportOverlay() {
 function AppContent() {
   const qc = useQueryClient();
   const language = useLanguageStore((s) => s.language);
+  const t = useT();
+  const rt = useRichT();
   usePluginImportRefresh();
   const { data: encStatus, isLoading } = useQuery({
     queryKey: ["encryptionStatus"],
@@ -165,7 +162,7 @@ function AppContent() {
     return (
       <div
         role="status"
-        aria-label="Loading"
+        aria-label={t("app.loading")}
         className="h-screen flex items-center justify-center bg-bg"
       >
         <svg className="boot-logo" viewBox="0 0 1024 1024" width="72" height="72" aria-hidden="true">
@@ -203,7 +200,10 @@ function AppContent() {
         {pendingFiles.length > 0 && (
           <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-accent-soft border-b border-border text-sm shrink-0">
             <span className="text-ink">
-              Found <strong>{pendingFiles.length}</strong> new workout file{pendingFiles.length !== 1 ? "s" : ""} in watch folders
+              {rt("app.watch.found", {
+                count: pendingFiles.length,
+                files: <strong>{formatNumber(pendingFiles.length, 0, language)}</strong>,
+              })}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -211,13 +211,13 @@ function AppContent() {
                 disabled={watchImporting}
                 className="px-3 py-1 rounded-field bg-accent text-accent-ink text-xs font-medium hover:bg-accent-2 disabled:opacity-50"
               >
-                {watchImporting ? "Importing..." : "Import"}
+                {watchImporting ? t("common.importing") : t("common.import")}
               </button>
               <button
                 onClick={watchDismiss}
                 className="px-3 py-1 rounded-field border border-border-2 text-muted text-xs font-medium hover:text-ink hover:bg-card-2"
               >
-                Dismiss
+                {t("app.watch.dismiss")}
               </button>
             </div>
           </div>

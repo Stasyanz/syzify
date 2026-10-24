@@ -4,7 +4,7 @@
 
 import type { RecoveryNight } from "./types";
 import { dateOfDayKey } from "./calendar";
-import { formatDateTime } from "./i18n";
+import { formatDateTime, t } from "./i18n";
 
 export type Band = RecoveryNight["band"];
 
@@ -15,11 +15,10 @@ export interface SparkHistoryPoint {
   band: Band;
 }
 
-export const BAND_LABEL: Record<Band, string> = {
-  intervals_ok: "Intervals OK",
-  easy_day: "Easy day",
-  rest: "Rest",
-};
+/** The band's verdict for the day, in the interface language. */
+export function bandLabel(band: Band): string {
+  return t(`recovery.band.${band}`);
+}
 
 /** CSS token behind each band — the tint the index and its chip take. */
 export const BAND_TOKEN: Record<Band, "--good" | "--warn" | "--danger"> = {

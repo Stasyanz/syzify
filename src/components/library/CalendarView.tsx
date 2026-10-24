@@ -8,12 +8,18 @@ import { formatDistance, formatDuration } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { SportGlyph } from "../brand/SportIcon";
 import { getSportColor } from "../../lib/sportColors";
-import { SPORT_LABELS, type SportType, type DaySummary } from "../../lib/types";
+import { sportLabel, type DaySummary } from "../../lib/types";
 import { buildMonthGrid, monthTitle, weekdayNames } from "../../lib/calendar";
 import { useMonthView, useToday } from "../../hooks/useToday";
+import { useT } from "../../lib/i18n";
+
+/** What a calendar pill and popup row call an activity. */
+const activityName = (a: { title: string | null; sport_type: string }) =>
+  a.title ?? sportLabel(a.sport_type);
 
 export function CalendarView() {
   useUnits();
+  const t = useT();
   // Live day: the "today" ring moves at midnight and the view follows a
   // month rollover while it shows the current month.
   const today = useToday();
@@ -73,10 +79,10 @@ export function CalendarView() {
         <span />
         <h2 className="cal-title capitalize">{monthLabel}</h2>
         <div className="cal-nav">
-          <button onClick={prevMonth} title="Previous month">
+          <button onClick={prevMonth} title={t("common.previousMonth")}>
             <ChevronLeft size={18} />
           </button>
-          <button onClick={nextMonth} title="Next month">
+          <button onClick={nextMonth} title={t("common.nextMonth")}>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -129,16 +135,14 @@ export function CalendarView() {
                       key={a.id}
                       className="cal-pill"
                       style={{ background: getSportColor(a.sport_type) }}
-                      title={a.title ?? SPORT_LABELS[a.sport_type as SportType] ?? a.sport_type}
+                      title={activityName(a)}
                       onClick={(e) => {
                         e.stopPropagation();
                         navigate(`/activity/${a.id}`);
                       }}
                     >
                       <SportGlyph sport={a.sport_type} size={11} />
-                      <span className="cal-pill-t">
-                        {a.title ?? SPORT_LABELS[a.sport_type as SportType] ?? a.sport_type}
-                      </span>
+                      <span className="cal-pill-t">{activityName(a)}</span>
                     </span>
                   ))}
                   {summary.activities.length > 4 && (
@@ -170,9 +174,7 @@ export function CalendarView() {
                         >
                           <SportGlyph sport={a.sport_type} size={14} />
                         </span>
-                        <span className="cal-pop-t">
-                          {a.title ?? SPORT_LABELS[a.sport_type as SportType] ?? a.sport_type}
-                        </span>
+                        <span className="cal-pop-t">{activityName(a)}</span>
                         <span className="cal-pop-m">
                           {a.distance_m != null
                             ? formatDistance(a.distance_m)

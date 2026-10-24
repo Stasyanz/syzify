@@ -44,6 +44,36 @@ describe("CalendarView in the interface language (#232)", () => {
       "Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom",
     ]);
   });
+
+  it("names a workout by its title, else by its sport in the language (#233)", async () => {
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const act1 = (id: string, sport_type: string, title: string | null) => ({
+      id, sport_type, title, distance_m: 5000, duration_s: 1800,
+    });
+    vi.mocked(api.getCalendarData).mockResolvedValue([
+      {
+        date,
+        activity_count: 3,
+        total_distance_m: 15000,
+        total_duration_s: 5400,
+        total_elev_gain_m: 0,
+        sport_types: ["run", "swim"],
+        activities: [act1("a", "run", "Темповая"), act1("b", "swim", null), act1("c", "kitesurf", null)],
+      },
+    ]);
+    act(() => useLanguageStore.getState().setPref("ru"));
+    const { container, findAllByText, getByTitle } = renderView();
+    await findAllByText("Плавание");
+    expect(Array.from(container.querySelectorAll(".cal-pill"), (el) => el.getAttribute("title"))).toEqual([
+      "Темповая", "Плавание", "kitesurf",
+    ]);
+    expect(Array.from(container.querySelectorAll(".cal-pop-t"), (el) => el.textContent)).toEqual([
+      "Темповая", "Плавание", "kitesurf",
+    ]);
+    getByTitle("Предыдущий месяц");
+    getByTitle("Следующий месяц");
+  });
 });
 
 describe("CalendarView day rollover", () => {

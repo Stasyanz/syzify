@@ -17,6 +17,8 @@
 // prefix → family, the remainder → model tokens ("6x" → "6X", "pro_solar" →
 // "Pro Solar", regional suffixes dropped).
 
+import { t } from "./i18n";
+
 /** Which silhouette to draw. The model is told apart by the label, not the drawing. */
 export type DeviceForm =
   | "watch_multi" // rugged round watch, five buttons: fenix, epix, Enduro, MARQ, tactix, Descent
@@ -69,56 +71,58 @@ interface GarminFamily {
   kind?: "handheld" | "pedals";
 }
 
-// Order matters: the first family whose prefix matches wins.
+// Order matters: the first family whose prefix matches wins. Model names,
+// the same in every language (#237) — hence `i18n-ignore` on each line.
 const GARMIN_FAMILIES: GarminFamily[] = [
-  { re: /^(?:fr|forerunner)[_ ]?(.*)$/, name: "Forerunner", form: "watch_round" },
-  { re: /^fenix[_ ]?(.*)$/, name: "fenix", form: "watch_multi" },
-  { re: /^epix[_ ]?(.*)$/, name: "epix", form: "watch_multi" },
-  { re: /^enduro[_ ]?(.*)$/, name: "Enduro", form: "watch_multi" },
-  { re: /^marq[_ ]?(.*)$/, name: "MARQ", form: "watch_multi" },
-  { re: /^tactix[_ ]?(.*)$/, name: "tactix", form: "watch_multi" },
-  { re: /^quatix[_ ]?(.*)$/, name: "quatix", form: "watch_multi" },
-  { re: /^descent[_ ]?(.*)$/, name: "Descent", form: "watch_multi" },
-  { re: /^instinct[_ ]?(.*)$/, name: "Instinct", form: "watch_instinct" },
-  { re: /^edge[_ ]?(.*)$/, name: "Edge", form: "bike_computer" },
-  { re: /^venu[_ ]?(sq.*)$/, name: "Venu", form: "watch_rect" },
-  { re: /^venu[_ ]?(.*)$/, name: "Venu", form: "watch_round" },
-  { re: /^vivo[_ ]?active[_ ]?(.*)$/, name: "vivoactive", form: "watch_round" },
-  { re: /^vivo[_ ]?move[_ ]?(.*)$/, name: "vivomove", form: "watch_round" },
-  { re: /^vivo[_ ]?smart[_ ]?(.*)$/, name: "vivosmart", form: "watch_rect" },
-  { re: /^vivo[_ ]?fit[_ ]?(.*)$/, name: "vivofit", form: "watch_rect" },
-  { re: /^vivo[_ ]?sport[_ ]?(.*)$/, name: "vivosport", form: "watch_rect" },
-  { re: /^vivo[_ ]?ki[_ ]?(.*)$/, name: "vivoki", form: "watch_rect" },
-  { re: /^lily[_ ]?(.*)$/, name: "Lily", form: "watch_round" },
-  { re: /^swim[_ ]?(.*)$/, name: "Swim", form: "watch_round" },
-  { re: /^legacy[_ ]?(.*)$/, name: "Legacy", form: "watch_round" },
-  { re: /^d2[_ ]?(.*)$/, name: "D2", form: "watch_round" },
-  { re: /^approach[_ ]?(s.*)$/, name: "Approach", form: "watch_round" },
-  { re: /^approach[_ ]?(.*)$/, name: "Approach", form: "generic" },
-  { re: /^(?:gpsmap|etrex|oregon|rino|foretrex|montana|inreach)[_ ]?(.*)$/, name: "handheld", form: "generic", kind: "handheld" },
-  { re: /^virb[_ ]?(.*)$/, name: "VIRB", form: "generic" },
-  { re: /^tacx[_ ]?(.*)$/, name: "Tacx", form: "generic" },
-  { re: /^(?:vector|rally)[_ ]?(.*)$/, name: "pedals", form: "generic", kind: "pedals" },
-  { re: /^varia[_ ]?(.*)$/, name: "Varia", form: "generic" },
-  { re: /^hrm[_ ]?(.*)$/, name: "HRM", form: "generic" },
-  { re: /^(?:connect|training_center|connectiq_simulator|android_antplus_plugin)$/, name: "Connect", form: "generic" },
+  { re: /^(?:fr|forerunner)[_ ]?(.*)$/, name: "Forerunner", form: "watch_round" }, // i18n-ignore
+  { re: /^fenix[_ ]?(.*)$/, name: "fenix", form: "watch_multi" }, // i18n-ignore
+  { re: /^epix[_ ]?(.*)$/, name: "epix", form: "watch_multi" }, // i18n-ignore
+  { re: /^enduro[_ ]?(.*)$/, name: "Enduro", form: "watch_multi" }, // i18n-ignore
+  { re: /^marq[_ ]?(.*)$/, name: "MARQ", form: "watch_multi" }, // i18n-ignore
+  { re: /^tactix[_ ]?(.*)$/, name: "tactix", form: "watch_multi" }, // i18n-ignore
+  { re: /^quatix[_ ]?(.*)$/, name: "quatix", form: "watch_multi" }, // i18n-ignore
+  { re: /^descent[_ ]?(.*)$/, name: "Descent", form: "watch_multi" }, // i18n-ignore
+  { re: /^instinct[_ ]?(.*)$/, name: "Instinct", form: "watch_instinct" }, // i18n-ignore
+  { re: /^edge[_ ]?(.*)$/, name: "Edge", form: "bike_computer" }, // i18n-ignore
+  { re: /^venu[_ ]?(sq.*)$/, name: "Venu", form: "watch_rect" }, // i18n-ignore
+  { re: /^venu[_ ]?(.*)$/, name: "Venu", form: "watch_round" }, // i18n-ignore
+  { re: /^vivo[_ ]?active[_ ]?(.*)$/, name: "vivoactive", form: "watch_round" }, // i18n-ignore
+  { re: /^vivo[_ ]?move[_ ]?(.*)$/, name: "vivomove", form: "watch_round" }, // i18n-ignore
+  { re: /^vivo[_ ]?smart[_ ]?(.*)$/, name: "vivosmart", form: "watch_rect" }, // i18n-ignore
+  { re: /^vivo[_ ]?fit[_ ]?(.*)$/, name: "vivofit", form: "watch_rect" }, // i18n-ignore
+  { re: /^vivo[_ ]?sport[_ ]?(.*)$/, name: "vivosport", form: "watch_rect" }, // i18n-ignore
+  { re: /^vivo[_ ]?ki[_ ]?(.*)$/, name: "vivoki", form: "watch_rect" }, // i18n-ignore
+  { re: /^lily[_ ]?(.*)$/, name: "Lily", form: "watch_round" }, // i18n-ignore
+  { re: /^swim[_ ]?(.*)$/, name: "Swim", form: "watch_round" }, // i18n-ignore
+  { re: /^legacy[_ ]?(.*)$/, name: "Legacy", form: "watch_round" }, // i18n-ignore
+  { re: /^d2[_ ]?(.*)$/, name: "D2", form: "watch_round" }, // i18n-ignore
+  { re: /^approach[_ ]?(s.*)$/, name: "Approach", form: "watch_round" }, // i18n-ignore
+  { re: /^approach[_ ]?(.*)$/, name: "Approach", form: "generic" }, // i18n-ignore
+  // `name` of the two `kind` families is never shown: their label is built apart.
+  { re: /^(?:gpsmap|etrex|oregon|rino|foretrex|montana|inreach)[_ ]?(.*)$/, name: "handheld", form: "generic", kind: "handheld" }, // i18n-ignore
+  { re: /^virb[_ ]?(.*)$/, name: "VIRB", form: "generic" }, // i18n-ignore
+  { re: /^tacx[_ ]?(.*)$/, name: "Tacx", form: "generic" }, // i18n-ignore
+  { re: /^(?:vector|rally)[_ ]?(.*)$/, name: "pedals", form: "generic", kind: "pedals" }, // i18n-ignore
+  { re: /^varia[_ ]?(.*)$/, name: "Varia", form: "generic" }, // i18n-ignore
+  { re: /^hrm[_ ]?(.*)$/, name: "HRM", form: "generic" }, // i18n-ignore
+  { re: /^(?:connect|training_center|connectiq_simulator|android_antplus_plugin)$/, name: "Connect", form: "generic" }, // i18n-ignore
 ];
 
-/** Keys whose enum spelling does not follow the grammar. */
+/** Keys whose enum spelling does not follow the grammar. Product names. */
 const GARMIN_ODD_KEYS: Record<string, { label: string; form: DeviceForm }> = {
-  d2airvenu: { label: "D2 Air", form: "watch_round" },
-  venusq: { label: "Venu Sq", form: "watch_rect" },
-  venusq2: { label: "Venu Sq 2", form: "watch_rect" },
-  venusq2music: { label: "Venu Sq 2 Music", form: "watch_rect" },
-  legacy_rey: { label: "Legacy Saga Rey", form: "watch_round" },
-  legacy_darth_vader: { label: "Legacy Saga Darth Vader", form: "watch_round" },
-  legacy_captain_marvel: { label: "Legacy Hero Captain Marvel", form: "watch_round" },
-  legacy_first_avenger: { label: "Legacy Hero First Avenger", form: "watch_round" },
-  edge_remote: { label: "Edge Remote", form: "generic" },
-  training_center: { label: "Training Center", form: "generic" },
-  connectiq_simulator: { label: "Connect IQ simulator", form: "generic" },
-  android_antplus_plugin: { label: "ANT+ plugin", form: "generic" },
-  connect: { label: "Connect", form: "generic" },
+  d2airvenu: { label: "D2 Air", form: "watch_round" }, // i18n-ignore
+  venusq: { label: "Venu Sq", form: "watch_rect" }, // i18n-ignore
+  venusq2: { label: "Venu Sq 2", form: "watch_rect" }, // i18n-ignore
+  venusq2music: { label: "Venu Sq 2 Music", form: "watch_rect" }, // i18n-ignore
+  legacy_rey: { label: "Legacy Saga Rey", form: "watch_round" }, // i18n-ignore
+  legacy_darth_vader: { label: "Legacy Saga Darth Vader", form: "watch_round" }, // i18n-ignore
+  legacy_captain_marvel: { label: "Legacy Hero Captain Marvel", form: "watch_round" }, // i18n-ignore
+  legacy_first_avenger: { label: "Legacy Hero First Avenger", form: "watch_round" }, // i18n-ignore
+  edge_remote: { label: "Edge Remote", form: "generic" }, // i18n-ignore
+  training_center: { label: "Training Center", form: "generic" }, // i18n-ignore
+  connectiq_simulator: { label: "Connect IQ simulator", form: "generic" }, // i18n-ignore
+  android_antplus_plugin: { label: "ANT+ plugin", form: "generic" }, // i18n-ignore
+  connect: { label: "Connect", form: "generic" }, // i18n-ignore
 };
 
 const GARMIN_HANDHELD_NAMES: Record<string, string> = {
@@ -231,15 +235,21 @@ const OTHER_MANUFACTURERS: Record<string, string> = {
 // Keyed by the creator string's first word, lowercased; the label is the
 // app's canonical spelling, so "RunKeeper" and "Runkeeper - http://…" are
 // one device in the library's filter, not two.
-const RECORDING_APPS: Record<string, { label: string; full_name: string; form: DeviceForm }> = {
-  workoutdoors: { label: "WorkOutDoors", full_name: "WorkOutDoors (Apple Watch app)", form: "watch_rect" },
-  athlytic: { label: "Athlytic", full_name: "Athlytic (Apple Watch app)", form: "watch_rect" },
-  // Phone apps: the recorder is a phone in a pocket, no watch silhouette.
-  stravagpx: { label: "Strava", full_name: "Strava app", form: "generic" },
-  strava: { label: "Strava", full_name: "Strava app", form: "generic" },
-  runkeeper: { label: "Runkeeper", full_name: "Runkeeper app", form: "generic" },
-  komoot: { label: "komoot", full_name: "komoot app", form: "generic" },
+// `form` says where it runs: a watch app's tooltip names the watch, a phone
+// app (the recorder is a phone in a pocket, no watch silhouette) is "app".
+const RECORDING_APPS: Record<string, { label: string; form: DeviceForm }> = {
+  workoutdoors: { label: "WorkOutDoors", form: "watch_rect" }, // i18n-ignore
+  athlytic: { label: "Athlytic", form: "watch_rect" }, // i18n-ignore
+  stravagpx: { label: "Strava", form: "generic" },
+  strava: { label: "Strava", form: "generic" },
+  runkeeper: { label: "Runkeeper", form: "generic" }, // i18n-ignore
+  komoot: { label: "komoot", form: "generic" }, // i18n-ignore
 };
+
+/** "WorkOutDoors (Apple Watch app)", "Strava app" — in the interface language. */
+function appFullName(app: { label: string; form: DeviceForm }): string {
+  return t(app.form === "watch_rect" ? "devices.watchApp" : "devices.phoneApp", { name: app.label });
+}
 
 /** Where an app's creator string stops naming the app: "Runkeeper - http://…",
  * "Komoot — iOS", "Strava (Android)", "StravaGPX Consent Strip". */
@@ -286,7 +296,7 @@ export function describeDevice(source: string | null | undefined): DeviceInfo | 
     const id = rest.trim();
     return {
       label: "Garmin",
-      full_name: id ? `Garmin (product ${id})` : "Garmin",
+      full_name: id ? t("devices.productId", { maker: "Garmin", id }) : "Garmin",
       form: "generic",
     };
   }
@@ -300,7 +310,7 @@ export function describeDevice(source: string | null | undefined): DeviceInfo | 
   const enumProduct = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)[ ]+(\d+)$/i.exec(text);
   if (enumProduct) {
     const maker = manufacturerName(enumProduct[1]);
-    return { label: maker, full_name: `${maker} (product ${enumProduct[2]})`, form: classify(maker) };
+    return { label: maker, full_name: t("devices.productId", { maker, id: enumProduct[2] }), form: classify(maker) };
   }
 
   // A recording app: its canonical name as the label, what it runs on in
@@ -309,7 +319,7 @@ export function describeDevice(source: string | null | undefined): DeviceInfo | 
   const words = text.split(APP_NAME_END);
   const app = RECORDING_APPS[words[0].toLowerCase()];
   const makerWithId = words.length === 2 && /^\d+$/.test(words[1]);
-  if (app && !makerWithId) return { label: app.label, full_name: app.full_name, form: app.form };
+  if (app && !makerWithId) return { label: app.label, full_name: appFullName(app), form: app.form };
 
   // A bare manufacturer enum ("Wahoo_fitness") or any free-form creator string.
   const enumOnly = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/i.exec(text);

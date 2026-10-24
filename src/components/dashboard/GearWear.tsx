@@ -5,6 +5,7 @@ import { api } from "../../lib/tauri";
 import { settingsPath } from "../../lib/settingsTabs";
 import { wearState, wearTip, wornItems, WEAR_COLORS } from "../../lib/gear";
 import { useUnits } from "../../lib/units";
+import { useT } from "../../lib/i18n";
 import { GearKindIcon } from "../activity/GearChip";
 
 /**
@@ -18,6 +19,7 @@ import { GearKindIcon } from "../activity/GearChip";
  */
 export function GearWear() {
   useUnits();
+  const t = useT();
   const navigate = useNavigate();
   const { data: items = [] } = useQuery({ queryKey: ["gear"], queryFn: () => api.listGear() });
   const worn = wornItems(items);
@@ -25,7 +27,7 @@ export function GearWear() {
 
   return (
     <div className="dash-card" data-testid="gear-wear">
-      <h3 className="mb-2">Gear wear</h3>
+      <h3 className="mb-2">{t("dashboard.gear.title")}</h3>
       {worn.map(({ item, wear }) => {
         const over = wearState(wear) === "over";
         return (
@@ -41,13 +43,13 @@ export function GearWear() {
                 navigate(settingsPath("garage"));
               }
             }}
-            aria-label={`${item.name}: ${wearTip(item, wear)}. Open the Garage`}
+            aria-label={t("dashboard.gear.open", { name: item.name, wear: wearTip(item, wear) })}
           >
             <span className="ic" aria-hidden="true">
               <GearKindIcon kind={item.kind} size={18} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="rl">{over ? "Worn out" : "Wearing out"}</div>
+              <div className="rl">{over ? t("dashboard.gear.wornOut") : t("dashboard.gear.wearingOut")}</div>
               <div className="flex items-baseline gap-2">
                 <span className="rv truncate">{item.name}</span>
                 <span className="text-xs text-muted font-num truncate">{wearTip(item, wear)}</span>

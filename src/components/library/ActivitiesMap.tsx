@@ -9,6 +9,7 @@ import {
   Popup,
   useMap,
   useMapEvents,
+  ZoomControl,
 } from "../map/leaflet";
 import L from "leaflet";
 import { Map, Mountain, Bike, Satellite, Moon, Layers, ChevronRight, Maximize, Minimize } from "lucide-react";
@@ -17,9 +18,10 @@ import { protocolBase } from "../../lib/protocolUrl";
 import { useActivityStore } from "../../stores/activityStore";
 import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
-import { SPORT_LABELS, type ActivityLocation, type SportType } from "../../lib/types";
+import { sportLabel, type ActivityLocation } from "../../lib/types";
 import { formatDistance, formatDuration } from "../../lib/format";
 import { useUnits } from "../../lib/units";
+import { formatNumber, useT } from "../../lib/i18n";
 import {
   clusterLocations,
   clusterSpreadMeters,
@@ -27,12 +29,13 @@ import {
   type Cluster,
 } from "./clusterLocations";
 
+// The name is the layer's `library.map.layer.<id>` message.
 const MAP_LAYERS = [
-  { id: "osm", name: "Standard", icon: Map },
-  { id: "topo", name: "Topo", icon: Mountain },
-  { id: "cycling", name: "Cycling", icon: Bike },
-  { id: "satellite", name: "Satellite", icon: Satellite },
-  { id: "dark", name: "Dark", icon: Moon },
+  { id: "osm", icon: Map },
+  { id: "topo", icon: Mountain },
+  { id: "cycling", icon: Bike },
+  { id: "satellite", icon: Satellite },
+  { id: "dark", icon: Moon },
 ] as const;
 
 type LayerId = (typeof MAP_LAYERS)[number]["id"];
@@ -126,7 +129,7 @@ function ActivityPopupRow({
   onOpen: (id: string) => void;
 }) {
   const color = getSportColor(loc.sport_type);
-  const label = SPORT_LABELS[loc.sport_type as SportType] ?? loc.sport_type;
+  const label = sportLabel(loc.sport_type);
   return (
     <button className="cal-pop-row" onClick={() => onOpen(loc.id)}>
       <span className="cal-pop-ic" style={{ background: color }}>
@@ -167,16 +170,18 @@ function ClusterMarker({
   const n = cluster.members.length;
   // Bucketed size like markercluster: bigger crowds get a bigger bubble.
   const size = n < 10 ? 34 : n < 100 ? 42 : 50;
+  // The language's digits and grouping ("1 234" in Russian).
+  const count = formatNumber(n, 0);
 
   const icon = useMemo(
     () =>
       L.divIcon({
-        // `n` is a number — nothing user-controlled reaches this HTML.
-        html: `<div class="mcl">${n}</div>`,
+        // `count` is a formatted number — nothing user-controlled reaches this HTML.
+        html: `<div class="mcl">${count}</div>`,
         className: "mcl-wrap",
         iconSize: [size, size],
       }),
-    [n, size],
+    [count, size],
   );
 
   const splittable =
@@ -220,6 +225,7 @@ function ClusterMarker({
 }
 
 function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: LayerId) => void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -231,7 +237,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
       <button
         onClick={() => setOpen((o) => !o)}
         className="bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2"
-        title="Change map layer"
+        title={t("library.map.changeLayer")}
       >
         <Layers size={18} className="text-muted" />
       </button>
@@ -252,7 +258,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
                 }`}
               >
                 <Icon size={14} />
-                {l.name}
+                {t(`library.map.layer.${l.id}`)}
               </button>
             );
           })}
@@ -264,6 +270,7 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
 
 export function ActivitiesMap() {
   useUnits();
+  const t = useT();
   const navigate = useNavigate();
   const filters = useActivityStore((s) => s.filters);
   // Zoom drives the aggregation level (real-estate-map style): far out one
@@ -333,7 +340,7 @@ export function ActivitiesMap() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full text-faint">
-        Loading map...
+        {t("library.map.loading")}
       </div>
     );
   }
@@ -341,7 +348,7 @@ export function ActivitiesMap() {
   if (locations.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-faint">
-        No activities with GPS data
+        {t("library.map.empty")}
       </div>
     );
   }
@@ -352,7 +359,9 @@ export function ActivitiesMap() {
         center={positions[0]}
         zoom={10}
         className="h-full w-full z-0"
+        zoomControl={false}
       >
+        <ZoomControl zoomInTitle={t("library.map.zoomIn")} zoomOutTitle={t("library.map.zoomOut")} />
         <TileLayer
           key={layer}
           attribution={ATTRIBUTIONS[layer]}
@@ -403,8 +412,8 @@ export function ActivitiesMap() {
         <button
           onClick={() => setIsFullscreen((f) => !f)}
           className="bg-card rounded-md shadow-md p-1.5 hover:bg-card-2 border border-border-2 tip-left"
-          data-tip={isFullscreen ? "Exit fullscreen" : "Fullscreen map"}
-          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen map"}
+          data-tip={isFullscreen ? t("library.map.exitFullscreen") : t("library.map.fullscreen")}
+          aria-label={isFullscreen ? t("library.map.exitFullscreen") : t("library.map.fullscreen")}
         >
           {isFullscreen ? (
             <Minimize size={18} className="text-muted" />

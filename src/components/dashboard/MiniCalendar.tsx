@@ -7,17 +7,18 @@ import { getSportColor } from "../../lib/sportColors";
 import { SportGlyph } from "../brand/SportIcon";
 import { formatDistance, formatDuration } from "../../lib/format";
 import { toDistance, distanceUnit, toElevation, elevationUnit, unitLabel, useUnits } from "../../lib/units";
-import { SPORT_LABELS, type SportType, type DaySummary, type RecoveryNight } from "../../lib/types";
+import { sportLabel, type DaySummary, type RecoveryNight } from "../../lib/types";
 import { buildMonthGrid, monthSports, monthTitle, weekdayNames } from "../../lib/calendar";
-import { formatNumber } from "../../lib/i18n";
+import { formatNumber, useT } from "../../lib/i18n";
 import { useInvalidateOnNewDay, useMonthView, useToday } from "../../hooks/useToday";
-import { BAND_LABEL, BAND_TOKEN, formatDelta } from "../../lib/recovery";
+import { bandLabel, BAND_TOKEN, formatDelta } from "../../lib/recovery";
 
 /** Compact month calendar with activity dots + per-activity hover popups.
  * A day with a recovery index (ADR 0002, #97) wears its band's color on
  * the cell border, and its popup opens with the night's numbers. */
 export function MiniCalendar() {
   useUnits();
+  const t = useT();
   // Live day: the "today" ring moves at midnight and the view follows a
   // month rollover while it shows the current month.
   const today = useToday();
@@ -86,15 +87,15 @@ export function MiniCalendar() {
     <div className="dash-card">
       <div className="flex gap-5">
         <div className="flex-1 min-w-0">
-          <h3 className="mb-0.5">Training calendar</h3>
+          <h3 className="mb-0.5">{t("dashboard.calendar.title")}</h3>
           <div className="cal-head">
             <span />
             <div className="cal-title">{monthLabel}</div>
             <div className="cal-nav">
-              <button onClick={() => shift(-1)} title="Previous month">
+              <button onClick={() => shift(-1)} title={t("common.previousMonth")}>
                 <ChevronLeft size={16} />
               </button>
-              <button onClick={() => shift(1)} title="Next month">
+              <button onClick={() => shift(1)} title={t("common.nextMonth")}>
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -152,7 +153,7 @@ export function MiniCalendar() {
                               <SportGlyph sport={a.sport_type} size={14} />
                             </span>
                             <span className="cal-pop-t">
-                              {a.title ?? SPORT_LABELS[a.sport_type as SportType] ?? a.sport_type}
+                              {a.title ?? sportLabel(a.sport_type)}
                             </span>
                             <span className="cal-pop-m">
                               {a.distance_m != null
@@ -174,24 +175,24 @@ export function MiniCalendar() {
         </div>
 
         <div className="cal-aside">
-          <div className="cal-aside-h">This month</div>
+          <div className="cal-aside-h">{t("dashboard.calendar.thisMonth")}</div>
           <div className="cal-sum">
             <div>
-              <div className="k">{sessions}</div>
-              <div className="l">Sessions</div>
+              <div className="k">{formatNumber(sessions, 0)}</div>
+              <div className="l">{t("dashboard.calendar.sessions")}</div>
             </div>
             <div>
               <div className="k">
                 {formatNumber(monthDistance, 0)}
                 <span>{unitLabel(distanceUnit())}</span>
               </div>
-              <div className="l">Distance</div>
+              <div className="l">{t("common.distance")}</div>
             </div>
             {/* No "h" suffix — the "Hours" label below already names the unit
                 (unlike Distance/Elev gain, whose labels don't carry km/m). */}
             <div>
               <div className="k">{formatNumber(monthHours, 1)}</div>
-              <div className="l">Hours</div>
+              <div className="l">{t("dashboard.calendar.hours")}</div>
             </div>
             {/* Hidden while zero: a flat-terrain (or elevation-less GPX)
                 month would otherwise pin a dead "0 m" row to the card. */}
@@ -201,12 +202,12 @@ export function MiniCalendar() {
                   {formatNumber(monthElevGain, 0)}
                   <span>{unitLabel(elevationUnit())}</span>
                 </div>
-                <div className="l">Elev gain</div>
+                <div className="l">{t("dashboard.calendar.elevGain")}</div>
               </div>
             )}
             <div>
-              <div className="k">{activeDays}</div>
-              <div className="l">Active days</div>
+              <div className="k">{formatNumber(activeDays, 0)}</div>
+              <div className="l">{t("dashboard.calendar.activeDays")}</div>
             </div>
           </div>
           {/* Only the sports actually present in the shown month */}
@@ -214,7 +215,7 @@ export function MiniCalendar() {
             {monthSports(days).map((s) => (
               <div key={s}>
                 <i style={{ background: getSportColor(s) }} />
-                {SPORT_LABELS[s as SportType] ?? s}
+                {sportLabel(s)}
               </div>
             ))}
           </div>
@@ -227,6 +228,7 @@ export function MiniCalendar() {
 /** The night's index with its band and the three components — the same
  * numbers as the dashboard card, one line each. */
 function RecoveryRow({ night }: { night: RecoveryNight }) {
+  const t = useT();
   const tint = `var(${BAND_TOKEN[night.band]})`;
   return (
     <div className="cal-pop-rec" data-testid="cal-pop-rec">
@@ -238,23 +240,30 @@ function RecoveryRow({ night }: { night: RecoveryNight }) {
           className="cal-pop-rec-band"
           style={{ color: tint, background: `var(${BAND_TOKEN[night.band]}-soft)` }}
         >
-          {BAND_LABEL[night.band]}
+          {bandLabel(night.band)}
         </span>
       </div>
       <div className="cal-pop-rec-line">
-        Night HR {Math.round(night.hr.night_median)} · base {Math.round(night.hr.baseline)} (
-        {formatDelta(night.hr.delta)})
+        {t("dashboard.recovery.nightHr", {
+          hr: Math.round(night.hr.night_median),
+          base: Math.round(night.hr.baseline),
+          delta: formatDelta(night.hr.delta),
+        })}
       </div>
       <div className="cal-pop-rec-line">
-        {night.stress ? `Stress ${Math.round(night.stress.night_avg)}` : "No stress data"}
+        {night.stress
+          ? t("dashboard.recovery.stress", { stress: Math.round(night.stress.night_avg) })
+          : t("dashboard.recovery.noStress")}
+        {" · "}
         {night.load
-          ? ` · Load yesterday ${Math.round(night.load.tss_yesterday)} TSS, CTL ${Math.round(
-              night.load.ctl,
-            )}`
-          : " · no training history"}
+          ? t("dashboard.recovery.load", {
+              tss: Math.round(night.load.tss_yesterday),
+              ctl: Math.round(night.load.ctl),
+            })
+          : t("dashboard.recovery.noLoad")}
       </div>
       {night.warning === "hr_above_baseline" && (
-        <div className="cal-pop-rec-warn">Night HR well above baseline</div>
+        <div className="cal-pop-rec-warn">{t("dashboard.recovery.warning")}</div>
       )}
     </div>
   );

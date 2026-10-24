@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Search, ArrowUpNarrowWide, ArrowDownNarrowWide } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { useActivityStore } from "../../stores/activityStore";
-import { SPORT_LABELS, SPORT_TYPES, type ActivityFilters } from "../../lib/types";
+import { sportLabel, SPORT_TYPES, type ActivityFilters } from "../../lib/types";
+import { formatNumber, useLanguageStore, useT } from "../../lib/i18n";
 import { SportIcon } from "../brand/SportIcon";
 import { Select } from "../ui/Select";
 import { DateField } from "../ui/DateField";
@@ -83,6 +84,8 @@ export function FilterDrawer() {
   // Subscribe so an always-mounted drawer relabels/reconverts on units change.
   const imperial = useUnits() === "imperial";
   const mPerDist = imperial ? M_PER_MILE : 1000;
+  const t = useT();
+  const language = useLanguageStore((s) => s.language);
 
   const [closing, setClosing] = useState(false);
   const close = () => {
@@ -97,10 +100,11 @@ export function FilterDrawer() {
     queryKey: ["usedSportTypes"],
     queryFn: () => api.getUsedSportTypes(),
   });
-  // Only show sports actually present in the library, alphabetically by label.
+  // Only show sports actually present in the library, alphabetically by
+  // label in the interface language.
   const usedSet = new Set(usedSports);
   const shownSports = SPORT_TYPES.filter((st) => usedSet.has(st)).sort((a, b) =>
-    SPORT_LABELS[a].localeCompare(SPORT_LABELS[b]),
+    sportLabel(a).localeCompare(sportLabel(b), language),
   );
   const { data: detectedDevices = [] } = useQuery({
     queryKey: ["detectedDevices"],
@@ -124,19 +128,20 @@ export function FilterDrawer() {
     mutationFn: async () => {
       const item = gearInUse.find((g) => g.id === bulkGear);
       // Retired or deleted since it was picked (the registry refreshed).
-      if (!item) throw new Error("That gear is no longer available — pick another");
+      if (!item) throw new Error(t("library.filter.bulkGone"));
       // Sort and paging are the list's; the backend ignores them, but the
       // confirmation counts the same set — what would change, not what
       // the list shows (the ones already on the item are not counted).
       const targets = await api.countGearTargets(filters, item.id);
       if (targets.eligible === 0) return { item, n: 0, none: true };
-      const moved = targets.moved_from.length
-        ? ` ${targets.moved_from.map((m) => `${m.count} from ${m.name}`).join(", ")} will be moved.`
-        : "";
+      const movedFrom = targets.moved_from.map((m) =>
+        t("library.filter.bulkMovedFrom", { count: m.count, name: m.name }),
+      );
+      const moved = movedFrom.length ? ` ${t("library.filter.bulkMoved", { list: movedFrom.join(", ") })}` : "";
       const ok = await confirmDialog({
-        title: `Put ${targets.eligible} activit${targets.eligible === 1 ? "y" : "ies"} on ${item.name}?`,
-        message: `Every activity matching the filters — all dates unless filtered — that is not on ${item.name} yet; multisport events are left out.${moved}`,
-        confirmLabel: "Assign",
+        title: t("library.filter.bulkTitle", { count: targets.eligible, name: item.name }),
+        message: t("library.filter.bulkMessage", { name: item.name }) + moved,
+        confirmLabel: t("library.filter.assign"),
       });
       if (!ok) return null;
       return { item, n: await api.assignGearToFiltered(filters, item.id), none: false };
@@ -144,14 +149,14 @@ export function FilterDrawer() {
     onSuccess: (done) => {
       if (!done) return;
       if (done.none) {
-        addToast("info", `Nothing to assign: every matching activity is on ${done.item.name} already, or cannot carry gear`);
+        addToast("info", t("library.filter.bulkNone", { name: done.item.name }));
         return;
       }
-      addToast("success", `${done.item.name} assigned to ${done.n} activit${done.n === 1 ? "y" : "ies"}`);
+      addToast("success", t("library.filter.bulkDone", { count: done.n, name: done.item.name }));
       invalidateActivityData(queryClient);
     },
     onError: (e: unknown) => {
-      addToast("error", `Could not assign gear: ${errorText(e)}`);
+      addToast("error", t("library.filter.bulkFailed", { error: errorText(e) }));
       // A pick the registry no longer has must not stay selected.
       if (!gearInUse.some((g) => g.id === bulkGear)) setBulkGear("");
     },
@@ -162,8 +167,8 @@ export function FilterDrawer() {
       <div className="filters-backdrop" onClick={close} />
       <div className={`filters${closing ? " closing" : ""}`}>
         <div className="filters-head">
-          <span style={{ fontSize: 13, fontWeight: 700 }}>Filters</span>
-          <span className="filters-x" onClick={close} title="Close">
+          <span style={{ fontSize: 13, fontWeight: 700 }}>{t("library.filter.title")}</span>
+          <span className="filters-x" onClick={close} title={t("common.close")}>
             <X size={16} />
           </span>
         </div>
@@ -173,24 +178,24 @@ export function FilterDrawer() {
               had no room to open. */}
           {viewMode === "list" && (
             <div className="fgroup">
-              <div className="fh">Sort by</div>
+              <div className="fh">{t("library.filter.sortBy")}</div>
               <div className="field">
                 <Select
-                  ariaLabel="Sort by"
+                  ariaLabel={t("library.filter.sortBy")}
                   className="flex-1"
                   value={filters.sort_by ?? "date"}
                   onChange={(v) => setFilters({ sort_by: v })}
                   options={[
-                    { value: "date", label: "Date" },
-                    { value: "distance", label: "Distance" },
-                    { value: "duration", label: "Duration" },
-                    { value: "elevation", label: "Elevation" },
+                    { value: "date", label: t("library.filter.sortDate") },
+                    { value: "distance", label: t("common.distance") },
+                    { value: "duration", label: t("common.duration") },
+                    { value: "elevation", label: t("common.elevation") },
                   ]}
                 />
                 <button
                   onClick={() => setFilters({ sort_dir: filters.sort_dir === "asc" ? "desc" : "asc" })}
                   className="grid place-items-center w-8 h-8 border border-border-2 rounded-[7px] bg-card text-muted hover:text-ink"
-                  title={filters.sort_dir === "asc" ? "Ascending" : "Descending"}
+                  title={filters.sort_dir === "asc" ? t("library.filter.ascending") : t("library.filter.descending")}
                 >
                   {filters.sort_dir === "asc" ? (
                     <ArrowUpNarrowWide size={16} />
@@ -210,12 +215,12 @@ export function FilterDrawer() {
                 type="text"
                 value={filters.search ?? ""}
                 onChange={(e) => setFilters({ search: e.target.value || undefined })}
-                placeholder="Search workouts…"
+                placeholder={t("library.filter.search")}
               />
               {filters.search && (
                 <span
                   className="fsearch-x"
-                  title="Clear search"
+                  title={t("library.filter.clearSearch")}
                   onClick={() => setFilters({ search: undefined })}
                 >
                   <X size={14} />
@@ -226,18 +231,18 @@ export function FilterDrawer() {
 
           {/* Sport */}
           <div className="fgroup">
-            <div className="fh">Sport</div>
+            <div className="fh">{t("library.filter.sport")}</div>
             <Select
               multiple
-              ariaLabel="Sport"
+              ariaLabel={t("library.filter.sport")}
               className="w-full"
               values={filters.sport_types ?? []}
               onChange={(vs) => setFilters({ sport_types: vs.length ? vs : undefined })}
-              placeholder="All sports"
-              clearLabel="All sports"
+              placeholder={t("library.filter.allSports")}
+              clearLabel={t("library.filter.allSports")}
               options={shownSports.map((st) => ({
                 value: st,
-                label: SPORT_LABELS[st],
+                label: sportLabel(st),
                 icon: <SportIcon sport={st} size={18} />,
               }))}
             />
@@ -246,21 +251,21 @@ export function FilterDrawer() {
           {/* Device */}
           {deviceGroups.length > 1 && (
             <div className="fgroup">
-              <div className="fh">Device</div>
+              <div className="fh">{t("library.filter.device")}</div>
               <Select
                 multiple
-                ariaLabel="Device"
+                ariaLabel={t("library.filter.device")}
                 className="w-full"
                 values={selectedDeviceKeys(deviceGroups, filters.devices ?? [])}
                 onChange={(keys) => {
                   const raws = devicesForKeys(deviceGroups, keys);
                   setFilters({ devices: raws.length ? raws : undefined });
                 }}
-                placeholder="All devices"
-                clearLabel="All devices"
+                placeholder={t("library.filter.allDevices")}
+                clearLabel={t("library.filter.allDevices")}
                 options={deviceGroups.map((g) => ({
                   value: g.key,
-                  label: `${g.label} (${g.count})`,
+                  label: `${g.label} (${formatNumber(g.count, 0)})`,
                   icon: <DeviceSilhouette form={g.form} size={18} />,
                 }))}
               />
@@ -270,22 +275,22 @@ export function FilterDrawer() {
           {/* Gear (ADR 0003) */}
           {gearItems.length > 0 && (
             <div className="fgroup">
-              <div className="fh">Gear</div>
+              <div className="fh">{t("library.filter.gear")}</div>
               <Select
                 multiple
-                ariaLabel="Gear"
+                ariaLabel={t("library.filter.gear")}
                 className="w-full"
                 values={filters.gear_ids ?? []}
                 onChange={(ids) => setFilters({ gear_ids: ids.length ? ids : undefined })}
-                placeholder="All gear"
-                clearLabel="All gear"
+                placeholder={t("library.filter.allGear")}
+                clearLabel={t("library.filter.allGear")}
                 options={[
                   ...gearItems.map((g) => ({
                     value: g.id,
-                    label: `${g.name}${g.retired_at ? " (retired)" : ""} (${g.stats.activities})`,
+                    label: `${g.retired_at ? t("library.filter.retired", { name: g.name }) : g.name} (${formatNumber(g.stats.activities, 0)})`,
                     icon: <GearKindIcon kind={g.kind} size={18} />,
                   })),
-                  { value: "", label: "No gear" },
+                  { value: "", label: t("library.filter.noGear") },
                 ]}
               />
               {/* The bulk action, once a filter narrows the library: put
@@ -295,12 +300,12 @@ export function FilterDrawer() {
               {viewMode === "list" && activeCount > 0 && gearInUse.length > 0 && (
                 <div className="mt-2 flex items-center gap-2" data-testid="bulk-gear">
                   <Select
-                    ariaLabel="Put the filtered activities on"
+                    ariaLabel={t("library.filter.putOn")}
                     className="min-w-0 flex-1"
                     value={bulkGear}
                     onChange={setBulkGear}
                     options={[
-                      { value: "", label: "Put them on…" },
+                      { value: "", label: t("library.filter.putOnPlaceholder") },
                       ...gearInUse.map((g) => ({ value: g.id, label: g.name, icon: <GearKindIcon kind={g.kind} size={16} /> })),
                     ]}
                   />
@@ -310,7 +315,7 @@ export function FilterDrawer() {
                     disabled={!bulkGear || bulkAssign.isPending}
                     onClick={() => bulkAssign.mutate()}
                   >
-                    {bulkAssign.isPending ? "Assigning…" : "Assign"}
+                    {bulkAssign.isPending ? t("library.filter.assigning") : t("library.filter.assign")}
                   </button>
                 </div>
               )}
@@ -319,32 +324,32 @@ export function FilterDrawer() {
 
           {/* GPS track */}
           <div className="fgroup">
-            <div className="fh">GPS track</div>
+            <div className="fh">{t("library.filter.gps")}</div>
             <div className="seg">
               <button
                 onClick={() => setFilters({ has_gps: undefined })}
                 className={filters.has_gps == null ? "on" : ""}
               >
-                Any
+                {t("library.filter.gpsAny")}
               </button>
               <button
                 onClick={() => setFilters({ has_gps: true })}
                 className={filters.has_gps === true ? "on" : ""}
               >
-                With
+                {t("library.filter.gpsWith")}
               </button>
               <button
                 onClick={() => setFilters({ has_gps: false })}
                 className={filters.has_gps === false ? "on" : ""}
               >
-                Without
+                {t("library.filter.gpsWithout")}
               </button>
             </div>
           </div>
 
           {/* Distance */}
           <div className="fgroup">
-            <div className="fh">Distance · {unitLabel(distanceUnit())}</div>
+            <div className="fh">{t("library.filter.distance", { unit: unitLabel(distanceUnit()) })}</div>
             <RangeField
               // Round the derived display value (3.1068… → 3.1); the exact
               // stored metres are untouched unless the field is edited.
@@ -365,7 +370,7 @@ export function FilterDrawer() {
 
           {/* Duration */}
           <div className="fgroup">
-            <div className="fh">Duration · min</div>
+            <div className="fh">{t("library.filter.duration", { unit: unitLabel("min") })}</div>
             <RangeField
               minValue={filters.duration_min != null ? filters.duration_min / 60 : undefined}
               maxValue={filters.duration_max != null ? filters.duration_max / 60 : undefined}
@@ -376,7 +381,7 @@ export function FilterDrawer() {
 
           {/* Elevation */}
           <div className="fgroup">
-            <div className="fh">Elevation · {unitLabel(elevationUnit())}</div>
+            <div className="fh">{t("library.filter.elevation", { unit: unitLabel(elevationUnit()) })}</div>
             <RangeField
               minValue={
                 filters.elev_gain_min != null
@@ -403,16 +408,16 @@ export function FilterDrawer() {
 
           {/* Date range */}
           <div className="fgroup">
-            <div className="fh">Date range</div>
+            <div className="fh">{t("library.filter.dateRange")}</div>
             <div className="fdates">
               <DateField
-                label="From"
+                label={t("library.filter.from")}
                 value={filters.date_from}
                 max={filters.date_to}
                 onChange={(v) => setFilters({ date_from: v })}
               />
               <DateField
-                label="To"
+                label={t("library.filter.to")}
                 align="right"
                 value={filters.date_to}
                 min={filters.date_from}
@@ -424,7 +429,7 @@ export function FilterDrawer() {
 
         <div className="filters-foot">
           <button className="filters-reset" onClick={resetFilters} disabled={activeCount === 0}>
-            Reset filters
+            {t("library.filter.reset")}
           </button>
         </div>
       </div>

@@ -68,7 +68,17 @@ pub fn get_thing(id: String, state: State<AppState>) -> Result<Thing, String> {
   test's `NOT_YET_TRANSLATED` counts what is left per file: translating
   lowers a count, and a new English string in JSX, a shown label or a toast
   fails the suite. Tables of names and strings a function returns are out
-  of its sight — `TRACKED_BY_HAND` lists those files.
+  of its sight — `TRACKED_BY_HAND` lists those files. A sentence with a
+  bold word or a link inside is ONE message, never two halves around it:
+  `const rt = useRichT()` and `rt("app.watch.found", { count, files:
+  <strong>…</strong> })` cut the message at its `{name}`s before filling,
+  so each translation puts the element where its word order wants it.
+  A sport's name is `sportLabel(id, fallback, t)` — the dictionaries'
+  `sport.<id>`; `fallback` (shown, so a message too, e.g.
+  `t("common.activity")`) is for an id the app does not know, and a
+  component passes its own `t` so the name and the sentence around it
+  speak one language. `SPORT_TYPES` must list every `SportType`, or `tsc`
+  names the one missing.
 - **Numbers, dates and units (#232)** follow the interface language, not
   the OS region: a shown number goes through `formatNumber` /
   `formatPercent`, a date through `formatDateTime` (all in `lib/i18n.ts`,

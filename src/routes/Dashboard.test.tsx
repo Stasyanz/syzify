@@ -25,6 +25,7 @@ vi.mock("../components/plugins/PluginContributions", () => ({
 
 import { DashboardPage } from "./Dashboard";
 import { api } from "../lib/tauri";
+import { useLanguageStore } from "../lib/i18n";
 
 const dashboard = {
   total_activities: 0,
@@ -91,5 +92,20 @@ describe("DashboardPage without data", () => {
     vi.mocked(api.getCalendarData).mockResolvedValue([]);
     const { getByText } = renderPage();
     await waitFor(() => getByText("No data available"));
+  });
+
+  it("says it is loading, and that there is nothing, in the interface language (#233)", async () => {
+    let answer: (d: DashboardData) => void = () => {};
+    vi.mocked(api.getDashboardData).mockReturnValue(new Promise((r) => (answer = r)));
+    vi.mocked(api.getCalendarData).mockResolvedValue([]);
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { getByText } = renderPage();
+      getByText("Загрузка обзора…");
+      act(() => answer(undefined as unknown as DashboardData));
+      await waitFor(() => getByText("Нет данных"));
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 });

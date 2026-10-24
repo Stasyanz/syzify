@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, render, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { api } from "../lib/tauri";
 import { UnlockModal } from "./UnlockModal";
+import { useLanguageStore } from "../lib/i18n";
 
 vi.mock("../lib/tauri", () => ({ api: { unlockVault: vi.fn() } }));
 
@@ -27,6 +28,25 @@ describe("UnlockModal", () => {
       expect(onUnlocked).not.toHaveBeenCalled();
     });
   }
+
+  it("asks in the interface language, switching as it changes (#233)", async () => {
+    let done: () => void = () => {};
+    vi.mocked(api.unlockVault).mockReturnValue(new Promise<void>((r) => (done = r)) as never);
+    try {
+      // Mounted in English, then switched: the modal sits above the keyed
+      // AppShell, so only its own subscription re-renders it.
+      render(<UnlockModal onUnlocked={vi.fn()} />);
+      screen.getByPlaceholderText("Password");
+      act(() => useLanguageStore.getState().setPref("ru"));
+      screen.getByText("Хранилище зашифровано. Введите пароль, чтобы открыть его.");
+      fireEvent.change(screen.getByPlaceholderText("Пароль"), { target: { value: "secret" } });
+      fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+      await screen.findByText("Открытие…");
+      done();
+    } finally {
+      act(() => useLanguageStore.getState().setPref("system"));
+    }
+  });
 
   it("unlocks and says nothing", async () => {
     vi.mocked(api.unlockVault).mockResolvedValue(undefined as never);

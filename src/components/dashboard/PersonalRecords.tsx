@@ -2,12 +2,36 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { Ruler, Clock, Mountain, Timer, Dumbbell, ChevronRight, type LucideIcon } from "lucide-react";
 import type { SportRecords, PersonalRecord } from "../../lib/types";
-import { SPORT_LABELS, type SportType } from "../../lib/types";
+import { sportLabel } from "../../lib/types";
 import { formatDistance, formatDurationHM, formatElevation, formatPace, formatWeight } from "../../lib/format";
-import { useUnits } from "../../lib/units";
+import { unitLabel, useUnits } from "../../lib/units";
+import { formatNumber, useT } from "../../lib/i18n";
+import type { MessageKey } from "../../locales/types";
 
 interface Props {
   recordsBySport: SportRecords[];
+}
+
+/** The distance classes the backend names a best by (db/dashboard.rs:
+ * running distances, triathlon classes), each by its message. */
+const PB_CLASSES = new Map<string, Extract<MessageKey, `dashboard.records.${string}`>>([
+  ["Ultra", "dashboard.records.ultra"],
+  ["Marathon", "dashboard.records.marathon"],
+  ["Half marathon", "dashboard.records.halfMarathon"],
+  ["Full distance", "dashboard.records.fullDistance"],
+  ["Half distance", "dashboard.records.halfDistance"],
+  ["Olympic", "dashboard.records.olympic"],
+  ["Sprint", "dashboard.records.sprint"],
+]);
+
+/** A distance best's label in the interface language: a class by its
+ * message, a race distance ("10 km" — kilometres whatever the units) with
+ * the language's symbol, anything else as the backend sent it. */
+function pbLabel(label: string, t: ReturnType<typeof useT>): string {
+  const key = PB_CLASSES.get(label);
+  if (key) return t(key);
+  const km = /^(\d+) km$/.exec(label);
+  return km ? `${formatNumber(Number(km[1]), 0)} ${unitLabel("km")}` : label;
 }
 
 function RecordRow({
@@ -43,6 +67,7 @@ function RecordRow({
 
 export function PersonalRecords({ recordsBySport }: Props) {
   useUnits();
+  const t = useT();
   const navigate = useNavigate();
   const goToActivity = (id: string) => navigate(`/activity/${id}`);
   const [sel, setSel] = useState(0);
@@ -50,9 +75,9 @@ export function PersonalRecords({ recordsBySport }: Props) {
   if (recordsBySport.length === 0) {
     return (
       <div className="dash-card">
-        <h3 className="mb-2">Personal records</h3>
+        <h3 className="mb-2">{t("dashboard.records.title")}</h3>
         <div className="flex h-32 items-center justify-center text-sm text-faint">
-          No records yet
+          {t("dashboard.records.empty")}
         </div>
       </div>
     );
@@ -65,7 +90,7 @@ export function PersonalRecords({ recordsBySport }: Props) {
 
   return (
     <div className="dash-card">
-      <h3 className="mb-2">Personal records</h3>
+      <h3 className="mb-2">{t("dashboard.records.title")}</h3>
       <div className="rec-filter">
         {recordsBySport.map((s, i) => (
           <span
@@ -73,7 +98,7 @@ export function PersonalRecords({ recordsBySport }: Props) {
             className={`chip${i === idx ? " on" : ""}`}
             onClick={() => setSel(i)}
           >
-            {SPORT_LABELS[s.sport_type as SportType] ?? s.sport_type}
+            {sportLabel(s.sport_type)}
           </span>
         ))}
       </div>
@@ -92,7 +117,7 @@ export function PersonalRecords({ recordsBySport }: Props) {
                 <Timer size={18} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="rl">{pb.label}</div>
+                <div className="rl">{pbLabel(pb.label, t)}</div>
                 <div className="rv truncate">
                   {formatDurationHM(pb.duration_s)}
                   <span> · {formatPace(pb.distance_m / pb.duration_s)}</span>
@@ -104,28 +129,28 @@ export function PersonalRecords({ recordsBySport }: Props) {
         ) : (
           <>
             <RecordRow
-              label="Heaviest set"
+              label={t("dashboard.records.heaviestSet")}
               icon={Dumbbell}
               record={r.heaviest_set}
               formatter={formatWeight}
               onClick={goToActivity}
             />
             <RecordRow
-              label="Longest distance"
+              label={t("dashboard.records.longestDistance")}
               icon={Ruler}
               record={r.longest_distance}
               formatter={(v) => formatDistance(v)}
               onClick={goToActivity}
             />
             <RecordRow
-              label="Longest duration"
+              label={t("dashboard.records.longestDuration")}
               icon={Clock}
               record={r.longest_duration}
               formatter={(v) => formatDurationHM(v)}
               onClick={goToActivity}
             />
             <RecordRow
-              label="Highest elevation"
+              label={t("dashboard.records.highestElevation")}
               icon={Mountain}
               record={r.highest_elevation}
               formatter={(v) => formatElevation(v)}

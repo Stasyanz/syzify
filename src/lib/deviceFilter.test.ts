@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { groupDevices, selectedDeviceKeys, devicesForKeys, NO_DEVICE } from "./deviceFilter";
 import type { DeviceStats } from "./types";
+import { useLanguageStore } from "./i18n";
 
 const stat = (device_name: string, activity_count: number): DeviceStats => ({
   device_name,
@@ -22,6 +23,15 @@ describe("groupDevices", () => {
       [NO_DEVICE, "No device", 12, "generic"],
     ]);
     expect(groups[0].raws).toEqual(["Garmin fenix6x", "Garmin fenix6x_asia"]);
+  });
+
+  it("names the no-device group in the interface language (#233)", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      expect(groupDevices([stat("", 3)]).map((g) => g.label)).toEqual(["Без устройства"]);
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
   });
 
   it("orders by count, the no-device group after a tie, then by label", () => {
