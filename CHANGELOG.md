@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
 ### Added
 - Syzify speaks Russian and Italian (#237). Pick the language in
   Settings → General → Language; System, the default, follows the
