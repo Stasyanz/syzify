@@ -30,6 +30,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 - The Full Disk Access hint now appears when macOS refuses access to a
   vault in Documents, Desktop or Downloads — it missed that refusal
   before (#244).
+- Plugin warnings, the notices on a plugin's page and the similar-segment
+  hint no longer show as light boxes in the dark theme (#248).
 
 ## [0.11.0] - 2026-10-19
 
