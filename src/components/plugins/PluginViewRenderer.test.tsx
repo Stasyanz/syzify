@@ -46,8 +46,8 @@ describe("PluginViewRenderer", () => {
     const notes = screen.getAllByRole("note");
     expect(notes).toHaveLength(3);
     expect(notes[0].className).toContain("bg-card");
-    expect(notes[1].className).toContain("amber");
-    expect(notes[2].className).toContain("red");
+    expect(notes[1].className).toContain("bg-warn-soft");
+    expect(notes[2].className).toContain("bg-danger-soft");
     expect(notes[2].textContent).toBe("Wrong password");
   });
 

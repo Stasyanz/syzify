@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { formatDistance } from "../../lib/format";
 import { useT } from "../../lib/i18n";
@@ -97,11 +98,14 @@ export function SaveSegmentPopover({
       <h3 className="!m-0 mb-2 text-sm font-bold">{t("activity.segment.save")}</h3>
 
       {similar && similar.length > 0 && (
-        <p className="mb-2 text-xs leading-snug text-amber-600">
-          {t("activity.segment.similar", {
-            name: similar[0].name,
-            distance: formatDistance(similar[0].distance_m),
-          })}
+        <p className="sd warn !mt-0 mb-2 leading-snug">
+          <AlertTriangle size={13} aria-hidden="true" />
+          <span>
+            {t("activity.segment.similar", {
+              name: similar[0].name,
+              distance: formatDistance(similar[0].distance_m),
+            })}
+          </span>
         </p>
       )}
 
