@@ -76,9 +76,21 @@ Earlier versions are on
 not signed with a paid vendor certificate yet, so each system asks once before
 it lets the app run.
 
+### macOS: Homebrew
+
+```bash
+brew install --cask stasyanz/syzify/syzify
+```
+
+This installs Syzify from the
+[project's tap](https://github.com/Stasyanz/homebrew-syzify) and clears the
+quarantine flag described below for you. If Syzify is already in Applications,
+add `--adopt`. The app keeps updating itself, so `brew upgrade` leaves it alone
+unless you pass `--greedy`.
+
 ### macOS: first launch
 
-Open the `.dmg` and drag Syzify into Applications. On the first launch
+Without Homebrew, open the `.dmg` and drag Syzify into Applications. On the first launch
 Gatekeeper may report that Syzify **“is damaged and can't be opened”**. The app
 is not damaged: it is not notarized by Apple, and macOS refuses any such app
 that arrived as a download. Clear the flag in Terminal and open the app again:
