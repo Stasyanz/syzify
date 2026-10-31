@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-31
+
 ### Added
 - Tracks recorded where GPS is jammed or spoofed are cleaned on import
   (#256): a teleport across town, or a minute of fixes racing in loops
@@ -26,6 +28,10 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   already in the vault stay as they are. What the cleaning drops is kept
   in the vault for a later version. Skiing, sailing and other fast
   sports are left as they are.
+
+### Documentation
+- Syzify installs with Homebrew on macOS:
+  `brew install --cask stasyanz/syzify/syzify` (README).
 
 ## [0.12.0] - 2026-10-28
 
