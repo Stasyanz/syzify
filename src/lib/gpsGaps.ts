@@ -3,10 +3,12 @@
  * fixes the import's sanity filter dropped. The rows are still there (they
  * carry heart rate, power, time) — only the position is gone. The map draws
  * a break across such a stretch instead of a straight line, and the
- * activity tells how long it lasted, since its distance is a guess.
+ * activity tells how long it lasted. The same rule breaks an exported GPX
+ * (`fixes_after_gaps` in `import/gps_clean.rs`).
  */
 
-/** A stretch is a gap once it lasts this long; shorter ones are noise. */
+/** A stretch is a gap once it lasts this long; shorter ones are noise. A
+ * step between two rows this long is a pause, and no time without GPS. */
 export const GPS_GAP_MIN_S = 30;
 
 export interface GpsGap {
@@ -25,9 +27,9 @@ interface Track {
 
 const hasFix = (tr: Track, i: number) => tr.lat[i] != null && tr.lon[i] != null;
 
-/** The gaps of a track with at least one fix, in order. A pause (no rows
- * at all between two fixes) is not a gap: nothing was recorded, nothing
- * was lost. */
+/** The gaps of a track with at least one fix, in order. A pause is not a
+ * gap, with or without a row beside it: nothing was recorded, nothing was
+ * lost. */
 export function gpsGaps(tr: Track): GpsGap[] {
   const n = tr.lat.length;
   const gaps: GpsGap[] = [];
@@ -41,11 +43,17 @@ export function gpsGaps(tr: Track): GpsGap[] {
     while (j < n && !hasFix(tr, j)) j++;
     const before = i - 1;
     const after = j;
-    // Time from the fix before (or the first row) to the fix after (or the last row).
-    const from = tr.t[before >= 0 ? before : i];
-    const to = tr.t[after < n ? after : n - 1];
-    if (from != null && to != null && to - from >= GPS_GAP_MIN_S && (before >= 0 || after < n)) {
-      gaps.push({ before, after, seconds: to - from });
+    // From the fix before (or the first row) to the fix after (or the last row).
+    const from = before >= 0 ? before : i;
+    const to = after < n ? after : n - 1;
+    if (tr.t[from] != null && tr.t[to] != null && (before >= 0 || after < n)) {
+      let seconds = 0;
+      for (let k = from; k < to; k++) {
+        const a = tr.t[k];
+        const b = tr.t[k + 1];
+        if (a != null && b != null && b - a < GPS_GAP_MIN_S) seconds += b - a;
+      }
+      if (seconds >= GPS_GAP_MIN_S) gaps.push({ before, after, seconds });
     }
     i = j;
   }

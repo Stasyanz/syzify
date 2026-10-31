@@ -813,7 +813,8 @@ pub fn import_bytes(
         &cleaning,
         speed_from_sensor,
         !parsed.legs.is_empty(),
-        file_figures.distance_m,
+        sm.as_ref().and_then(|s| s.total_distance_m),
+        raw_metrics.distance_m,
         &metrics,
         session_duration_s,
     );
@@ -972,6 +973,12 @@ pub fn import_bytes(
 
     // 9b. Insert laps if present
     if !parsed.laps.is_empty() {
+        recount_laps(
+            &mut parsed.laps,
+            &parsed.trackpoints,
+            gps.distance_m.is_some(),
+            gps.max_speed_mps.is_some(),
+        );
         db::laps::insert_laps(conn, &parsed.laps).map_err(|e| e.to_string())?;
     }
 
@@ -1195,7 +1202,7 @@ fn store_raw_file(
 }
 
 pub(crate) struct ComputedMetrics {
-    distance_m: Option<f64>,
+    pub(crate) distance_m: Option<f64>,
     duration_s: Option<f64>,
     elev_gain_m: Option<f64>,
     elev_loss_m: Option<f64>,
@@ -1207,20 +1214,26 @@ pub(crate) struct ComputedMetrics {
 }
 
 /// How far past the cleaned track the device's distance must run before the
-/// cleaned one replaces it: the device filters its fixes, so a raw sum is a
-/// few percent off on a good day — only a teleport puts it this far ahead.
-/// Capped, so a long ride's few percent can't hide a teleport's kilometres.
+/// cleaned one replaces it: the device filters its fixes and the track is
+/// chords, so the two differ by a little on any ride. Capped, so a long
+/// ride's percents can't hide a teleport's kilometres.
 const DEVICE_OVERCOUNT_SHARE: f64 = 0.03;
 const DEVICE_OVERCOUNT_MIN_M: f64 = 300.0;
 const DEVICE_OVERCOUNT_MAX_M: f64 = 1_000.0;
+/// The share of that overcount the dropped fixes must account for: a
+/// device far ahead of the chords across a jammed hour (an unnamed wheel, a
+/// watch's accelerometer) is right, whatever one small spike did.
+const DEVICE_OVERCOUNT_EXPLAINED: f64 = 0.5;
 
 /// The headline figures a GPS cleaning replaces (#256). Without a speed
 /// sensor the device measured distance and speed with the very fixes the
 /// cleaning threw out — a teleport is kilometres in its distance — so when
-/// its distance runs well past the cleaned track's, the cleaned figures
-/// win. With a sensor, or a multisport file whose legs carry the device's
-/// distances, the device's distance stands; a dropped speed sample still
-/// moves the maximum.
+/// its distance runs well past the cleaned track's and the dropped fixes
+/// are why, the cleaned figures win. A file without a summary (GPX) only
+/// ever had the sum of its fixes, so the cleaned sum always wins. With a
+/// sensor, or a multisport file whose legs carry the device's distances,
+/// the device's distance stands; a dropped speed sample still moves the
+/// maximum.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct GpsOverride {
     pub distance_m: Option<f64>,
@@ -1234,17 +1247,21 @@ pub(crate) fn gps_override(
     speed_from_sensor: bool,
     multisport: bool,
     device_distance_m: Option<f64>,
+    raw_distance_m: Option<f64>,
     metrics: &ComputedMetrics,
     duration_s: Option<f64>,
 ) -> GpsOverride {
-    let overcounted = match (device_distance_m, metrics.distance_m) {
+    let replaced = match (device_distance_m, metrics.distance_m) {
+        (None, _) => true,
         (Some(device), Some(cleaned)) => {
-            device - cleaned
-                > (DEVICE_OVERCOUNT_SHARE * cleaned).clamp(DEVICE_OVERCOUNT_MIN_M, DEVICE_OVERCOUNT_MAX_M)
+            let overcount = device - cleaned;
+            let dropped = raw_distance_m.unwrap_or(cleaned) - cleaned;
+            overcount > (DEVICE_OVERCOUNT_SHARE * cleaned).clamp(DEVICE_OVERCOUNT_MIN_M, DEVICE_OVERCOUNT_MAX_M)
+                && dropped >= DEVICE_OVERCOUNT_EXPLAINED * overcount
         }
-        _ => false,
+        (Some(_), None) => false,
     };
-    let distance_m = if cleaning.fixes.is_empty() || speed_from_sensor || multisport || !overcounted {
+    let distance_m = if cleaning.fixes.is_empty() || speed_from_sensor || multisport || !replaced {
         None
     } else {
         metrics.distance_m
@@ -1255,6 +1272,58 @@ pub(crate) fn gps_override(
     };
     let max_speed_mps = (!cleaning.speeds.is_empty()).then_some(metrics.max_speed_mps);
     GpsOverride { distance_m, avg_speed_mps, max_speed_mps }
+}
+
+/// Bring a file's laps in line with the figures a GPS cleaning replaced:
+/// the device's lap distances and maximums hold the same teleports. A lap
+/// runs from its start to the next lap's; a jump across a gap between fixes
+/// counts for the lap it lands in, as on the distance axis. A lap without a
+/// start keeps the device's figures. The file in the vault still has them.
+fn recount_laps(
+    laps: &mut [crate::models::lap::Lap],
+    tps: &[crate::models::trackpoint::TrackPoint],
+    distance: bool,
+    speed: bool,
+) {
+    if !distance && !speed {
+        return;
+    }
+    let parse = |s: &Option<String>| s.as_deref().and_then(db::trackpoints::parse_time_seconds);
+    // (time, cumulative distance, speed) of every timed row.
+    let mut rows = Vec::with_capacity(tps.len());
+    let (mut cum, mut prev): (f64, Option<(f64, f64)>) = (0.0, None);
+    for tp in tps {
+        if let (Some(lat), Some(lon)) = (tp.lat, tp.lon) {
+            if let Some((plat, plon)) = prev {
+                cum += haversine_m(plat, plon, lat, lon);
+            }
+            prev = Some((lat, lon));
+        }
+        if let Some(t) = parse(&tp.t) {
+            rows.push((t, cum, tp.speed_mps));
+        }
+    }
+    let starts: Vec<Option<f64>> = laps.iter().map(|l| parse(&l.start_time)).collect();
+    for (k, lap) in laps.iter_mut().enumerate() {
+        let Some(from) = starts[k] else { continue };
+        let to = starts.get(k + 1).copied().flatten().unwrap_or(f64::INFINITY);
+        let inside: Vec<_> = rows.iter().filter(|r| r.0 >= from && r.0 < to).collect();
+        let Some(end) = inside.last() else { continue };
+        if distance {
+            let before = rows.iter().rev().find(|r| r.0 < from).map_or(0.0, |r| r.1);
+            let d = end.1 - before;
+            lap.total_distance_m = Some(d);
+            lap.avg_speed_mps = match lap.total_timer_time_s {
+                Some(t) if t > 0.0 => Some(d / t),
+                _ => None,
+            };
+        }
+        if speed {
+            lap.max_speed_mps = inside.iter().filter_map(|r| r.2).fold(None, |m: Option<f64>, v| {
+                Some(m.map_or(v, |x| x.max(v)))
+            });
+        }
+    }
 }
 
 pub(crate) fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoint]) -> ComputedMetrics {
@@ -3222,6 +3291,28 @@ mod tests {
     }
 
     #[test]
+    fn the_laps_of_a_jammed_ride_are_recounted_on_import() {
+        use crate::parser::fit_builder::jammed_ride_with_laps_fixture;
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride_with_laps_fixture(&[11], &[(0, 780), (780, 1560)]));
+        let laps = crate::db::laps::get_laps(&conn, &a.id).unwrap();
+        assert_eq!(laps.len(), 2);
+        let sum: f64 = laps.iter().map(|l| l.total_distance_m.unwrap()).sum();
+        assert!((sum - a.distance_m.unwrap()).abs() < 1.0, "laps {sum} vs {:?}", a.distance_m);
+        assert_eq!(laps[0].max_speed_mps, Some(8.0));
+    }
+
+    #[test]
+    fn a_speed_sensor_leaves_the_laps_as_the_device_wrote_them() {
+        use crate::parser::fit_builder::jammed_ride_with_laps_fixture;
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride_with_laps_fixture(&[11, 123], &[(0, 780), (780, 1560)]));
+        let laps = crate::db::laps::get_laps(&conn, &a.id).unwrap();
+        assert_eq!(laps[0].total_distance_m, Some(15_000.0));
+        assert_eq!(laps[0].max_speed_mps, Some(65.0));
+    }
+
+    #[test]
     fn a_jammed_ride_keeps_what_the_cleaning_replaced() {
         let conn = crate::db::test_db();
         let a = import_fixture(&conn, &jammed_ride(&[11]));
@@ -3304,35 +3395,115 @@ mod tests {
     fn the_cleaned_distance_replaces_the_device_s_only_past_its_noise() {
         let cleaned = GpsCleaning { fixes: vec![5], speeds: vec![], dropped: vec![] };
         let m = metrics(10_000.0, Some(9.0));
+        // Raw 24 km: the dropped fixes hold 14 km, more than the device's excess.
         let over = |device: f64, sensor: bool, multisport: bool| {
-            gps_override(&cleaned, sensor, multisport, Some(device), &m, Some(1000.0)).distance_m
+            gps_override(&cleaned, sensor, multisport, Some(device), Some(24_000.0), &m, Some(1000.0)).distance_m
         };
         // A teleport's kilometres: replaced, and the average follows.
         assert_eq!(over(14_000.0, false, false), Some(10_000.0));
-        let o = gps_override(&cleaned, false, false, Some(14_000.0), &m, Some(1000.0));
+        let o = gps_override(&cleaned, false, false, Some(14_000.0), Some(24_000.0), &m, Some(1000.0));
         assert_eq!(o.avg_speed_mps, Some(10.0));
-        // A spike's few percent (the device filters, the raw sum doesn't): kept.
-        assert_eq!(over(10_250.0, false, false), None);
+        // Up to 300 m of difference is noise on a short ride: kept...
+        assert_eq!(over(10_300.0, false, false), None);
+        // ...and past it, replaced, though 3 % alone would have been 300 m too.
+        assert_eq!(over(10_301.0, false, false), Some(10_000.0));
+        let short = metrics(5_000.0, None);
+        let o = gps_override(&cleaned, false, false, Some(5_250.0), Some(9_000.0), &short, None);
+        assert_eq!(o.distance_m, None, "under 300 m though past 3 %");
         // A long ride: 3 % is 4.5 km, but a 3 km teleport still goes.
         let long = metrics(150_000.0, None);
-        let o = gps_override(&cleaned, false, false, Some(153_000.0), &long, Some(1000.0));
+        let o = gps_override(&cleaned, false, false, Some(153_000.0), Some(156_000.0), &long, Some(1000.0));
         assert_eq!(o.distance_m, Some(150_000.0));
-        // A device short of the track (a wheel the file did not name): kept.
+        // A device short of the track: kept.
         assert_eq!(over(9_000.0, false, false), None);
         // A speed sensor, or a multisport file's legs: kept.
         assert_eq!(over(14_000.0, true, false), None);
         assert_eq!(over(14_000.0, false, true), None);
         // Nothing dropped: nothing replaced.
-        assert_eq!(gps_override(&GpsCleaning::default(), false, false, Some(14_000.0), &m, None), GpsOverride::default());
+        let none = gps_override(&GpsCleaning::default(), false, false, Some(14_000.0), Some(24_000.0), &m, None);
+        assert_eq!(none, GpsOverride::default());
+    }
+
+    #[test]
+    fn a_device_far_ahead_for_another_reason_keeps_its_distance() {
+        // An unnamed wheel across 25 jammed minutes: 60 km against 55 km of
+        // chords. A 200 m spike's 400 m don't explain the 5 km: it stands.
+        let cleaned = GpsCleaning { fixes: vec![5], speeds: vec![], dropped: vec![] };
+        let m = metrics(55_000.0, None);
+        let o = gps_override(&cleaned, false, false, Some(60_000.0), Some(55_400.0), &m, Some(1000.0));
+        assert_eq!(o.distance_m, None);
+        // Half of the excess from dropped fixes is enough, a bit less is not.
+        let half = gps_override(&cleaned, false, false, Some(60_000.0), Some(57_500.0), &m, None);
+        assert_eq!(half.distance_m, Some(55_000.0));
+        let under = gps_override(&cleaned, false, false, Some(60_000.0), Some(57_400.0), &m, None);
+        assert_eq!(under.distance_m, None);
+    }
+
+    #[test]
+    fn a_file_without_a_summary_always_takes_the_cleaned_sum() {
+        // A GPX's raw sum is no device's figure: a 270 m spike goes with its fix.
+        let cleaned = GpsCleaning { fixes: vec![5], speeds: vec![], dropped: vec![] };
+        let m = metrics(5_000.0, None);
+        let o = gps_override(&cleaned, false, false, None, Some(5_270.0), &m, None);
+        assert_eq!(o.distance_m, Some(5_000.0));
     }
 
     #[test]
     fn dropped_speeds_replace_the_maximum_even_with_none_left() {
         let speeds = GpsCleaning { fixes: vec![5], speeds: vec![5], dropped: vec![] };
-        let o = gps_override(&speeds, false, false, None, &metrics(1.0, Some(9.0)), None);
+        let o = gps_override(&speeds, false, true, None, None, &metrics(1.0, Some(9.0)), None);
         assert_eq!(o.max_speed_mps, Some(Some(9.0)));
-        let o = gps_override(&speeds, false, false, None, &metrics(1.0, None), None);
+        let o = gps_override(&speeds, false, true, None, None, &metrics(1.0, None), None);
         assert_eq!(o.max_speed_mps, Some(None), "the device's 65 m/s must not come back");
+    }
+
+    fn lap(start: Option<i64>, timer_s: f64) -> crate::models::lap::Lap {
+        crate::models::lap::Lap {
+            start_time: start.and_then(|s| chrono::DateTime::from_timestamp(s, 0)).map(|d| d.to_rfc3339()),
+            total_timer_time_s: Some(timer_s),
+            total_distance_m: Some(30_000.0),
+            avg_speed_mps: Some(19.0),
+            max_speed_mps: Some(65.0),
+            ..Default::default()
+        }
+    }
+
+    /// 100 s at 8 m/s, the speed column 8, from unix 1000.
+    fn even_track() -> Vec<TrackPoint> {
+        (0..100)
+            .map(|k| {
+                let t = chrono::DateTime::from_timestamp(1000 + k, 0).map(|d| d.to_rfc3339());
+                let lat = 55.0 + 8.0 * k as f64 / 111_195.0;
+                make_tp("a", t.as_deref(), Some(lat), Some(37.0), None, Some(8.0), None)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn laps_follow_the_cleaned_track() {
+        let mut laps = vec![lap(Some(1000), 50.0), lap(Some(1050), 50.0), lap(None, 50.0)];
+        recount_laps(&mut laps, &even_track(), true, true);
+        // The first lap's last row is at 49 s, the second picks up the step over.
+        assert!((laps[0].total_distance_m.unwrap() - 392.0).abs() < 1.0);
+        assert!((laps[1].total_distance_m.unwrap() - 400.0).abs() < 1.0);
+        assert!((laps[1].avg_speed_mps.unwrap() - 8.0).abs() < 0.1);
+        assert_eq!(laps[0].max_speed_mps, Some(8.0));
+        // Without a start it can't be placed: the device's figures stay.
+        assert_eq!(laps[2].total_distance_m, Some(30_000.0));
+    }
+
+    #[test]
+    fn laps_change_only_where_the_figures_did() {
+        let mut laps = vec![lap(Some(1000), 100.0)];
+        recount_laps(&mut laps, &even_track(), false, false);
+        assert_eq!((laps[0].total_distance_m, laps[0].max_speed_mps), (Some(30_000.0), Some(65.0)));
+        // A dropped speed moves only the maximum.
+        recount_laps(&mut laps, &even_track(), false, true);
+        assert_eq!((laps[0].total_distance_m, laps[0].max_speed_mps), (Some(30_000.0), Some(8.0)));
+        // A lap past the end of the track has no rows to count.
+        let mut late = vec![lap(Some(9000), 100.0)];
+        recount_laps(&mut late, &even_track(), true, true);
+        assert_eq!(late[0].total_distance_m, Some(30_000.0));
     }
 
     #[test]

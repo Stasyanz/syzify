@@ -4,6 +4,12 @@
 //! (`db::gps_dropped`, so a later filter can undo it), and redo what read
 //! the old track: best efforts, segment efforts, a merged event's sums.
 //!
+//! NOT WIRED: 0.13.0 cleans new imports only, so a mistake of the filter
+//! can't reach anyone's whole history at once. Before calling [`run`] from
+//! `start_background_services`: recount stored laps as an import does (it
+//! leaves them), give the flag a retry for an activity that failed, and
+//! check the filter against the tracks people import until then.
+//!
 //! It works on the stored trackpoints, not the raw files — they still hold
 //! every fix an old import wrote, and the filter only ever drops one. The
 //! speed sensor comes from the stored sensor list, so the pass waits for
@@ -38,6 +44,7 @@ pub(crate) fn clean_stored(conn: &Connection, activity_id: &str) -> rusqlite::Re
 
     let tx = conn.unchecked_transaction()?;
     let mut tps = db::trackpoints::get_trackpoints(&tx, activity_id)?;
+    let raw_distance = compute_metrics(&tps).distance_m;
     let speed_from_sensor = db::activity_sensors::device_types_of(&tx, activity_id)?
         .iter()
         .any(|t| is_speed_sensor(t.as_deref()));
@@ -51,6 +58,7 @@ pub(crate) fn clean_stored(conn: &Connection, activity_id: &str) -> rusqlite::Re
         speed_from_sensor,
         multisport,
         activity.distance_m,
+        raw_distance,
         &compute_metrics(&tps),
         activity.duration_s,
     );

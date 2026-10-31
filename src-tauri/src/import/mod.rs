@@ -7,6 +7,7 @@ pub mod exercise_names_backfill;
 pub mod gear_keys_backfill;
 pub mod geocoding;
 pub mod gps_clean;
+#[allow(dead_code)] // not wired in 0.13.0: see the module's header
 pub mod gps_clean_backfill;
 pub mod pipeline;
 pub mod power_curve;

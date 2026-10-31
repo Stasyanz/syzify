@@ -17,6 +17,7 @@ pub const UINT32Z: u8 = 0x8C;
 /// Global message numbers used by the fixtures.
 pub const MSG_FILE_ID: u16 = 0;
 pub const MSG_SESSION: u16 = 18;
+pub const MSG_LAP: u16 = 19;
 pub const MSG_RECORD: u16 = 20;
 pub const MSG_DEVICE_INFO: u16 = 23;
 pub const MSG_MONITORING: u16 = 55;
@@ -267,6 +268,18 @@ pub type RidePoint = (i64, Option<(f64, f64)>, f64);
 /// ANT+ sensors (`antplus_device_type` numbers: 11 power, 121 speed and
 /// cadence, 123 speed).
 pub fn ride_fixture(points: &[RidePoint], distance_m: f64, max_speed_mps: f64, sensors: &[u8]) -> Vec<u8> {
+    ride_with_laps_fixture(points, distance_m, max_speed_mps, sensors, &[])
+}
+
+/// [`ride_fixture`] with laps given as (start, end) unix times; each claims
+/// the session's maximum and its share of the session's distance.
+pub fn ride_with_laps_fixture(
+    points: &[RidePoint],
+    distance_m: f64,
+    max_speed_mps: f64,
+    sensors: &[u8],
+    laps: &[(i64, i64)],
+) -> Vec<u8> {
     let start = points.first().map_or(1_788_555_600, |p| p.0);
     let end = points.last().map_or(start, |p| p.0);
     let semicircles = |deg: f64| Val::I32((deg * 2f64.powi(31) / 180.0).round() as i32);
@@ -286,6 +299,23 @@ pub fn ride_fixture(points: &[RidePoint], distance_m: f64, max_speed_mps: f64, s
             Some((lat, lon)) => b.data(2, &[Val::U32(fit_ts(t)), semicircles(lat), semicircles(lon), mm_s(v)]),
             None => b.data(3, &[Val::U32(fit_ts(t)), mm_s(v)]),
         };
+    }
+    // lap: start_time, elapsed + timer (ms), distance (cm), max speed (mm/s).
+    b.define(5, MSG_LAP, &[F_TIMESTAMP, (2, 4, UINT32), (7, 4, UINT32), (8, 4, UINT32), (9, 4, UINT32), (14, 2, UINT16)]);
+    for &(from, to) in laps {
+        let ms = (to - from) as u32 * 1000;
+        let share = distance_m / laps.len() as f64;
+        b.data(
+            5,
+            &[
+                Val::U32(fit_ts(to)),
+                Val::U32(fit_ts(from)),
+                Val::U32(ms),
+                Val::U32(ms),
+                Val::U32((share * 100.0).round() as u32),
+                mm_s(max_speed_mps),
+            ],
+        );
     }
     // session: start_time, sport (cycling), elapsed + timer (ms), distance (cm), max speed (mm/s).
     b.define(
@@ -315,13 +345,19 @@ pub fn ride_fixture(points: &[RidePoint], distance_m: f64, max_speed_mps: f64, s
 /// teleport in its 30 km distance and a 65 m/s maximum. Cleaned, it is
 /// 1200 fixes over 12 472 m (4792 + a 2888 m bridge + 4792).
 pub fn jammed_ride_fixture(sensors: &[u8]) -> Vec<u8> {
+    jammed_ride_with_laps_fixture(sensors, &[])
+}
+
+/// [`jammed_ride_fixture`] with laps at these seconds from its start.
+pub fn jammed_ride_with_laps_fixture(sensors: &[u8], laps: &[(i64, i64)]) -> Vec<u8> {
     let t0 = 1_788_555_600;
     let north = |m: f64| (55.0 + m / 111_195.0, 37.0);
     let mut pts: Vec<RidePoint> = (0..600).map(|k| (t0 + k, Some(north(8.0 * k as f64)), 8.0)).collect();
     pts.extend((600..900).map(|k| (t0 + k, None, 0.0)));
     pts.extend((900..960).map(|k| (t0 + k, Some(north(20_000.0 + 27.0 * (k - 900) as f64)), 27.0)));
     pts.extend((960..1560).map(|k| (t0 + k, Some(north(8.0 * k as f64)), 8.0)));
-    ride_fixture(&pts, 30_000.0, 65.0, sensors)
+    let laps: Vec<(i64, i64)> = laps.iter().map(|&(a, b)| (t0 + a, t0 + b)).collect();
+    ride_with_laps_fixture(&pts, 30_000.0, 65.0, sensors, &laps)
 }
 
 /// A FIT file of a type the importer does not handle.

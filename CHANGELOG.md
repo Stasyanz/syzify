@@ -12,14 +12,20 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   at 100 km/h on flat ground, is dropped, and a ride, run, walk or hike
   keeps the route it could physically have taken (an open-water swim and
   a paddle too). A fast descent stays — the barometer shows it losing
-  height — and so does a track where it can't be told which part is
-  real. Without a speed sensor, when the device counted the teleports in
-  its distance, the distance and speeds come from the cleaned track. The
-  map, the share image and an exported GPX break the line where the GPS
-  was gone instead of drawing it straight across, and the summary says
-  how long that was. Activities imported before are cleaned once on the
-  next start; what the cleaning drops is kept in the vault, so it can be
-  put back. Skiing, sailing and other fast sports are left as they are.
+  height — but without an altitude on the track a bike's fake loops
+  can't be told from one and stay too. Only short pieces go: a track
+  where a piece longer than three minutes would have to go is left as it
+  is, teleport and all, since a jump looks the same on a train. Without a
+  speed sensor, when the fixes dropped account for the device's excess,
+  the distance, speeds and laps come from the cleaned track; a GPX, with
+  no device figures, always takes the cleaned sum, and any file without
+  a summary now counts its distance across gaps in the fixes too.
+  The map, the share image and an exported GPX break the line where the
+  GPS was gone instead of drawing it straight across, and the summary
+  says how long that was. Only new imports are cleaned: activities
+  already in the vault stay as they are. What the cleaning drops is kept
+  in the vault for a later version. Skiing, sailing and other fast
+  sports are left as they are.
 
 ## [0.12.0] - 2026-10-28
 

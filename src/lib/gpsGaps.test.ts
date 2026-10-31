@@ -50,6 +50,30 @@ describe("gpsGaps", () => {
   });
 });
 
+describe("gpsGaps beside a pause", () => {
+  it("does not take a pause with a lone row without a fix for lost GPS", () => {
+    // The real ride that said "No GPS for 44 minutes": a stop, one row without a fix.
+    const tr = {
+      t: [0, 1, 2, 2304, 2305],
+      lat: [55, 55, null, 55.01, 55.01],
+      lon: [37, 37, null, 37, 37],
+    };
+    expect(gpsGaps(tr)).toEqual([]);
+    expect(secondsWithoutGps(tr)).toBe(0);
+    expect(fixRuns(tr).map((r) => r.length)).toEqual([4]);
+  });
+
+  it("counts the jammed minute and not the pause next to it", () => {
+    const n = 61;
+    const tr = {
+      t: Array.from({ length: n }, (_, i) => (i === 60 ? 900 : i)),
+      lat: Array.from({ length: n }, (_, i) => (i === 0 || i === 60 ? 55 : null)),
+      lon: Array.from({ length: n }, (_, i) => (i === 0 || i === 60 ? 37 : null)),
+    };
+    expect(gpsGaps(tr)).toEqual([{ before: 0, after: 60, seconds: 59 }]);
+  });
+});
+
 describe("fixRuns", () => {
   it("breaks the line at a gap inside the track only", () => {
     const tr = track(300, (i) => (i >= 20 && i < 100) || (i >= 200 && i < 280));

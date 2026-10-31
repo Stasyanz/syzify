@@ -58,15 +58,23 @@ describe("segmentPositions", () => {
   });
 
   it("breaks at a GPS gap inside the range, like the route (#256)", () => {
-    const gapped = { ...track, t: [0, 1, 2, 60, 61] };
-    expect(segmentPositions(gapped, [0, 4])).toEqual([
+    // Fixes at 0, 1, 40, 41; a row a second without a fix between them.
+    const n = 42;
+    const fix = (i: number) => i < 2 || i >= 40;
+    const gapped = {
+      ...track,
+      t: Array.from({ length: n }, (_, i) => i),
+      lat: Array.from({ length: n }, (_, i) => (fix(i) ? 55 + i : null)),
+      lon: Array.from({ length: n }, (_, i) => (fix(i) ? 37 + i : null)),
+    };
+    expect(segmentPositions(gapped, [0, n - 1])).toEqual([
       [
-        [55.0, 37.0],
-        [55.1, 37.1],
+        [55, 37],
+        [56, 38],
       ],
       [
-        [55.3, 37.3],
-        [55.4, 37.4],
+        [95, 77],
+        [96, 78],
       ],
     ]);
   });

@@ -78,6 +78,10 @@ pub fn clear(
 
 /// Put back everything the cleaning took off the activity: the dropped
 /// values and the figures it replaced. `false` when it had taken nothing.
+/// No caller in the app yet: the one that comes must redo what read the
+/// track too (best efforts, segment efforts, a merged event's sums), and
+/// take a file's laps from the raw file — their originals are not kept here.
+#[allow(dead_code)]
 pub fn restore(conn: &Connection, activity_id: &str) -> Result<bool> {
     let points = conn.execute(
         "UPDATE trackpoint SET \

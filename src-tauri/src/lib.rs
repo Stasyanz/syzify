@@ -438,8 +438,6 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
         import::device_backfill::run(&state);
         import::gear_keys_backfill::run(&state);
         import::exercise_names_backfill::run(&state);
-        // After the gear keys: it reads the sensor lists they stored.
-        import::gps_clean_backfill::run(&state);
         run_monitoring_recompute(&state);
         let conn = match state.db.lock() {
             Ok(c) => c,
