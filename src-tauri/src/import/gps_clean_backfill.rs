@@ -204,6 +204,8 @@ mod tests {
         let conn = db::test_db();
         stored_jammed_ride(&conn, "a1", "ski", &[]);
         assert!(!clean_stored(&conn, "a1").unwrap());
+        // Nor is an activity deleted since the list was taken.
+        assert!(!clean_stored(&conn, "gone").unwrap());
         assert_eq!(figures(&conn, "a1"), (Some(30_000.0), Some(19.2), Some(65.0), 1260));
     }
 

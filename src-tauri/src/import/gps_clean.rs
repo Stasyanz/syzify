@@ -646,6 +646,13 @@ mod tests {
     }
 
     #[test]
+    fn a_track_of_nothing_but_jumps_is_left_alone() {
+        // Every fix 5 km from the last: no piece is long enough to trust.
+        let track: Vec<Pt> = (0..40).map(|k| (k as f64, Some(((k % 2) as f64 * 5_000.0, 0.0)))).collect();
+        assert!(rejected(&track, BIKE).is_empty());
+    }
+
+    #[test]
     fn a_fast_vehicle_track_is_left_alone() {
         // A drive filed as a ride: mostly 30 m/s on the flat. Rejecting most
         // of it would leave nothing, so the filter steps aside.
@@ -798,6 +805,20 @@ mod tests {
         let mut cleaned = trackpoints(&track, 8.0);
         let c = clean_trackpoints(&mut cleaned, &SportType::Ride, false);
         assert_eq!(c.speeds, vec![100, 150]);
+    }
+
+    #[test]
+    fn a_speed_on_a_lone_fix_is_held_to_the_top_speed() {
+        // Smart recording, a fix every 7 s at 9 m/s: no other fix within the
+        // window to compare with, so only a speed past the top one goes.
+        let mut track: Vec<Pt> = (0..300).map(|k| (7.0 * k as f64, Some((63.0 * k as f64, 0.0)))).collect();
+        track[100].1 = Some((63.0 * 100.0, 20_000.0)); // makes it a cleaned track
+        let mut tps = trackpoints(&track, 9.0);
+        tps[200].speed_mps = Some(30.0);
+        tps[201].speed_mps = Some(20.0);
+        let c = clean_trackpoints(&mut tps, &SportType::Ride, false);
+        assert_eq!(c.speeds, vec![100, 200]);
+        assert_eq!(tps[201].speed_mps, Some(20.0));
     }
 
     #[test]
