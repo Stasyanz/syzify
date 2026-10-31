@@ -32,6 +32,8 @@ jobs:
       # a re-tag — its manifest-assembly script is tested on every push.
       - name: Release publish-script test
         run: bash scripts/test_release_manifest.sh
+      - name: Homebrew cask update-script test
+        run: bash scripts/test_update_cask.sh
       # Tokenless uploads are rate-limited and the token secret only exists
       # on the public repo, so skip the upload when CI runs on the test repo.
       - name: Upload coverage to Codecov

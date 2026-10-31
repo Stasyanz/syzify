@@ -63,4 +63,5 @@ Next:
   1. Review & polish CHANGELOG.md.
   2. git add -A && git commit -m "chore(release): v$VERSION"
   3. git tag v$VERSION
+  4. Once the release is published: scripts/update-cask.sh $VERSION
 EOF

@@ -253,6 +253,9 @@ Two workflows in `.github/workflows/`:
 Cutting a release: `scripts/release.sh <X.Y.Z>` → review the CHANGELOG → commit →
 `git tag vX.Y.Z` → `git push origin main vX.Y.Z` triggers `release.yml`. Push the
 tag explicitly — `git push --tags` would also publish any stale local tags.
+Once the release is published, `scripts/update-cask.sh <X.Y.Z>` points the
+[Homebrew cask](https://github.com/Stasyanz/homebrew-syzify) at it, using the
+dmg digests GitHub computed on upload; commit and push the tap by hand.
 
 ## License
 
