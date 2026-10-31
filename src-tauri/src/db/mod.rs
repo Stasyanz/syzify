@@ -6,6 +6,7 @@ pub mod dbcrypt;
 pub mod exercise_sets;
 pub mod gear;
 pub mod gear_rules;
+pub mod gps_dropped;
 pub mod hrv_samples;
 pub mod laps;
 pub mod migrations;

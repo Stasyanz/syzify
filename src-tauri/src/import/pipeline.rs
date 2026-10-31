@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 use crate::db;
 use crate::import::dedup;
+use crate::import::gps_clean::{self, GpsCleaning};
+use crate::models::trackpoint::ReplacedFigures;
 use crate::models::activity::Activity;
 use crate::models::raw_file::{FileFormat, ParseStatus, RawFile};
 use crate::parser;
@@ -721,7 +723,7 @@ pub fn import_bytes(
     // and routed on its file_id: Garmin's all-day Monitor files (ADR 0002)
     // take their own path, anything that is neither an activity nor
     // monitoring is refused, and an activity's records go straight on.
-    let parsed = match format {
+    let mut parsed = match format {
         FileFormat::Gpx => parser::gpx::parse_gpx_bytes(effective_bytes, &activity_id)?,
         FileFormat::Fit => {
             let messages = parser::monitoring::parse_fit_messages(effective_bytes)?;
@@ -766,8 +768,6 @@ pub fn import_bytes(
         }
     };
 
-    let metrics = compute_metrics(&parsed.trackpoints);
-
     let sub_sport = parsed
         .session_metrics
         .as_ref()
@@ -775,18 +775,62 @@ pub fn import_bytes(
     let sport =
         crate::models::activity::SportType::resolve(parsed.sport_type.as_deref(), sub_sport);
 
-    // Session metrics from FIT file take priority over computed metrics.
+    // 6b. Drop the fixes a jammed or spoofed GPS made up (#256) before
+    // anything reads the track.
+    // The track's own figures as it came, for a file without a summary
+    // (GPX): what the cleaning replaces, and what a restore puts back.
+    let raw_metrics = compute_metrics(&parsed.trackpoints);
+    let speed_from_sensor = gps_clean::has_speed_sensor(&parsed.sensors);
+    let cleaning = gps_clean::clean_trackpoints(&mut parsed.trackpoints, &sport, speed_from_sensor);
+    let metrics = compute_metrics(&parsed.trackpoints);
+
+    // Session metrics from FIT file take priority over computed metrics —
+    // except the GPS figures the cleaning proved wrong.
     // Duration prefers the session's timer time — what the device showed,
     // pauses excluded — over wall-clock elapsed time; a paused ride would
     // otherwise report hours it never recorded.
     let sm = &parsed.session_metrics;
-    let dedup_distance = sm.as_ref().and_then(|s| s.total_distance_m).or(metrics.distance_m);
     let session_duration_s = preferred_duration_s(sm.as_ref(), metrics.duration_s);
+    // The figures as the file has them; the cleaning's replace them, and
+    // what they replaced is kept (`gps_dropped::record`).
+    let file_figures = {
+        let distance_m = sm.as_ref().and_then(|s| s.total_distance_m).or(raw_metrics.distance_m);
+        ReplacedFigures {
+            distance_m,
+            avg_speed_mps: sm
+                .as_ref()
+                .and_then(|s| s.avg_speed_mps)
+                .or(raw_metrics.avg_speed_mps)
+                // Fall back to overall average when the source omits avg speed.
+                .or_else(|| match (distance_m, session_duration_s) {
+                    (Some(d), Some(t)) if d > 0.0 && t > 0.0 => Some(d / t),
+                    _ => None,
+                }),
+            max_speed_mps: sm.as_ref().and_then(|s| s.max_speed_mps).or(raw_metrics.max_speed_mps),
+        }
+    };
+    let gps = gps_override(
+        &cleaning,
+        speed_from_sensor,
+        !parsed.legs.is_empty(),
+        file_figures.distance_m,
+        &metrics,
+        session_duration_s,
+    );
+    let distance_m = gps.distance_m.or(file_figures.distance_m);
 
-    if let Some(existing_id) =
-        dedup::find_content_duplicate(conn, &start_time, sport.as_str(), dedup_distance, session_duration_s, false)
-            .map_err(|e| e.to_string())?
-    {
+    // A copy of this ride may be stored under either distance: the device's
+    // (a source that carries its summary, an import before #256) or the
+    // cleaned one.
+    let find_duplicate = |d: Option<f64>| {
+        dedup::find_content_duplicate(conn, &start_time, sport.as_str(), d, session_duration_s, false)
+            .map_err(|e| e.to_string())
+    };
+    let mut duplicate = find_duplicate(file_figures.distance_m)?;
+    if duplicate.is_none() && gps.distance_m.is_some() {
+        duplicate = find_duplicate(gps.distance_m)?;
+    }
+    if let Some(existing_id) = duplicate {
         // Still store the raw file, LINKED to the existing activity — an
         // unlinked (NULL) row would survive delete_activity forever: its GPS
         // bytes stay in raw/ and its hash blocks any reimport.
@@ -835,23 +879,12 @@ pub fn import_bytes(
         sport_type: sport.as_str().to_string(),
         title,
         notes: None,
-        distance_m: sm.as_ref().and_then(|s| s.total_distance_m).or(metrics.distance_m),
+        distance_m,
         duration_s: session_duration_s,
         elev_gain_m: sm.as_ref().and_then(|s| s.total_ascent_m).or(metrics.elev_gain_m),
         elev_loss_m: sm.as_ref().and_then(|s| s.total_descent_m).or(metrics.elev_loss_m),
-        avg_speed_mps: sm
-            .as_ref()
-            .and_then(|s| s.avg_speed_mps)
-            .or(metrics.avg_speed_mps)
-            // Fall back to overall average when the source omits avg speed.
-            .or_else(|| {
-                let d = sm.as_ref().and_then(|s| s.total_distance_m).or(metrics.distance_m);
-                match (d, session_duration_s) {
-                    (Some(d), Some(t)) if d > 0.0 && t > 0.0 => Some(d / t),
-                    _ => None,
-                }
-            }),
-        max_speed_mps: sm.as_ref().and_then(|s| s.max_speed_mps).or(metrics.max_speed_mps),
+        avg_speed_mps: gps.avg_speed_mps.or(file_figures.avg_speed_mps),
+        max_speed_mps: gps.max_speed_mps.unwrap_or(file_figures.max_speed_mps),
         avg_hr: sm.as_ref().and_then(|s| s.avg_hr).or(metrics.avg_hr),
         max_hr: sm.as_ref().and_then(|s| s.max_hr).or(metrics.max_hr),
         // A cadence that averages to 0 over the records is no sensor (#224).
@@ -921,6 +954,11 @@ pub fn import_bytes(
 
     // 9. Insert trackpoints in batches
     db::trackpoints::insert_trackpoints(conn, &parsed.trackpoints).map_err(|e| e.to_string())?;
+    if !cleaning.is_empty() {
+        let replaced = (gps != GpsOverride::default()).then_some(&file_figures);
+        db::gps_dropped::record(conn, &activity_id, parsed.trackpoints.len(), &cleaning.dropped, replaced)
+            .map_err(|e| e.to_string())?;
+    }
 
     // 9a. Best-effort splits (running only) and the mean-max power curve —
     // both computed from the stored track so cumulative distance / elapsed
@@ -1156,7 +1194,7 @@ fn store_raw_file(
     Ok(format!("raw/{}", dest_name))
 }
 
-struct ComputedMetrics {
+pub(crate) struct ComputedMetrics {
     distance_m: Option<f64>,
     duration_s: Option<f64>,
     elev_gain_m: Option<f64>,
@@ -1168,7 +1206,58 @@ struct ComputedMetrics {
     avg_cadence: Option<f64>,
 }
 
-fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoint]) -> ComputedMetrics {
+/// How far past the cleaned track the device's distance must run before the
+/// cleaned one replaces it: the device filters its fixes, so a raw sum is a
+/// few percent off on a good day — only a teleport puts it this far ahead.
+/// Capped, so a long ride's few percent can't hide a teleport's kilometres.
+const DEVICE_OVERCOUNT_SHARE: f64 = 0.03;
+const DEVICE_OVERCOUNT_MIN_M: f64 = 300.0;
+const DEVICE_OVERCOUNT_MAX_M: f64 = 1_000.0;
+
+/// The headline figures a GPS cleaning replaces (#256). Without a speed
+/// sensor the device measured distance and speed with the very fixes the
+/// cleaning threw out — a teleport is kilometres in its distance — so when
+/// its distance runs well past the cleaned track's, the cleaned figures
+/// win. With a sensor, or a multisport file whose legs carry the device's
+/// distances, the device's distance stands; a dropped speed sample still
+/// moves the maximum.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct GpsOverride {
+    pub distance_m: Option<f64>,
+    pub avg_speed_mps: Option<f64>,
+    /// `Some` replaces the maximum — `Some(None)` when no speed is left.
+    pub max_speed_mps: Option<Option<f64>>,
+}
+
+pub(crate) fn gps_override(
+    cleaning: &GpsCleaning,
+    speed_from_sensor: bool,
+    multisport: bool,
+    device_distance_m: Option<f64>,
+    metrics: &ComputedMetrics,
+    duration_s: Option<f64>,
+) -> GpsOverride {
+    let overcounted = match (device_distance_m, metrics.distance_m) {
+        (Some(device), Some(cleaned)) => {
+            device - cleaned
+                > (DEVICE_OVERCOUNT_SHARE * cleaned).clamp(DEVICE_OVERCOUNT_MIN_M, DEVICE_OVERCOUNT_MAX_M)
+        }
+        _ => false,
+    };
+    let distance_m = if cleaning.fixes.is_empty() || speed_from_sensor || multisport || !overcounted {
+        None
+    } else {
+        metrics.distance_m
+    };
+    let avg_speed_mps = match (distance_m, duration_s) {
+        (Some(d), Some(t)) if t > 0.0 => Some(d / t),
+        _ => None,
+    };
+    let max_speed_mps = (!cleaning.speeds.is_empty()).then_some(metrics.max_speed_mps);
+    GpsOverride { distance_m, avg_speed_mps, max_speed_mps }
+}
+
+pub(crate) fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoint]) -> ComputedMetrics {
     if trackpoints.is_empty() {
         return ComputedMetrics {
             distance_m: None,
@@ -1183,16 +1272,18 @@ fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoint]) -> Com
         };
     }
 
-    // Distance (haversine)
+    // Distance (haversine) from each fix to the previous one, across the
+    // points without a fix — the same sum the stored track's cumulative
+    // distance makes (`get_trackpoints_columnar`), so the headline figure
+    // and the end of the distance axis agree.
     let mut total_distance = 0.0;
-    for i in 1..trackpoints.len() {
-        if let (Some(lat1), Some(lon1), Some(lat2), Some(lon2)) = (
-            trackpoints[i - 1].lat,
-            trackpoints[i - 1].lon,
-            trackpoints[i].lat,
-            trackpoints[i].lon,
-        ) {
-            total_distance += haversine_m(lat1, lon1, lat2, lon2);
+    let mut prev_fix: Option<(f64, f64)> = None;
+    for tp in trackpoints {
+        if let (Some(lat), Some(lon)) = (tp.lat, tp.lon) {
+            if let Some((plat, plon)) = prev_fix {
+                total_distance += haversine_m(plat, plon, lat, lon);
+            }
+            prev_fix = Some((lat, lon));
         }
     }
 
@@ -3083,6 +3174,177 @@ mod tests {
         ).unwrap();
         assert_eq!(activities.len(), 0);
 
+    }
+
+    use crate::parser::fit_builder::jammed_ride_fixture as jammed_ride;
+
+    fn import_fixture(conn: &Connection, bytes: &[u8]) -> Activity {
+        let vault = fresh_vault("gps_clean_import");
+        let outcome = import_bytes(conn, &vault, "/rides/jammed.fit", bytes, None).unwrap();
+        assert!(matches!(outcome, ImportOutcome::Imported));
+        let id: String = conn.query_row("SELECT id FROM activity", [], |r| r.get(0)).unwrap();
+        crate::db::activities::get_activity_by_id(conn, &id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_jammed_ride_imports_with_the_cleaned_track_and_figures() {
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride(&[11]));
+        // 4792 m + a 2888 m bridge across the gap + 4792 m; the teleport is gone.
+        let d = a.distance_m.unwrap();
+        assert!((d - 12_472.0).abs() < 15.0, "distance {d}");
+        assert!((a.avg_speed_mps.unwrap() - d / 1559.0).abs() < 1e-6);
+        assert_eq!(a.max_speed_mps, Some(8.0));
+        let (fixes, fast): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(lat), COUNT(CASE WHEN speed_mps > 25 THEN 1 END) FROM trackpoint WHERE activity_id = ?1",
+                [&a.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((fixes, fast), (1200, 0));
+        // The stored track's distance axis ends where the headline does.
+        let cols = crate::db::trackpoints::get_trackpoints_columnar(&conn, &a.id).unwrap();
+        let end = cols.distance_m.iter().rev().find_map(|v| *v).unwrap();
+        assert!((end - d).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_speed_sensor_keeps_the_device_distance_of_a_jammed_ride() {
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride(&[11, 123]));
+        assert_eq!(a.distance_m, Some(30_000.0));
+        assert_eq!(a.max_speed_mps, Some(65.0));
+        let fixes: i64 = conn
+            .query_row("SELECT COUNT(lat) FROM trackpoint WHERE activity_id = ?1", [&a.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fixes, 1200, "the map still loses the teleport");
+    }
+
+    #[test]
+    fn a_jammed_ride_keeps_what_the_cleaning_replaced() {
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride(&[11]));
+        let (dropped, replaced): (i64, f64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM gps_dropped WHERE activity_id = ?1), \
+                 (SELECT distance_m FROM gps_replaced_figures WHERE activity_id = ?1)",
+                [&a.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        // 60 teleported fixes and the 300 jammed seconds' GPS speeds.
+        assert_eq!((dropped, replaced), (360, 30_000.0));
+        assert!(crate::db::gps_dropped::restore(&conn, &a.id).unwrap());
+        let back = crate::db::activities::get_activity_by_id(&conn, &a.id).unwrap().unwrap();
+        assert_eq!((back.distance_m, back.max_speed_mps), (Some(30_000.0), Some(65.0)));
+    }
+
+    #[test]
+    fn a_gpx_with_a_teleport_is_cleaned_and_can_be_put_back() {
+        // No session in a GPX: the raw track's own sum is what gets replaced.
+        let pts: String = (0..600)
+            .map(|k| {
+                let (lat, lon) = if k == 300 { (55.0, 37.08) } else { (55.0 + 8.0 * k as f64 / 111_195.0, 37.0) };
+                format!(
+                    "<trkpt lat=\"{lat:.7}\" lon=\"{lon:.7}\"><time>2026-09-04T08:{:02}:{:02}Z</time></trkpt>",
+                    k / 60,
+                    k % 60
+                )
+            })
+            .collect();
+        let gpx = format!(
+            "<?xml version=\"1.0\"?><gpx version=\"1.1\" creator=\"t\" xmlns=\"http://www.topografix.com/GPX/1/1\">\
+             <trk><type>cycling</type><trkseg>{pts}</trkseg></trk></gpx>"
+        );
+        let conn = crate::db::test_db();
+        let vault = fresh_vault("gps_clean_gpx");
+        let outcome = import_bytes(&conn, &vault, "/rides/spike.gpx", gpx.as_bytes(), None).unwrap();
+        assert!(matches!(outcome, ImportOutcome::Imported));
+        let id: String = conn.query_row("SELECT id FROM activity", [], |r| r.get(0)).unwrap();
+        let d = |c: &Connection| -> f64 {
+            c.query_row("SELECT distance_m FROM activity WHERE id = ?1", [&id], |r| r.get(0)).unwrap()
+        };
+        assert!((d(&conn) - 4_792.0).abs() < 5.0, "cleaned distance {}", d(&conn));
+        assert!(crate::db::gps_dropped::restore(&conn, &id).unwrap());
+        assert!(d(&conn) > 14_000.0, "the raw sum with the spike's ~10 km is back: {}", d(&conn));
+    }
+
+    #[test]
+    fn a_copy_stored_under_the_device_distance_is_still_a_duplicate() {
+        // The same ride imported before #256 carries the device's 30 km.
+        let conn = crate::db::test_db();
+        let a = import_fixture(&conn, &jammed_ride(&[11]));
+        conn.execute("UPDATE activity SET distance_m = 30000.0 WHERE id = ?1", [&a.id]).unwrap();
+        let vault = fresh_vault("gps_clean_dup");
+        // A second file of the same ride (another sensor list = other bytes).
+        let outcome = import_bytes(&conn, &vault, "/rides/again.fit", &jammed_ride(&[11, 11]), None).unwrap();
+        assert!(matches!(outcome, ImportOutcome::Skipped));
+        // And one stored under the cleaned distance is found too.
+        conn.execute("UPDATE activity SET distance_m = 12472.0 WHERE id = ?1", [&a.id]).unwrap();
+        let third = import_bytes(&conn, &vault, "/rides/third.fit", &jammed_ride(&[11, 11, 11]), None).unwrap();
+        assert!(matches!(third, ImportOutcome::Skipped));
+    }
+
+    fn metrics(distance_m: f64, max_speed_mps: Option<f64>) -> ComputedMetrics {
+        ComputedMetrics {
+            distance_m: Some(distance_m),
+            duration_s: Some(1000.0),
+            elev_gain_m: None,
+            elev_loss_m: None,
+            avg_speed_mps: None,
+            max_speed_mps,
+            avg_hr: None,
+            max_hr: None,
+            avg_cadence: None,
+        }
+    }
+
+    #[test]
+    fn the_cleaned_distance_replaces_the_device_s_only_past_its_noise() {
+        let cleaned = GpsCleaning { fixes: vec![5], speeds: vec![], dropped: vec![] };
+        let m = metrics(10_000.0, Some(9.0));
+        let over = |device: f64, sensor: bool, multisport: bool| {
+            gps_override(&cleaned, sensor, multisport, Some(device), &m, Some(1000.0)).distance_m
+        };
+        // A teleport's kilometres: replaced, and the average follows.
+        assert_eq!(over(14_000.0, false, false), Some(10_000.0));
+        let o = gps_override(&cleaned, false, false, Some(14_000.0), &m, Some(1000.0));
+        assert_eq!(o.avg_speed_mps, Some(10.0));
+        // A spike's few percent (the device filters, the raw sum doesn't): kept.
+        assert_eq!(over(10_250.0, false, false), None);
+        // A long ride: 3 % is 4.5 km, but a 3 km teleport still goes.
+        let long = metrics(150_000.0, None);
+        let o = gps_override(&cleaned, false, false, Some(153_000.0), &long, Some(1000.0));
+        assert_eq!(o.distance_m, Some(150_000.0));
+        // A device short of the track (a wheel the file did not name): kept.
+        assert_eq!(over(9_000.0, false, false), None);
+        // A speed sensor, or a multisport file's legs: kept.
+        assert_eq!(over(14_000.0, true, false), None);
+        assert_eq!(over(14_000.0, false, true), None);
+        // Nothing dropped: nothing replaced.
+        assert_eq!(gps_override(&GpsCleaning::default(), false, false, Some(14_000.0), &m, None), GpsOverride::default());
+    }
+
+    #[test]
+    fn dropped_speeds_replace_the_maximum_even_with_none_left() {
+        let speeds = GpsCleaning { fixes: vec![5], speeds: vec![5], dropped: vec![] };
+        let o = gps_override(&speeds, false, false, None, &metrics(1.0, Some(9.0)), None);
+        assert_eq!(o.max_speed_mps, Some(Some(9.0)));
+        let o = gps_override(&speeds, false, false, None, &metrics(1.0, None), None);
+        assert_eq!(o.max_speed_mps, Some(None), "the device's 65 m/s must not come back");
+    }
+
+    #[test]
+    fn a_clean_ride_keeps_the_device_figures() {
+        use crate::parser::fit_builder::{ride_fixture, RidePoint};
+        let conn = crate::db::test_db();
+        let t0 = 1_788_555_600;
+        let pts: Vec<RidePoint> =
+            (0..600).map(|k| (t0 + k, Some((55.0 + 8.0 * k as f64 / 111_195.0, 37.0)), 8.0)).collect();
+        let a = import_fixture(&conn, &ride_fixture(&pts, 4_850.0, 9.5, &[]));
+        assert_eq!(a.distance_m, Some(4_850.0));
+        assert_eq!(a.max_speed_mps, Some(9.5));
     }
 
     /// Smoke: import one real file into a throwaway vault and print the

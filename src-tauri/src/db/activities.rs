@@ -543,6 +543,24 @@ pub fn set_power_metrics(
     Ok(())
 }
 
+/// The distance and speeds measured on a cleaned GPS track (#256). `None`
+/// leaves a figure as it is; `max_speed_mps: Some(None)` clears the maximum.
+pub fn set_gps_figures(
+    conn: &Connection,
+    id: &str,
+    distance_m: Option<f64>,
+    avg_speed_mps: Option<f64>,
+    max_speed_mps: Option<Option<f64>>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE activity SET distance_m = COALESCE(?1, distance_m), \
+         avg_speed_mps = COALESCE(?2, avg_speed_mps), \
+         max_speed_mps = CASE WHEN ?3 THEN ?4 ELSE max_speed_mps END WHERE id = ?5",
+        params![distance_m, avg_speed_mps, max_speed_mps.is_some(), max_speed_mps.flatten(), id],
+    )?;
+    Ok(())
+}
+
 /// The activity's power summary, `None` when there is no such activity.
 pub fn power_summary(conn: &Connection, id: &str) -> Result<Option<PowerSummary>> {
     conn.query_row(

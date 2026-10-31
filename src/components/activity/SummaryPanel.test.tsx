@@ -67,3 +67,28 @@ describe("SummaryPanel elevation tile", () => {
     }
   });
 });
+
+describe("SummaryPanel time without GPS (#256)", () => {
+  it("says how long the GPS was gone and that the map leaves it out", () => {
+    const { container } = render(<SummaryPanel activity={makeActivity("ride")} noGpsSeconds={23 * 60 + 10} />);
+    expect(container.textContent).toContain("No GPS for 23 minutes — those stretches are missing from the map");
+  });
+
+  it("says nothing under a minute or without the figure", () => {
+    const short = render(<SummaryPanel activity={makeActivity("ride")} noGpsSeconds={45} />);
+    expect(short.container.textContent).not.toContain("No GPS");
+    cleanup();
+    const none = render(<SummaryPanel activity={makeActivity("ride")} />);
+    expect(none.container.textContent).not.toContain("No GPS");
+  });
+
+  it("speaks the interface language", () => {
+    useLanguageStore.getState().setPref("ru");
+    try {
+      const { container } = render(<SummaryPanel activity={makeActivity("ride")} noGpsSeconds={5 * 60} />);
+      expect(container.textContent).toContain("5 минут без GPS — этого на карте нет");
+    } finally {
+      useLanguageStore.getState().setPref("system");
+    }
+  });
+});

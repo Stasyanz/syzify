@@ -184,6 +184,17 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
     Ok(cols)
 }
 
+/// The activities with at least one GPS fix.
+pub fn activities_with_fixes(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id FROM activity a WHERE EXISTS \
+         (SELECT 1 FROM trackpoint t WHERE t.activity_id = a.id AND t.lat IS NOT NULL) \
+         ORDER BY a.start_time",
+    )?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 /// Just the geometry columns, in the SAME `ORDER BY id ASC` as
 /// [`get_trackpoints_columnar`] — the segment feature addresses trackpoints
 /// by index across both reads, so their row order must never diverge.

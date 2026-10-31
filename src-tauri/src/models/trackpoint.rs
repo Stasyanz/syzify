@@ -25,6 +25,25 @@ pub struct TrackPoint {
     pub right_pedal_smoothness: Option<f64>,
 }
 
+/// What the GPS cleaning (#256) took off one trackpoint, addressed by its
+/// index in the activity's track: the position and the speed it dropped,
+/// `None` for a value it left alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroppedGps {
+    pub index: usize,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub speed_mps: Option<f64>,
+}
+
+/// An activity's distance and speeds before the cleaned track replaced them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplacedFigures {
+    pub distance_m: Option<f64>,
+    pub avg_speed_mps: Option<f64>,
+    pub max_speed_mps: Option<f64>,
+}
+
 /// Geometry+time columnar read: same row order (and therefore the same
 /// index space) as [`TrackPointColumns`], without the other columns. The
 /// segment feature builds polylines and times efforts from this.

@@ -24,6 +24,13 @@ pub fn serials_of(conn: &Connection, activity_id: &str) -> Result<Vec<String>> {
     rows.collect()
 }
 
+/// The device types of the sensors an activity's file named.
+pub fn device_types_of(conn: &Connection, activity_id: &str) -> Result<Vec<Option<String>>> {
+    let mut stmt = conn.prepare("SELECT device_type FROM activity_sensor WHERE activity_id = ?1")?;
+    let rows = stmt.query_map(params![activity_id], |r| r.get::<_, Option<String>>(0))?;
+    rows.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,6 +54,7 @@ mod tests {
         // A second write is the new truth, not an addition.
         replace(&conn, "a1", &[sensor("222", "bike_speed")]).unwrap();
         assert_eq!(serials_of(&conn, "a1").unwrap(), vec!["222"]);
+        assert_eq!(device_types_of(&conn, "a1").unwrap(), vec![Some("bike_speed".to_string())]);
         conn.execute("DELETE FROM activity WHERE id = 'a1'", []).unwrap();
         let left: i64 = conn.query_row("SELECT count(*) FROM activity_sensor", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);

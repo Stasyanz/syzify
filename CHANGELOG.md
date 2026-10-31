@@ -6,6 +6,21 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Tracks recorded where GPS is jammed or spoofed are cleaned on import
+  (#256): a teleport across town, or a minute of fixes racing in loops
+  at 100 km/h on flat ground, is dropped, and a ride, run, walk or hike
+  keeps the route it could physically have taken (an open-water swim and
+  a paddle too). A fast descent stays — the barometer shows it losing
+  height — and so does a track where it can't be told which part is
+  real. Without a speed sensor, when the device counted the teleports in
+  its distance, the distance and speeds come from the cleaned track. The
+  map, the share image and an exported GPX break the line where the GPS
+  was gone instead of drawing it straight across, and the summary says
+  how long that was. Activities imported before are cleaned once on the
+  next start; what the cleaning drops is kept in the vault, so it can be
+  put back. Skiing, sailing and other fast sports are left as they are.
+
 ## [0.12.0] - 2026-10-28
 
 ### Added

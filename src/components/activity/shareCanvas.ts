@@ -6,7 +6,7 @@ import { displayTitle } from "../../lib/activityTitle";
 import type { BlockPositions, BlockScales, CropRect } from "./shareLayout";
 import { fullCrop, defaultScales, clampBlockScale, normalizeStraighten, normalizeOrientation } from "./shareLayout";
 import { clampCropRotated } from "./cropOverlayMath";
-import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
+import { computeMapLayout, computeElevationLayout, routeRuns } from "./shareGeometry";
 
 export interface CanvasField {
   label: string;
@@ -39,16 +39,6 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error(t("activity.share.imageFailed")));
     img.src = src;
   });
-}
-
-function getRoutePoints(tps: TrackPointColumns): { lat: number; lon: number }[] {
-  const pts: { lat: number; lon: number }[] = [];
-  for (let i = 0; i < tps.lat.length; i++) {
-    const lat = tps.lat[i];
-    const lon = tps.lon[i];
-    if (lat != null && lon != null) pts.push({ lat, lon });
-  }
-  return pts;
 }
 
 function getAltitudes(tps: TrackPointColumns): number[] {
@@ -366,7 +356,7 @@ export function drawMapBlock(
   const { ctx, W, theme } = d;
   // The layout is proportional to the width it's given — scaling the input
   // width scales the whole block identically in canvas and SVG.
-  const L = computeMapLayout(W * scale, getRoutePoints(trackpoints));
+  const L = computeMapLayout(W * scale, routeRuns(trackpoints));
   if (!L) return;
   const c = chipColors(theme);
 

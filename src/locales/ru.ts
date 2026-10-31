@@ -498,6 +498,12 @@ export const ru: Messages = {
   "activity.segment.name": "Название сегмента",
   "activity.segment.saved": "Сохранено ✓",
   "activity.segment.saveAnyway": "Всё равно сохранить",
+  "activity.summary.noGps": {
+    one: "{count} минута без GPS — этого на карте нет",
+    few: "{count} минуты без GPS — этого на карте нет",
+    many: "{count} минут без GPS — этого на карте нет",
+    other: "{count} минуты без GPS — этого на карте нет",
+  },
   "activity.map.noRoute": "Тренировка в помещении — нет данных маршрута",
   "activity.map.destination": "Точка назначения",
   "activity.map.destinationNamed": "Точка назначения · {place}",

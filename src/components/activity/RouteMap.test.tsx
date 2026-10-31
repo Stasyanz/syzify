@@ -345,6 +345,37 @@ const polylines = (map: L.Map) => {
 const tooltipsWith = (text: string) =>
   Array.from(document.querySelectorAll(".leaflet-tooltip")).some((t) => t.textContent?.includes(text));
 
+describe("a track broken by a GPS gap (#256)", () => {
+  /** 60 s on the road, 120 s without a fix, 60 s on: each row a second. */
+  function jammed(): TrackPointColumns {
+    const n = 240;
+    const fix = (i: number) => i < 60 || i >= 180;
+    const blank = Array<null>(n).fill(null);
+    return {
+      ...Object.fromEntries(Object.keys(track).map((k) => [k, blank])),
+      t: Array.from({ length: n }, (_, i) => i),
+      lat: Array.from({ length: n }, (_, i) => (fix(i) ? 55.7 + i * 1e-4 : null)),
+      lon: Array.from({ length: n }, (_, i) => (fix(i) ? 37.6 : null)),
+    } as TrackPointColumns;
+  }
+
+  it("draws two lines, not one straight across the gap", () => {
+    const { map } = mount({ trackpoints: jammed() });
+    const lines: L.Polyline[] = [];
+    map.eachLayer((l) => {
+      if (l instanceof L.Polyline) lines.push(l);
+    });
+    expect(lines).toHaveLength(1);
+    const parts = lines[0].getLatLngs() as L.LatLng[][];
+    expect(parts.map((p) => p.length)).toEqual([60, 60]);
+    expect(parts[1][0]).toEqual(L.latLng(55.7 + 180e-4, 37.6));
+    // Start and finish are still the track's own ends.
+    const [start, end] = markers(map).map((m) => m.getLatLng());
+    expect(start).toEqual(L.latLng(55.7, 37.6));
+    expect(end).toEqual(L.latLng(55.7 + 239e-4, 37.6));
+  });
+});
+
 describe("a simulated course (#190, #222)", () => {
   it("draws the course on a blank canvas — no tiles, no credit, no layer switch — the track would land on a real island", () => {
     // The location sits on the course, as a Watopia point would: no flag.

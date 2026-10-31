@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
+import { computeMapLayout, computeElevationLayout, routeRuns } from "./shareGeometry";
 
 const ROUTE = [
   { lat: 50.0, lon: 30.0 },
@@ -48,6 +48,30 @@ describe("computeMapLayout", () => {
     expect(b.innerW / a.innerW).toBeCloseTo(2, 1);
     expect(b.innerH / a.innerH).toBeCloseTo(2, 1);
     expect(b.start.x / a.start.x).toBeCloseTo(2, 1);
+  });
+
+  it("draws a route broken by a GPS gap as two subpaths of one path (#256)", () => {
+    const whole = computeMapLayout(1920, ROUTE)!;
+    const broken = computeMapLayout(1920, [ROUTE.slice(0, 2), ROUTE.slice(2)])!;
+    expect(broken.d.match(/M/g)).toHaveLength(2);
+    // Same box, same ends: only the line across the gap is gone.
+    expect(broken.d.replace(/M/g, "L").slice(1)).toBe(whole.d.slice(1));
+    expect(broken.start).toEqual(whole.start);
+    expect(broken.end).toEqual(whole.end);
+  });
+});
+
+describe("routeRuns", () => {
+  it("breaks the route where the activity's map does", () => {
+    const n = 200;
+    const fix = (i: number) => i < 50 || i >= 150;
+    const runs = routeRuns({
+      t: Array.from({ length: n }, (_, i) => i),
+      lat: Array.from({ length: n }, (_, i) => (fix(i) ? 50 + i * 1e-4 : null)),
+      lon: Array.from({ length: n }, (_, i) => (fix(i) ? 30 : null)),
+    });
+    expect(runs.map((r) => r.length)).toEqual([50, 50]);
+    expect(runs[1][0]).toEqual({ lat: 50 + 150e-4, lon: 30 });
   });
 });
 

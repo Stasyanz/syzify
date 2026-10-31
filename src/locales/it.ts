@@ -491,6 +491,10 @@ export const it: Messages = {
   "activity.segment.name": "Nome del segmento",
   "activity.segment.saved": "Salvato ✓",
   "activity.segment.saveAnyway": "Salva comunque",
+  "activity.summary.noGps": {
+    one: "{count} minuto senza GPS: quel tratto manca sulla mappa",
+    other: "{count} minuti senza GPS: quei tratti mancano sulla mappa",
+  },
   "activity.map.noRoute": "Attività al chiuso: nessun dato di percorso",
   "activity.map.destination": "Punto di destinazione",
   "activity.map.destinationNamed": "Destinazione · {place}",

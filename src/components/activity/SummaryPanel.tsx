@@ -10,11 +10,17 @@ import {
 } from "../../lib/format";
 import { useUnits } from "../../lib/units";
 import { useT } from "../../lib/i18n";
+import { SatelliteDish } from "lucide-react";
 import { CornerRings } from "../brand/CornerRings";
 
 interface Props {
   activity: Activity;
+  /** Time the track spent without a GPS fix (`secondsWithoutGps`). */
+  noGpsSeconds?: number;
 }
+
+/** Below a minute without GPS the hole in the map is too short to mention. */
+const NO_GPS_NOTE_MIN_S = 60;
 
 /** Split a "5.0 km" formatted string into value + small unit suffix. */
 function splitValueUnit(s: string): { value: string; unit?: string } {
@@ -22,7 +28,7 @@ function splitValueUnit(s: string): { value: string; unit?: string } {
   return i === -1 ? { value: s } : { value: s.slice(0, i), unit: s.slice(i + 1) };
 }
 
-export function SummaryPanel({ activity }: Props) {
+export function SummaryPanel({ activity, noGpsSeconds = 0 }: Props) {
   useUnits();
   const t = useT();
 
@@ -49,7 +55,7 @@ export function SummaryPanel({ activity }: Props) {
     metrics.push({ label: t("common.calories"), value: formatWhole(activity.calories, "kcal") });
   }
 
-  return (
+  const tiles = (
     <div className="grid grid-flow-col auto-cols-fr gap-3">
       {metrics.map((m) => {
         const { value, unit } = splitValueUnit(m.value);
@@ -67,6 +73,16 @@ export function SummaryPanel({ activity }: Props) {
           </div>
         );
       })}
+    </div>
+  );
+  if (noGpsSeconds < NO_GPS_NOTE_MIN_S) return tiles;
+  return (
+    <div className="space-y-2">
+      {tiles}
+      <p className="flex items-center gap-1.5 text-xs text-muted">
+        <SatelliteDish size={14} aria-hidden className="shrink-0" />
+        {t("activity.summary.noGps", { count: Math.round(noGpsSeconds / 60) })}
+      </p>
     </div>
   );
 }

@@ -8,9 +8,18 @@
  * the preview is a pixel-exact replica of the export (WYSIWYG) regardless of crop.
  */
 
+import { fixRuns } from "../../lib/gpsGaps";
+import type { TrackPointColumns } from "../../lib/types";
+
 export interface LatLon {
   lat: number;
   lon: number;
+}
+
+/** The route both renderers draw: the fixes, a new line after every GPS
+ * gap — the same breaks as the activity's map (#256). */
+export function routeRuns(tps: Pick<TrackPointColumns, "t" | "lat" | "lon">): LatLon[][] {
+  return fixRuns(tps).map((run) => run.map(([lat, lon]) => ({ lat, lon })));
 }
 
 export interface MapLayout {
@@ -41,8 +50,12 @@ export interface ElevationLayout {
   fillD: string;
 }
 
-/** Route layout in export-px. Returns null when there is nothing to draw. */
-export function computeMapLayout(exportW: number, points: LatLon[]): MapLayout | null {
+/** Route layout in export-px — one line, or several (a route broken by
+ * gaps) drawn as subpaths of one path. Returns null when there is nothing
+ * to draw. */
+export function computeMapLayout(exportW: number, route: LatLon[] | LatLon[][]): MapLayout | null {
+  const runs = (route.length > 0 && Array.isArray(route[0]) ? route : [route]) as LatLon[][];
+  const points = runs.flat();
   if (points.length < 2) return null;
   const padding = 8;
   const innerW = Math.round(exportW * 0.28);
@@ -64,7 +77,10 @@ export function computeMapLayout(exportW: number, points: LatLon[]): MapLayout |
   const px = (p: LatLon) => offX + (p.lon - minLon) * scale;
   const py = (p: LatLon) => innerH - (offY + (p.lat - minLat) * scale);
 
-  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${px(p).toFixed(1)},${py(p).toFixed(1)}`).join(" ");
+  const d = runs
+    .filter((run) => run.length > 0)
+    .map((run) => run.map((p, i) => `${i === 0 ? "M" : "L"}${px(p).toFixed(1)},${py(p).toFixed(1)}`).join(" "))
+    .join(" ");
   return {
     innerW,
     innerH,

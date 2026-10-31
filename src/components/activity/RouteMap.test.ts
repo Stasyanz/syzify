@@ -50,14 +50,30 @@ describe("segmentPositions", () => {
 
   it("collects valid positions of the inclusive range, skipping GPS holes", () => {
     expect(segmentPositions(track, [1, 3])).toEqual([
-      [55.1, 37.1],
-      [55.3, 37.3],
+      [
+        [55.1, 37.1],
+        [55.3, 37.3],
+      ],
+    ]);
+  });
+
+  it("breaks at a GPS gap inside the range, like the route (#256)", () => {
+    const gapped = { ...track, t: [0, 1, 2, 60, 61] };
+    expect(segmentPositions(gapped, [0, 4])).toEqual([
+      [
+        [55.0, 37.0],
+        [55.1, 37.1],
+      ],
+      [
+        [55.3, 37.3],
+        [55.4, 37.4],
+      ],
     ]);
   });
 
   it("accepts either endpoint order and clamps out-of-bounds indices", () => {
     expect(segmentPositions(track, [3, 1])).toEqual(segmentPositions(track, [1, 3]));
-    expect(segmentPositions(track, [-10, 99])!.length).toBe(4);
+    expect(segmentPositions(track, [-10, 99])!.flat().length).toBe(4);
   });
 
   it("returns null when fewer than two points survive", () => {

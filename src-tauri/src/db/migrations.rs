@@ -41,6 +41,7 @@ fn migration_list() -> Vec<M<'static>> {
         M::up(include_str!("../../migrations/032_drop_tags.sql")),
         M::up(include_str!("../../migrations/033_gear.sql")),
         M::up(include_str!("../../migrations/034_gear_rules.sql")),
+        M::up(include_str!("../../migrations/035_gps_dropped.sql")),
     ]
 }
 

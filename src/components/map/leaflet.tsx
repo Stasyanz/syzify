@@ -155,7 +155,8 @@ export function Polyline({
   opacity,
   className,
 }: {
-  positions: L.LatLngExpression[];
+  /** One line, or several drawn as one layer (a track broken by gaps). */
+  positions: L.LatLngExpression[] | L.LatLngExpression[][];
   color?: string;
   weight?: number;
   opacity?: number;

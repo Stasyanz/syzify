@@ -6,6 +6,8 @@ pub mod device_backfill;
 pub mod exercise_names_backfill;
 pub mod gear_keys_backfill;
 pub mod geocoding;
+pub mod gps_clean;
+pub mod gps_clean_backfill;
 pub mod pipeline;
 pub mod power_curve;
 pub mod power_summary;

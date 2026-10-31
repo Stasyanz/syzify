@@ -36,6 +36,7 @@ import { FtpMismatchHint } from "../components/activity/FtpMismatchHint";
 import { DeviceChip } from "../components/activity/DeviceChip";
 import { GearChip, gearChipVisible } from "../components/activity/GearChip";
 import { describeDevice } from "../lib/devices";
+import { secondsWithoutGps } from "../lib/gpsGaps";
 import { PhotoGallery } from "../components/activity/PhotoGallery";
 import { ShareModal } from "../components/activity/ShareModal";
 import { PluginContributions } from "../components/plugins/PluginContributions";
@@ -148,6 +149,8 @@ export function ActivityDetailPage() {
     const win = focusedLeg ? legTimeWindow(focusedLeg) : null;
     return win ? sliceTrackpoints(data.trackpoints, win[0], win[1]) : data.trackpoints;
   }, [data, focusedLeg]);
+  // The summary is the whole activity's, so is its time without GPS.
+  const noGpsSeconds = useMemo(() => (data ? secondsWithoutGps(data.trackpoints) : 0), [data]);
 
   const toggleLegFocus = useCallback(
     (legNumber: number) => {
@@ -417,7 +420,7 @@ export function ActivityDetailPage() {
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         <div className="p-6 space-y-6">
           {/* Summary */}
-          <SummaryPanel activity={activity} />
+          <SummaryPanel activity={activity} noGpsSeconds={noGpsSeconds} />
 
           {/* Multisport legs (triathlon breakdown) — absent for single-sport */}
           <MultisportLegs

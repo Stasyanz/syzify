@@ -536,6 +536,11 @@ export const en = {
   "activity.segment.name": "Segment name",
   "activity.segment.saved": "Saved ✓",
   "activity.segment.saveAnyway": "Save anyway",
+  // Under the summary tiles when the GPS was jammed or lost (#256).
+  "activity.summary.noGps": {
+    one: "No GPS for {count} minute — that stretch is missing from the map",
+    other: "No GPS for {count} minutes — those stretches are missing from the map",
+  },
   // The route map.
   "activity.map.noRoute": "Indoor activity — no route data",
   "activity.map.destination": "Destination point",

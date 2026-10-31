@@ -5,7 +5,7 @@ import { formatDate } from "../../lib/format";
 import { currentLanguage, useT } from "../../lib/i18n";
 import { displayTitle } from "../../lib/activityTitle";
 import { avoidZone, clampBlockScale, type BlockKind, type BlockPositions, type BlockScales } from "./shareLayout";
-import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
+import { computeMapLayout, computeElevationLayout, routeRuns } from "./shareGeometry";
 import {
   BRAND_MARK_PATH,
   BRAND_MARK_DOT,
@@ -323,15 +323,10 @@ function MapBlock(props: Props) {
 
   // Rebuilding the route path over every trackpoint on each render would run
   // on every mousemove of a drag; the layout depends only on these three.
-  const L = useMemo(() => {
-    const points: { lat: number; lon: number }[] = [];
-    for (let i = 0; i < trackpoints.lat.length; i++) {
-      const lat = trackpoints.lat[i];
-      const lon = trackpoints.lon[i];
-      if (lat != null && lon != null) points.push({ lat, lon });
-    }
-    return computeMapLayout(exportWidth * scales.map, points);
-  }, [trackpoints, exportWidth, scales.map]);
+  const L = useMemo(
+    () => computeMapLayout(exportWidth * scales.map, routeRuns(trackpoints)),
+    [trackpoints, exportWidth, scales.map],
+  );
   if (!L) return null;
 
   // The SVG viewBox is in export-px; the on-screen size is scaled by k, so every

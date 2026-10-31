@@ -31,6 +31,33 @@ pub fn insert_legs(conn: &Connection, legs: &[MultisportLeg]) -> Result<()> {
     Ok(())
 }
 
+/// After a merged leg's distance or speed changed (the GPS cleaning, #256):
+/// its row in the container's breakdown, the container's summed distance
+/// and the average speed it gives (as the merge computes it) follow.
+/// Nothing for an activity that is no merged leg.
+pub fn refresh_merged_leg(conn: &Connection, leg_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE multisport_leg SET \
+         total_distance_m = (SELECT distance_m FROM activity WHERE id = ?1), \
+         avg_speed_mps = (SELECT avg_speed_mps FROM activity WHERE id = ?1) \
+         WHERE source_activity_id = ?1",
+        params![leg_id],
+    )?;
+    conn.execute(
+        "UPDATE activity SET distance_m = \
+         (SELECT SUM(l.distance_m) FROM activity l WHERE l.parent_id = activity.id) \
+         WHERE id = (SELECT parent_id FROM activity WHERE id = ?1)",
+        params![leg_id],
+    )?;
+    conn.execute(
+        "UPDATE activity SET avg_speed_mps = \
+         CASE WHEN duration_s > 0 THEN distance_m / duration_s END \
+         WHERE id = (SELECT parent_id FROM activity WHERE id = ?1)",
+        params![leg_id],
+    )?;
+    Ok(())
+}
+
 /// Whether the activity is a multisport whole: a merged container (it has
 /// adopted children) or a FIT-native one (it has leg rows). A container
 /// carries no parent_id itself, so this is how it is recognized. Its
@@ -425,6 +452,28 @@ mod tests {
         a.avg_hr = Some(150.0);
         a.max_hr = Some(170.0);
         super::super::activities::insert_activity(conn, &a).unwrap();
+    }
+
+    #[test]
+    fn a_leg_that_changed_carries_its_container_along() {
+        let mut conn = db::test_db();
+        insert_source(&conn, "swim", "swim", "2021-07-17T08:00:00+03:00", 1500.0, 600.0);
+        insert_source(&conn, "ride", "ride", "2021-07-17T08:15:00+03:00", 40000.0, 3600.0);
+        insert_source(&conn, "run", "run", "2021-07-17T09:20:00+03:00", 10000.0, 2400.0);
+        merge_into_triathlon(&mut conn, "tri", &["swim".into(), "ride".into(), "run".into()]).unwrap();
+        // The ride's teleport is cleaned away: 40 → 32 km.
+        conn.execute("UPDATE activity SET distance_m = 32000.0, avg_speed_mps = 8.9 WHERE id = 'ride'", []).unwrap();
+        refresh_merged_leg(&conn, "ride").unwrap();
+        let c = super::super::activities::get_activity_by_id(&conn, "tri").unwrap().unwrap();
+        assert_eq!(c.distance_m, Some(43500.0));
+        assert_eq!(c.avg_speed_mps, Some(43500.0 / 6600.0));
+        let ride = get_legs(&conn, "tri").unwrap().into_iter().find(|l| l.sport_type == "ride").unwrap();
+        assert_eq!((ride.total_distance_m, ride.avg_speed_mps), (Some(32000.0), Some(8.9)));
+        // An activity outside any event: nothing to carry.
+        insert_source(&conn, "solo", "ride", "2021-07-18T08:00:00+03:00", 20000.0, 3000.0);
+        refresh_merged_leg(&conn, "solo").unwrap();
+        let c = super::super::activities::get_activity_by_id(&conn, "tri").unwrap().unwrap();
+        assert_eq!(c.distance_m, Some(43500.0));
     }
 
     /// Merge builds a triathlon container with summed metrics, ordered legs,

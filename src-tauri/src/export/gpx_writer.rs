@@ -48,11 +48,26 @@ pub fn activity_to_gpx(activity: &Activity, trackpoints: &[TrackPoint], barometr
     ));
     xml.push_str("    <trkseg>\n");
 
-    for tp in trackpoints {
+    // A new segment after every GPS gap, where the app's map breaks the
+    // line too (#256) — a reader would draw one straight across it.
+    let breaks = {
+        let t: Vec<Option<f64>> = trackpoints
+            .iter()
+            .map(|p| p.t.as_deref().and_then(crate::db::trackpoints::parse_time_seconds))
+            .collect();
+        let lat: Vec<Option<f64>> = trackpoints.iter().map(|p| p.lat).collect();
+        let lon: Vec<Option<f64>> = trackpoints.iter().map(|p| p.lon).collect();
+        crate::import::gps_clean::fixes_after_gaps(&t, &lat, &lon)
+    };
+
+    for (i, tp) in trackpoints.iter().enumerate() {
         let (lat, lon) = match (tp.lat, tp.lon) {
             (Some(lat), Some(lon)) => (lat, lon),
             _ => continue, // skip indoor points
         };
+        if breaks.binary_search(&i).is_ok() {
+            xml.push_str("    </trkseg>\n    <trkseg>\n");
+        }
 
         xml.push_str(&format!(
             "      <trkpt lat=\"{:.7}\" lon=\"{:.7}\">\n",
@@ -239,6 +254,33 @@ mod tests {
 
         let gpx = activity_to_gpx(&sample_activity(), &tps, false);
         assert!(!gpx.contains("<trkpt"));
+    }
+
+    #[test]
+    fn a_gps_gap_starts_a_new_segment() {
+        // 10 s of fixes, 60 s without (heart rate only), 10 s of fixes.
+        let tps: Vec<TrackPoint> = (0..80)
+            .map(|k| {
+                let fix = !(10..70).contains(&k);
+                TrackPoint {
+                    activity_id: "test".to_string(),
+                    t: Some(format!("2025-06-01T08:{:02}:{:02}+00:00", k / 60, k % 60)),
+                    lat: fix.then_some(55.0 + k as f64 * 1e-4), lon: fix.then_some(37.0),
+                    altitude_m: None, speed_mps: None,
+                    hr: Some(150), cadence: None, power_w: None, temperature_c: None,
+                    vertical_oscillation_mm: None, stance_time_ms: None, stance_time_percent: None, step_length_mm: None, grade_percent: None,
+                    left_right_balance: None, left_torque_effectiveness: None, right_torque_effectiveness: None,
+                    left_pedal_smoothness: None, right_pedal_smoothness: None,
+                }
+            })
+            .collect();
+        let gpx = activity_to_gpx(&sample_activity(), &tps, false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 2);
+        assert_eq!(gpx.matches("</trkseg>").count(), 2);
+        assert_eq!(gpx.matches("<trkpt").count(), 20);
+        // The second segment opens on the first fix after the gap.
+        let second = gpx.split("<trkseg>").nth(2).unwrap();
+        assert!(second.trim_start().starts_with(&format!("<trkpt lat=\"{:.7}\"", 55.0 + 70.0 * 1e-4)));
     }
 
     #[test]

@@ -23,6 +23,7 @@ import { api, isTauri } from "../../lib/tauri";
 import { useResizeGrip } from "./useResizeGrip";
 import { protocolBase } from "../../lib/protocolUrl";
 import { errorText } from "../../lib/errors";
+import { fixRuns } from "../../lib/gpsGaps";
 import { useT } from "../../lib/i18n";
 
 interface Props {
@@ -202,21 +203,21 @@ function HoverMarker({
 }
 
 /** Valid GPS positions of the trackpoint range [a, b] (inclusive, clamped) —
- * the piece of route a chart drag-selection maps to. Exported pure for
+ * the piece of route a chart drag-selection maps to — as lines broken at
+ * the GPS gaps inside it, like the route under it (#256). Exported pure for
  * tests. Fewer than 2 usable points can't form a segment → null. */
 export function segmentPositions(
   trackpoints: TrackPointColumns,
   range: [number, number],
-): L.LatLngExpression[] | null {
+): L.LatLngExpression[][] | null {
   const from = Math.max(0, Math.min(range[0], range[1]));
   const to = Math.min(trackpoints.lat.length - 1, Math.max(range[0], range[1]));
-  const pts: L.LatLngExpression[] = [];
-  for (let i = from; i <= to; i++) {
-    const lat = trackpoints.lat[i];
-    const lon = trackpoints.lon[i];
-    if (lat != null && lon != null) pts.push([lat, lon]);
-  }
-  return pts.length >= 2 ? pts : null;
+  const lines = fixRuns({
+    t: trackpoints.t.slice(from, to + 1),
+    lat: trackpoints.lat.slice(from, to + 1),
+    lon: trackpoints.lon.slice(from, to + 1),
+  });
+  return lines.reduce((n, l) => n + l.length, 0) >= 2 ? lines : null;
 }
 
 /** The elevation chart's drag-selected span, drawn over the base route as
@@ -409,20 +410,13 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
   );
 }
 
-/** Collect all valid GPS positions into a single continuous polyline */
+/** All valid GPS positions (bounds, start and end) and the same fixes as
+ * the lines the map draws — broken where the GPS was gone (#256), so a
+ * jammed stretch is not drawn as a straight line across the town. */
 function useRoutePositions(trackpoints: TrackPointColumns) {
   return useMemo(() => {
-    const positions: L.LatLngExpression[] = [];
-
-    for (let i = 0; i < trackpoints.lat.length; i++) {
-      const lat = trackpoints.lat[i];
-      const lon = trackpoints.lon[i];
-      if (lat != null && lon != null) {
-        positions.push([lat, lon]);
-      }
-    }
-
-    return positions;
+    const lines: L.LatLngExpression[][] = fixRuns(trackpoints);
+    return { positions: lines.flat(), lines };
   }, [trackpoints]);
 }
 
@@ -449,7 +443,7 @@ function KeepCourseInView({ positions }: { positions: L.LatLngExpression[] }) {
 export function RouteMap(props: Props) {
   useUnits();
   const t = useT();
-  const positions = useRoutePositions(props.trackpoints);
+  const { positions, lines } = useRoutePositions(props.trackpoints);
 
   if (positions.length === 0) {
     // No GPS track — don't reserve a full map canvas; a slim notice is enough.
@@ -464,18 +458,27 @@ export function RouteMap(props: Props) {
   // remounts the canvas when an edit moves the sport across that line —
   // the Leaflet instance's options are fixed at creation.
   const simulated = hasSimulatedCourse(props.sport);
-  return <RouteMapCanvas key={simulated ? "course" : "map"} positions={positions} simulated={simulated} {...props} />;
+  return (
+    <RouteMapCanvas
+      key={simulated ? "course" : "map"}
+      positions={positions}
+      lines={lines}
+      simulated={simulated}
+      {...props}
+    />
+  );
 }
 
 function RouteMapCanvas({
   positions,
+  lines,
   simulated,
   trackpoints,
   sport,
   activityId,
   location,
   locationName,
-}: Props & { positions: L.LatLngExpression[]; simulated: boolean }) {
+}: Props & { positions: L.LatLngExpression[]; lines: L.LatLngExpression[][]; simulated: boolean }) {
   // The layer state below goes unused on a simulated course; it stays
   // unconditional, as hooks must.
   const { data: savedLayer } = useQuery({
@@ -595,7 +598,7 @@ function RouteMapCanvas({
             url={tileUrl}
           />
         )}
-        <Polyline positions={positions} color="#d8521d" weight={3} />
+        <Polyline positions={lines} color="#d8521d" weight={3} />
         <SelectedSegment trackpoints={trackpoints} />
         <Marker position={start} icon={startIcon} />
         <Marker position={end} icon={finishIcon} />

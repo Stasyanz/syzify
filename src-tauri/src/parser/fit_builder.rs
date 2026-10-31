@@ -10,11 +10,15 @@ pub const ENUM: u8 = 0x00;
 pub const UINT8: u8 = 0x02;
 pub const SINT16: u8 = 0x83;
 pub const UINT16: u8 = 0x84;
+pub const SINT32: u8 = 0x85;
 pub const UINT32: u8 = 0x86;
 pub const UINT32Z: u8 = 0x8C;
 
 /// Global message numbers used by the fixtures.
 pub const MSG_FILE_ID: u16 = 0;
+pub const MSG_SESSION: u16 = 18;
+pub const MSG_RECORD: u16 = 20;
+pub const MSG_DEVICE_INFO: u16 = 23;
 pub const MSG_MONITORING: u16 = 55;
 pub const MSG_MONITORING_INFO: u16 = 103;
 pub const MSG_MONITORING_HR_DATA: u16 = 211;
@@ -46,6 +50,7 @@ pub enum Val {
     I16(i16),
     U16(u16),
     U32(u32),
+    I32(i32),
     /// A three-element uint16 array — a field defined with size 6.
     U16x3([u16; 3]),
 }
@@ -106,6 +111,7 @@ impl FitBuilder {
                 Val::I16(x) => x.to_le_bytes().to_vec(),
                 Val::U16(x) => x.to_le_bytes().to_vec(),
                 Val::U32(x) => x.to_le_bytes().to_vec(),
+                Val::I32(x) => x.to_le_bytes().to_vec(),
                 Val::U16x3(xs) => xs.iter().flat_map(|x| x.to_le_bytes()).collect(),
             };
             assert_eq!(bytes.len(), size as usize, "value size must match the definition");
@@ -250,6 +256,72 @@ pub fn strength_fixture(sets: &[([u16; 3], Option<[u16; 3]>)]) -> Vec<u8> {
         };
     }
     b.build()
+}
+
+/// One second of a ride for [`ride_fixture`]: unix time, position in
+/// degrees (None = no fix that second), device speed in m/s.
+pub type RidePoint = (i64, Option<(f64, f64)>, f64);
+
+/// A road ride the way an Edge writes it: records with position and speed,
+/// one session claiming `distance_m` and `max_speed_mps`, and the paired
+/// ANT+ sensors (`antplus_device_type` numbers: 11 power, 121 speed and
+/// cadence, 123 speed).
+pub fn ride_fixture(points: &[RidePoint], distance_m: f64, max_speed_mps: f64, sensors: &[u8]) -> Vec<u8> {
+    let start = points.first().map_or(1_788_555_600, |p| p.0);
+    let end = points.last().map_or(start, |p| p.0);
+    let semicircles = |deg: f64| Val::I32((deg * 2f64.powi(31) / 180.0).round() as i32);
+    let mm_s = |v: f64| Val::U16((v * 1000.0).round() as u16);
+    let mut b = FitBuilder::new();
+    file_id(&mut b, FILE_TYPE_ACTIVITY, 3_314_747_279, start);
+    // device_info: device_index, antplus_device_type, serial_number, source_type (antplus).
+    b.define(1, MSG_DEVICE_INFO, &[F_TIMESTAMP, (0, 1, UINT8), (1, 1, UINT8), (3, 4, UINT32Z), (25, 1, ENUM)]);
+    for (k, &kind) in sensors.iter().enumerate() {
+        b.data(1, &[Val::U32(fit_ts(start)), Val::U8(k as u8 + 1), Val::U8(kind), Val::U32(4_000 + k as u32), Val::U8(1)]);
+    }
+    // record: with a fix (lat, long, speed) and without one (speed only).
+    b.define(2, MSG_RECORD, &[F_TIMESTAMP, (0, 4, SINT32), (1, 4, SINT32), (6, 2, UINT16)]);
+    b.define(3, MSG_RECORD, &[F_TIMESTAMP, (6, 2, UINT16)]);
+    for &(t, pos, v) in points {
+        match pos {
+            Some((lat, lon)) => b.data(2, &[Val::U32(fit_ts(t)), semicircles(lat), semicircles(lon), mm_s(v)]),
+            None => b.data(3, &[Val::U32(fit_ts(t)), mm_s(v)]),
+        };
+    }
+    // session: start_time, sport (cycling), elapsed + timer (ms), distance (cm), max speed (mm/s).
+    b.define(
+        4,
+        MSG_SESSION,
+        &[F_TIMESTAMP, (2, 4, UINT32), (5, 1, ENUM), (7, 4, UINT32), (8, 4, UINT32), (9, 4, UINT32), (15, 2, UINT16)],
+    );
+    let secs = (end - start) as u32 * 1000;
+    b.data(
+        4,
+        &[
+            Val::U32(fit_ts(end)),
+            Val::U32(fit_ts(start)),
+            Val::U8(2),
+            Val::U32(secs),
+            Val::U32(secs),
+            Val::U32((distance_m * 100.0).round() as u32),
+            mm_s(max_speed_mps),
+        ],
+    );
+    b.build()
+}
+
+/// A ride the way a jammed Edge records it (#256): 10 min on the road at
+/// 8 m/s, 5 min without a fix, a minute teleported 20 km away at a GPS
+/// speed of 27 m/s, then 10 min back on the road. The session claims the
+/// teleport in its 30 km distance and a 65 m/s maximum. Cleaned, it is
+/// 1200 fixes over 12 472 m (4792 + a 2888 m bridge + 4792).
+pub fn jammed_ride_fixture(sensors: &[u8]) -> Vec<u8> {
+    let t0 = 1_788_555_600;
+    let north = |m: f64| (55.0 + m / 111_195.0, 37.0);
+    let mut pts: Vec<RidePoint> = (0..600).map(|k| (t0 + k, Some(north(8.0 * k as f64)), 8.0)).collect();
+    pts.extend((600..900).map(|k| (t0 + k, None, 0.0)));
+    pts.extend((900..960).map(|k| (t0 + k, Some(north(20_000.0 + 27.0 * (k - 900) as f64)), 27.0)));
+    pts.extend((960..1560).map(|k| (t0 + k, Some(north(8.0 * k as f64)), 8.0)));
+    ride_fixture(&pts, 30_000.0, 65.0, sensors)
 }
 
 /// A FIT file of a type the importer does not handle.
