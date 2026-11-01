@@ -3387,6 +3387,24 @@ mod tests {
     }
 
     #[test]
+    fn a_simulated_course_with_no_jump_keeps_its_totals() {
+        let points: Vec<crate::models::trackpoint::TrackPoint> = (0..60)
+            .map(|k| crate::models::trackpoint::TrackPoint {
+                t: Some(format!("2026-09-04T08:00:{k:02}Z")),
+                lat: Some(55.0 + 8.0 * k as f64 / 111_195.0),
+                lon: Some(37.0),
+                altitude_m: Some(100.0 + k as f64),
+                ..Default::default()
+            })
+            .collect();
+        let (course, road) = (metrics_of_sport(&points, "virtual_ride"), compute_metrics(&points));
+        assert!(course.distance_m.is_some_and(|d| d > 400.0));
+        assert_eq!(course.distance_m, road.distance_m);
+        assert_eq!(course.elev_gain_m, road.elev_gain_m);
+        assert_eq!(course.elev_loss_m, road.elev_loss_m);
+    }
+
+    #[test]
     fn a_simulated_course_without_a_summary_does_not_count_its_jump() {
         // Flat, but the jump lands 300 m higher, or lower: neither is climbing.
         assert_course_totals(400, "course_jump_up");
