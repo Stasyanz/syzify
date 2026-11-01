@@ -239,6 +239,45 @@ describe("block scale — canvas and SVG stay WYSIWYG", () => {
   });
 });
 
+describe("a simulated course that jumps (#261)", () => {
+  const jumping = {
+    ...trackpoints,
+    t: [0, 1, 2, 3],
+    teleported: [false, false, true, false],
+  } as TrackPointColumns;
+  const RUNS = [ROUTE.slice(0, 2), ROUTE.slice(2)];
+
+  it("breaks the line alike on the canvas and in the preview", () => {
+    const L = computeMapLayout(EXPORT_W, RUNS)!;
+    expect(L.d).not.toBe(computeMapLayout(EXPORT_W, ROUTE)!.d);
+
+    const { ctx, calls } = makeFakeCtx();
+    const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 0 };
+    drawMapBlock(d, MAP_POS, jumping);
+    expect(calls.strokePaths[0].d).toBe(L.d);
+
+    const { container } = render(
+      <DraggableShareBlocks
+        activity={activity}
+        trackpoints={jumping}
+        fields={[]}
+        theme="dark"
+        showTitle
+        showMap
+        showElevation={false}
+        positions={positions}
+        onPositionChange={() => {}}
+        scales={SCALES_1}
+        onScaleChange={() => {}}
+        previewWidth={PREVIEW_W}
+        previewHeight={(PREVIEW_W * EXPORT_H) / EXPORT_W}
+        exportWidth={EXPORT_W}
+      />
+    );
+    expect(container.querySelector("svg path")!.getAttribute("d")).toBe(L.d);
+  });
+});
+
 const DARK_CHIP_BG = "rgba(0,0,0,0.55)";
 
 describe("transparent block background — canvas and preview stay WYSIWYG", () => {

@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
 
 use crate::models::trackpoint::{TrackPoint, TrackPointColumns};
 
@@ -108,6 +108,7 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
         right_torque_effectiveness: Vec::new(),
         left_pedal_smoothness: Vec::new(),
         right_pedal_smoothness: Vec::new(),
+        teleported: Vec::new(),
     };
 
     let rows = stmt.query_map(params![activity_id], |row| {
@@ -138,10 +139,6 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
         ))
     })?;
 
-    let mut prev_lat: Option<f64> = None;
-    let mut prev_lon: Option<f64> = None;
-    let mut cumulative_dist = 0.0;
-
     for row in rows {
         let ((t_str, lat, lon, alt, speed, hr, cad, power, temp, vert_osc),
              (stance, stance_pct, step_len, grade, lr_balance, l_torque, r_torque, l_smooth, r_smooth)) = row?;
@@ -169,14 +166,32 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
         cols.right_torque_effectiveness.push(r_torque);
         cols.left_pedal_smoothness.push(l_smooth);
         cols.right_pedal_smoothness.push(r_smooth);
+    }
 
-        // Compute cumulative distance using haversine
-        if let (Some(lat2), Some(lon2)) = (lat, lon) {
-            if let (Some(lat1), Some(lon1)) = (prev_lat, prev_lon) {
-                cumulative_dist += haversine_m(lat1, lon1, lat2, lon2);
+    let sport: Option<String> = conn
+        .query_row("SELECT sport_type FROM activity WHERE id = ?1", params![activity_id], |r| r.get(0))
+        .optional()?;
+    if sport.as_deref().is_some_and(crate::models::activity::has_simulated_course) {
+        let jumps = crate::import::gps_clean::teleported_fixes(&cols.t, &cols.lat, &cols.lon);
+        if !jumps.is_empty() {
+            cols.teleported = vec![false; cols.lat.len()];
+            for i in jumps {
+                cols.teleported[i] = true;
             }
-            prev_lat = Some(lat2);
-            prev_lon = Some(lon2);
+        }
+    }
+
+    // Cumulative distance by haversine, with no credit for a course's jumps.
+    let mut prev: Option<(f64, f64)> = None;
+    let mut cumulative_dist = 0.0;
+    for i in 0..cols.lat.len() {
+        if let (Some(lat2), Some(lon2)) = (cols.lat[i], cols.lon[i]) {
+            if let Some((lat1, lon1)) = prev {
+                if !cols.teleported.get(i).copied().unwrap_or(false) {
+                    cumulative_dist += haversine_m(lat1, lon1, lat2, lon2);
+                }
+            }
+            prev = Some((lat2, lon2));
         }
         cols.distance_m.push(Some(cumulative_dist));
     }
@@ -494,5 +509,66 @@ mod tests {
         assert_eq!(geo.lat, cols.lat);
         assert_eq!(geo.lon, cols.lon);
         assert_eq!(geo.altitude_m, cols.altitude_m);
+    }
+
+    /// An activity of `sport` riding 10 m/s, jumping 0.5° north at row 3.
+    fn insert_jumping_track(conn: &rusqlite::Connection, id: &str, sport: &str) {
+        let a = crate::models::activity::Activity {
+            id: id.to_string(),
+            start_time: "2025-06-01T08:00:00+00:00".to_string(),
+            sport_type: sport.to_string(),
+            ..Default::default()
+        };
+        db::activities::insert_activity(conn, &a).unwrap();
+        let ridden = 10.0 / 111_194.9;
+        let lats = [55.0, 55.0 + ridden, 55.0 + 2.0 * ridden, 55.5, 55.5 + ridden];
+        let tps: Vec<TrackPoint> = lats
+            .iter()
+            .enumerate()
+            .map(|(i, lat)| TrackPoint {
+                activity_id: id.to_string(),
+                t: Some(format!("2025-06-01T08:00:0{i}+00:00")),
+                lat: Some(*lat),
+                lon: Some(37.62),
+                ..Default::default()
+            })
+            .collect();
+        insert_trackpoints(conn, &tps).unwrap();
+    }
+
+    #[test]
+    fn a_simulated_course_marks_a_jump_and_gives_it_no_distance() {
+        for sport in ["virtual_ride", "virtual_run"] {
+            let conn = db::test_db();
+            insert_jumping_track(&conn, "course", sport);
+            let cols = get_trackpoints_columnar(&conn, "course").unwrap();
+            assert_eq!(cols.teleported, vec![false, false, false, true, false], "{sport}");
+            let d: Vec<f64> = cols.distance_m.iter().map(|d| d.unwrap()).collect();
+            assert!((d[2] - 20.0).abs() < 0.01, "{sport}: {d:?}");
+            assert_eq!(d[3], d[2], "{sport}: the jump adds nothing");
+            assert!((d[4] - 30.0).abs() < 0.01, "{sport}: riding goes on from there: {d:?}");
+        }
+    }
+
+    #[test]
+    fn real_ground_keeps_the_same_step_in_its_distance() {
+        let conn = db::test_db();
+        insert_jumping_track(&conn, "real", "ride");
+        let cols = get_trackpoints_columnar(&conn, "real").unwrap();
+        assert!(cols.teleported.is_empty());
+        assert!(cols.distance_m[3].unwrap() > 50_000.0);
+    }
+
+    #[test]
+    fn a_course_without_a_jump_carries_no_marks() {
+        let conn = db::test_db();
+        insert_jumping_track(&conn, "course", "virtual_ride");
+        conn.execute("DELETE FROM trackpoint WHERE activity_id = 'course' AND lat >= 55.5", [])
+            .unwrap();
+        let cols = get_trackpoints_columnar(&conn, "course").unwrap();
+        assert_eq!(cols.lat.len(), 3);
+        assert!(cols.teleported.is_empty());
+        // Nor does a read of an activity that's gone fail over its sport.
+        assert!(get_trackpoints_columnar(&conn, "missing").unwrap().t.is_empty());
     }
 }

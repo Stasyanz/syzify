@@ -779,10 +779,10 @@ pub fn import_bytes(
     // anything reads the track.
     // The track's own figures as it came, for a file without a summary
     // (GPX): what the cleaning replaces, and what a restore puts back.
-    let raw_metrics = compute_metrics(&parsed.trackpoints);
+    let raw_metrics = metrics_of_sport(&parsed.trackpoints, sport.as_str());
     let speed_from_sensor = gps_clean::has_speed_sensor(&parsed.sensors);
     let cleaning = gps_clean::clean_trackpoints(&mut parsed.trackpoints, &sport, speed_from_sensor);
-    let metrics = compute_metrics(&parsed.trackpoints);
+    let metrics = metrics_of_sport(&parsed.trackpoints, sport.as_str());
 
     // Session metrics from FIT file take priority over computed metrics —
     // except the GPS figures the cleaning proved wrong.
@@ -1448,6 +1448,31 @@ pub(crate) fn compute_metrics(trackpoints: &[crate::models::trackpoint::TrackPoi
         max_hr,
         avg_cadence,
     }
+}
+
+/// [`compute_metrics`], with a simulated course's jumps (#261) left out of the
+/// distance and the climbing: each stretch between two jumps counts alone, as
+/// on the distance axis.
+fn metrics_of_sport(points: &[crate::models::trackpoint::TrackPoint], sport: &str) -> ComputedMetrics {
+    let mut metrics = compute_metrics(points);
+    if !crate::models::activity::has_simulated_course(sport) {
+        return metrics;
+    }
+    let jumps = gps_clean::teleported_points(points);
+    if jumps.is_empty() {
+        return metrics;
+    }
+    let cuts: Vec<usize> =
+        std::iter::once(0).chain(jumps).chain(std::iter::once(points.len())).collect();
+    let stretches: Vec<ComputedMetrics> =
+        cuts.windows(2).map(|w| compute_metrics(&points[w[0]..w[1]])).collect();
+    let sum = |of: fn(&ComputedMetrics) -> Option<f64>| {
+        stretches.iter().filter_map(of).reduce(|a, b| a + b)
+    };
+    metrics.distance_m = sum(|m| m.distance_m);
+    metrics.elev_gain_m = sum(|m| m.elev_gain_m);
+    metrics.elev_loss_m = sum(|m| m.elev_loss_m);
+    metrics
 }
 
 /// The duration stored on an activity: the session's timer time (what the
@@ -3359,6 +3384,69 @@ mod tests {
         assert!((d(&conn) - 4_792.0).abs() < 5.0, "cleaned distance {}", d(&conn));
         assert!(crate::db::gps_dropped::restore(&conn, &id).unwrap());
         assert!(d(&conn) > 14_000.0, "the raw sum with the spike's ~10 km is back: {}", d(&conn));
+    }
+
+    #[test]
+    fn a_simulated_course_without_a_summary_does_not_count_its_jump() {
+        // Flat, but the jump lands 300 m higher, or lower: neither is climbing.
+        assert_course_totals(400, "course_jump_up");
+        assert_course_totals(-200, "course_jump_down");
+    }
+
+    /// A file with no summary: its totals are the sum of its steps.
+    fn assert_course_totals(ele_after_jump: i32, tag: &str) {
+        let pts: String = (0..60)
+            .map(|k| {
+                let (lat, ele) = if k >= 30 { (55.5, ele_after_jump) } else { (55.0, 100) };
+                let lat = lat + 8.0 * k as f64 / 111_195.0;
+                format!(
+                    "<trkpt lat=\"{lat:.7}\" lon=\"37.0\"><ele>{ele}</ele>\
+                     <time>2026-09-04T08:00:{k:02}Z</time></trkpt>"
+                )
+            })
+            .collect();
+        let gpx = format!(
+            "<?xml version=\"1.0\"?><gpx version=\"1.1\" creator=\"t\" xmlns=\"http://www.topografix.com/GPX/1/1\">\
+             <trk><type>VirtualRide</type><trkseg>{pts}</trkseg></trk></gpx>"
+        );
+        let conn = crate::db::test_db();
+        let vault = fresh_vault(tag);
+        let outcome = import_bytes(&conn, &vault, "/rides/course.gpx", gpx.as_bytes(), None).unwrap();
+        assert!(matches!(outcome, ImportOutcome::Imported));
+        let (sport, d, gain, loss): (String, f64, f64, f64) = conn
+            .query_row("SELECT sport_type, distance_m, elev_gain_m, elev_loss_m FROM activity", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .unwrap();
+        assert_eq!(sport, "virtual_ride");
+        assert!((d - 8.0 * 58.0).abs() < 1.0, "the 58 steps ridden, without the jump: {d}");
+        assert_eq!((gain, loss), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_virtual_run_times_its_splits_without_its_jump() {
+        // 3 m/s for 40 minutes, jumping 13 km at the halfway mark.
+        let pts: String = (0..2400)
+            .map(|k: u32| {
+                let lat = 55.0 + 3.0 * k as f64 / 111_195.0 + if k >= 1200 { 0.117 } else { 0.0 };
+                format!(
+                    "<trkpt lat=\"{lat:.7}\" lon=\"37.0\"><time>2026-09-04T08:{:02}:{:02}Z</time></trkpt>",
+                    k / 60,
+                    k % 60
+                )
+            })
+            .collect();
+        let gpx = format!(
+            "<?xml version=\"1.0\"?><gpx version=\"1.1\" creator=\"t\" xmlns=\"http://www.topografix.com/GPX/1/1\">\
+             <trk><type>VirtualRun</type><trkseg>{pts}</trkseg></trk></gpx>"
+        );
+        let conn = crate::db::test_db();
+        let vault = fresh_vault("course_jump_run");
+        let outcome = import_bytes(&conn, &vault, "/runs/course.gpx", gpx.as_bytes(), None).unwrap();
+        assert!(matches!(outcome, ImportOutcome::Imported));
+        let (_, _, _, seconds) =
+            crate::db::best_efforts::fastest_for_distance(&conn, "virtual_run", 5000.0).unwrap().unwrap();
+        assert!((seconds - 5000.0 / 3.0).abs() < 5.0, "5 km at 3 m/s, not across the jump: {seconds}");
     }
 
     #[test]

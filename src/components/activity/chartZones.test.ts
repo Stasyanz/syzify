@@ -550,6 +550,59 @@ describe("gradeSeries", () => {
     expect(g[2]).toBeNull();
     expect(g[3]).toBeCloseTo(10);
   });
+
+  it("finds no slope across a simulated course's jump (#261)", () => {
+    // Flat at 15 m, then flat at 8 m from the jump on, the distance unmoved by it.
+    const d = [0, 10, 20, 30, 30, 40, 50, 60];
+    const a = [15, 15, 15, 15, 8, 8, 8, 8];
+    const marks = [false, false, false, false, true, false, false, false];
+    const g = gradeSeries(d, a, marks);
+    expect(g).toHaveLength(d.length);
+    for (const v of g) expect(v).toBeCloseTo(0);
+    // Unmarked, the same step reads as a slope: the marks are what prevents it.
+    expect(Math.min(...gradeSeries(d, a).map((v) => v!))).toBeLessThan(-10);
+  });
+
+  it("gives every stretch between two jumps its own series, in place", () => {
+    const d = [0, 10, 20, 20, 30, 40, 40, 50, 60];
+    const a = [0, 1, 2, 500, 501, 502, 900, 901, 902];
+    const marks = [false, false, false, true, false, false, true, false, false];
+    const g = gradeSeries(d, a, marks);
+    expect(g).toHaveLength(d.length);
+    for (const v of g) expect(v).toBeCloseTo(10);
+  });
+
+  it("reads an empty list of marks as no jump", () => {
+    const alt = dist.map((d) => d * 0.1);
+    expect(gradeSeries(dist, alt, [])).toEqual(gradeSeries(dist, alt));
+  });
+});
+
+describe("selectionGrade across a simulated course's jump (#261)", () => {
+  const dist = [0, 500, 500, 1000];
+  const marks = [false, false, true, false];
+
+  it("reads a flat course as flat, whatever height the jump lands at", () => {
+    const flat = [100, 100, 300, 300];
+    expect(selectionGrade(dist, flat, 0, 3)!.deltaM).toBe(200);
+    const s = selectionGrade(dist, flat, 0, 3, undefined, marks)!;
+    expect(s).toMatchObject({ distanceM: 1000, deltaM: 0, gradePct: 0 });
+  });
+
+  it("keeps the climbing on either side of the jump", () => {
+    const s = selectionGrade(dist, [100, 110, 300, 305], 0, 3, undefined, marks)!;
+    expect(s.deltaM).toBeCloseTo(15);
+    expect(s.gradePct).toBeCloseTo(1.5);
+  });
+
+  it("skips a jump that landed on a row without a height", () => {
+    const s = selectionGrade(dist, [100, 110, null, 300], 0, 3, undefined, marks)!;
+    expect(s.deltaM).toBeCloseTo(10);
+  });
+
+  it("ignores a jump outside the selection", () => {
+    expect(selectionGrade(dist, [100, 110, 300, 305], 2, 3, undefined, marks)!.deltaM).toBe(5);
+  });
 });
 
 describe("selectionGrade", () => {
@@ -606,11 +659,11 @@ describe("gradeSeries cap and gradeCategories", () => {
     // 5 m of altitude over a 6 m span (a stop with barometer drift) is not a road.
     const dist = [0, 3, 6, 9, 12, 15, 18];
     const alt = [100, 100, 100, 105, 105, 105, 105];
-    const g = gradeSeries(dist, alt, 6);
+    const g = gradeSeries(dist, alt, [], 6);
     expect(g.some((v) => v != null && Math.abs(v) > GRADE_MAX_ABS_PCT)).toBe(false);
     expect(g.filter((v) => v == null).length).toBeGreaterThan(0);
     // A steep but real pitch survives.
-    const steep = gradeSeries([0, 10, 20, 30], [0, 3, 6, 9], 20);
+    const steep = gradeSeries([0, 10, 20, 30], [0, 3, 6, 9], [], 20);
     expect(steep[1]).toBeCloseTo(30);
   });
 

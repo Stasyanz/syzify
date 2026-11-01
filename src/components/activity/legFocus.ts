@@ -53,8 +53,10 @@ export function sliceTrackpoints(
     if (t != null && t >= from && t <= to) keep.push(i);
   }
 
-  const out = {} as Record<keyof TrackPointColumns, (number | null)[]>;
+  type NumberColumn = Exclude<keyof TrackPointColumns, "teleported">;
+  const out = {} as Record<NumberColumn, (number | null)[]>;
   for (const key of Object.keys(tp) as (keyof TrackPointColumns)[]) {
+    if (key === "teleported") continue;
     const col = tp[key];
     out[key] = keep.map((i) => col[i]);
   }
@@ -63,5 +65,7 @@ export function sliceTrackpoints(
   if (base != null) {
     out.distance_m = out.distance_m.map((d) => (d != null ? d - base : null));
   }
-  return out as TrackPointColumns;
+  // Empty stays empty: it means no jump, and is no column to pick rows from.
+  const teleported = tp.teleported.length > 0 ? keep.map((i) => tp.teleported[i]) : [];
+  return { ...out, teleported };
 }

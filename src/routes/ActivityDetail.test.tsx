@@ -65,7 +65,7 @@ const columns = (): TrackPointColumns =>
     temperature_c: [], vertical_oscillation_mm: [], stance_time_ms: [], stance_time_percent: [],
     step_length_mm: [], grade_percent: [], distance_m: [], left_right_balance: [],
     left_torque_effectiveness: [], right_torque_effectiveness: [], left_pedal_smoothness: [],
-    right_pedal_smoothness: [],
+    right_pedal_smoothness: [], teleported: [],
   }) as unknown as TrackPointColumns;
 
 const leg = (over: Partial<MultisportLeg>): MultisportLeg =>

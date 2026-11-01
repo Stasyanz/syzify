@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrackPoint {
     pub activity_id: String,
     pub t: Option<String>,
@@ -80,4 +80,8 @@ pub struct TrackPointColumns {
     pub right_torque_effectiveness: Vec<Option<f64>>,
     pub left_pedal_smoothness: Vec<Option<f64>>,
     pub right_pedal_smoothness: Vec<Option<f64>>,
+    /// True at a fix a simulated course jumped to (#261), where a line and the
+    /// distance don't cross. One entry per trackpoint, or empty when there's
+    /// no such fix, which is nearly always.
+    pub teleported: Vec<bool>,
 }

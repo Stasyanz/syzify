@@ -5,6 +5,61 @@ use crate::models::trackpoint::TrackPoint;
 /// `barometric` marks the altitude stream as coming from a barometric
 /// altimeter (known from the source FIT's device_info).
 pub fn activity_to_gpx(activity: &Activity, trackpoints: &[TrackPoint], barometric: bool) -> String {
+    write_gpx(activity, trackpoints, &course_jumps(activity, trackpoints), barometric)
+}
+
+/// [`activity_to_gpx`] of the track outside its privacy zones (see
+/// [`privacy_kept`]). A simulated course's jumps are found before the trim: a
+/// looping route jumps right into the zone around its start, and the rows
+/// taken out would stretch the step until it looks ridden.
+pub fn activity_to_private_gpx(
+    activity: &Activity,
+    trackpoints: &[TrackPoint],
+    radius_m: f64,
+    barometric: bool,
+) -> String {
+    let jumps = course_jumps(activity, trackpoints);
+    let kept = privacy_kept(trackpoints, radius_m);
+    let shown: Vec<TrackPoint> = keep_rows(trackpoints, &kept);
+    write_gpx(activity, &shown, &jumps_among_kept(trackpoints, &kept, &jumps), barometric)
+}
+
+/// Rows a simulated course jumped to; nothing for a sport on real ground.
+fn course_jumps(activity: &Activity, trackpoints: &[TrackPoint]) -> Vec<usize> {
+    if crate::models::activity::has_simulated_course(&activity.sport_type) {
+        crate::import::gps_clean::teleported_points(trackpoints)
+    } else {
+        Vec::new()
+    }
+}
+
+/// `jumps` (ascending rows of `trackpoints`) as rows of the kept points: each
+/// lands on the first kept fix at or after it, and jumps with no fix kept
+/// between them make one. With no fix kept before a jump there's no line to
+/// break, and a break would open the file on an empty segment.
+fn jumps_among_kept(trackpoints: &[TrackPoint], kept: &[bool], jumps: &[usize]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut pending = false;
+    let mut any_fix = false;
+    let mut row = 0;
+    for (i, tp) in trackpoints.iter().enumerate() {
+        pending |= jumps.binary_search(&i).is_ok();
+        if kept[i] {
+            if tp.lat.is_some() && tp.lon.is_some() {
+                if pending && any_fix {
+                    out.push(row);
+                }
+                pending = false;
+                any_fix = true;
+            }
+            row += 1;
+        }
+    }
+    out
+}
+
+/// `jumps`: rows of `trackpoints` a simulated course jumped to, ascending.
+fn write_gpx(activity: &Activity, trackpoints: &[TrackPoint], jumps: &[usize], barometric: bool) -> String {
     let mut xml = String::with_capacity(trackpoints.len() * 200);
 
     // The recording device goes into `creator`: services like Strava use it to
@@ -48,8 +103,9 @@ pub fn activity_to_gpx(activity: &Activity, trackpoints: &[TrackPoint], barometr
     ));
     xml.push_str("    <trkseg>\n");
 
-    // A new segment after every GPS gap, where the app's map breaks the
-    // line too (#256) — a reader would draw one straight across it.
+    // A new segment after every GPS gap and every jump of a simulated course,
+    // where the app's map breaks the line too (#256, #261) — a reader would
+    // draw one straight across it.
     let breaks = {
         let t: Vec<Option<f64>> = trackpoints
             .iter()
@@ -57,7 +113,10 @@ pub fn activity_to_gpx(activity: &Activity, trackpoints: &[TrackPoint], barometr
             .collect();
         let lat: Vec<Option<f64>> = trackpoints.iter().map(|p| p.lat).collect();
         let lon: Vec<Option<f64>> = trackpoints.iter().map(|p| p.lon).collect();
-        crate::import::gps_clean::fixes_after_gaps(&t, &lat, &lon)
+        let mut breaks = crate::import::gps_clean::fixes_after_gaps(&t, &lat, &lon);
+        breaks.extend_from_slice(jumps);
+        breaks.sort_unstable();
+        breaks
     };
 
     for (i, tp) in trackpoints.iter().enumerate() {
@@ -109,17 +168,17 @@ pub fn activity_to_gpx(activity: &Activity, trackpoints: &[TrackPoint], barometr
     xml
 }
 
-/// Strava-style privacy zone: drop every trackpoint within `radius_m` of the
-/// track's first and last GPS fixes. EVERY pass through a zone is hidden, not
-/// just the leading/trailing stretch — a loop that skirts home mid-ride must
-/// not leak it either. Tracks without GPS fixes come back unchanged.
-pub fn privacy_trim(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<TrackPoint> {
+/// Strava-style privacy zone: which trackpoints stay, each row outside
+/// `radius_m` of the track's first and last GPS fixes. EVERY pass through a
+/// zone is hidden, not just the leading/trailing stretch — a loop that skirts
+/// home mid-ride must not leak it either. Tracks without GPS fixes all stay.
+fn privacy_kept(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<bool> {
     let mut fixes = trackpoints.iter().filter_map(|tp| match (tp.lat, tp.lon) {
         (Some(lat), Some(lon)) => Some((lat, lon)),
         _ => None,
     });
     let Some(start) = fixes.next() else {
-        return trackpoints.to_vec();
+        return vec![true; trackpoints.len()];
     };
     let end = fixes.last().unwrap_or(start);
 
@@ -129,12 +188,15 @@ pub fn privacy_trim(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<TrackPoint
     };
     trackpoints
         .iter()
-        .filter(|tp| match (tp.lat, tp.lon) {
+        .map(|tp| match (tp.lat, tp.lon) {
             (Some(lat), Some(lon)) => !hidden(lat, lon),
             _ => true, // coordless points carry no location to hide
         })
-        .cloned()
         .collect()
+}
+
+fn keep_rows(trackpoints: &[TrackPoint], kept: &[bool]) -> Vec<TrackPoint> {
+    trackpoints.iter().zip(kept).filter(|(_, keep)| **keep).map(|(tp, _)| tp.clone()).collect()
 }
 
 /// Our internal sport slug → the Garmin-vocabulary word services recognize
@@ -283,6 +345,132 @@ mod tests {
         assert!(second.trim_start().starts_with(&format!("<trkpt lat=\"{:.7}\"", 55.0 + 70.0 * 1e-4)));
     }
 
+    /// Three fixes riding on, a jump, two more.
+    fn jumping_track() -> Vec<TrackPoint> {
+        let lats = [55.0, 55.0001, 55.0002, 55.5, 55.5001];
+        lats.iter()
+            .enumerate()
+            .map(|(k, lat)| TrackPoint {
+                activity_id: "test".to_string(),
+                t: Some(format!("2025-06-01T08:00:{k:02}+00:00")),
+                lat: Some(*lat),
+                lon: Some(37.0),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_jump_of_a_simulated_course_starts_a_new_segment() {
+        let mut activity = sample_activity();
+        activity.sport_type = "virtual_ride".to_string();
+        let gpx = activity_to_gpx(&activity, &jumping_track(), false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 2);
+        assert_eq!(gpx.matches("<trkpt").count(), 5);
+        let second = gpx.split("<trkseg>").nth(2).unwrap();
+        assert!(second.trim_start().starts_with("<trkpt lat=\"55.5000000\""));
+    }
+
+    /// A second a row: `jump` is where 0.5° are added, 60 s from row 40 have no fix.
+    fn gapped_track(jump: usize) -> Vec<TrackPoint> {
+        (0..120)
+            .map(|k| {
+                let fix = !(40..100).contains(&k);
+                let lat = 55.0 + k as f64 * 1e-5 + if k >= jump { 0.5 } else { 0.0 };
+                TrackPoint {
+                    activity_id: "test".to_string(),
+                    t: Some(format!("2025-06-01T08:{:02}:{:02}+00:00", k / 60, k % 60)),
+                    lat: fix.then_some(lat),
+                    lon: fix.then_some(37.0),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn jumps_and_gps_gaps_break_a_track_in_either_order() {
+        let mut activity = sample_activity();
+        activity.sport_type = "virtual_ride".to_string();
+        let segments = |jump| activity_to_gpx(&activity, &gapped_track(jump), false).matches("<trkseg>").count();
+        assert_eq!(segments(10), 3, "a jump before the gap");
+        assert_eq!(segments(110), 3, "a jump after the gap");
+        assert_eq!(segments(100), 2, "the first fix after the gap is both");
+    }
+
+    /// `n` rows of 8 m/s on a meridian, then a jump back to the start.
+    fn looping_course(n: usize, after: usize) -> Vec<TrackPoint> {
+        (0..n + after)
+            .map(|k| {
+                let along = if k < n { k } else { k - n };
+                TrackPoint {
+                    activity_id: "test".to_string(),
+                    t: Some(format!("2025-06-01T{:02}:{:02}:{:02}+00:00", k / 3600, k / 60 % 60, k % 60)),
+                    lat: Some(55.0 + 8.0 * along as f64 / 111_195.0),
+                    lon: Some(37.0),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_privacy_zone_keeps_the_break_of_a_jump_into_it() {
+        let mut activity = sample_activity();
+        activity.sport_type = "virtual_ride".to_string();
+        // 5 km out, back to the start: the landing and 125 s after it are hidden,
+        // and the rows taken out make the 4 km between what's left look ridden.
+        let track = looping_course(625, 300);
+        let gpx = activity_to_private_gpx(&activity, &track, 1000.0, false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 2);
+        let second = gpx.split("<trkseg>").nth(2).unwrap();
+        // The first fix out of the zone around the start, on the second lap.
+        let first = 55.0 + 8.0 * 126.0 / 111_195.0;
+        assert!(second.trim_start().starts_with(&format!("<trkpt lat=\"{first:.7}\"")), "{second:.80}");
+    }
+
+    #[test]
+    fn a_privacy_zone_leaves_a_real_track_in_one_segment() {
+        let gpx = activity_to_private_gpx(&sample_activity(), &looping_course(625, 300), 1000.0, false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 1);
+    }
+
+    #[test]
+    fn a_jump_with_nothing_kept_after_it_breaks_nothing() {
+        let track = looping_course(3, 2);
+        let kept = [true, true, true, false, false];
+        assert!(jumps_among_kept(&track, &kept, &[3]).is_empty());
+        // Two jumps with no fix kept between them are one break.
+        let kept = [true, false, false, false, true];
+        assert_eq!(jumps_among_kept(&track, &kept, &[1, 3]), vec![1]);
+        // A row without a fix can't carry one: the fix after it does.
+        let mut gapped = looping_course(3, 2);
+        gapped[3].lat = None;
+        gapped[3].lon = None;
+        assert_eq!(jumps_among_kept(&gapped, &[true; 5], &[3]), vec![4]);
+    }
+
+    #[test]
+    fn a_jump_with_nothing_kept_before_it_opens_no_empty_segment() {
+        let track = looping_course(3, 2);
+        let kept = [false, false, false, true, true];
+        assert!(jumps_among_kept(&track, &kept, &[3]).is_empty());
+        // A later jump still breaks: the first one left nothing behind it.
+        assert_eq!(jumps_among_kept(&track, &kept, &[3, 4]), vec![1]);
+        // Through the writer: everything before the jump lies in the zone.
+        let mut activity = sample_activity();
+        activity.sport_type = "virtual_ride".to_string();
+        let gpx = activity_to_private_gpx(&activity, &looping_course(50, 2000), 1000.0, false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 1);
+        assert!(gpx.split("<trkseg>").nth(1).unwrap().contains("<trkpt"));
+    }
+
+    #[test]
+    fn the_same_step_on_real_ground_keeps_one_segment() {
+        let gpx = activity_to_gpx(&sample_activity(), &jumping_track(), false);
+        assert_eq!(gpx.matches("<trkseg>").count(), 1);
+    }
+
     #[test]
     fn escapes_xml_entities() {
         let mut a = sample_activity();
@@ -335,6 +523,10 @@ mod tests {
         let gpx = activity_to_gpx(&sample_activity(), &tps, false);
         assert!(gpx.contains("<power>250</power>"));
         assert!(gpx.contains("<extensions>"));
+    }
+
+    fn privacy_trim(trackpoints: &[TrackPoint], radius_m: f64) -> Vec<TrackPoint> {
+        keep_rows(trackpoints, &privacy_kept(trackpoints, radius_m))
     }
 
     fn gps_tp(lat: f64, lon: f64) -> TrackPoint {

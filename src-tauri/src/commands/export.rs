@@ -105,16 +105,18 @@ pub fn export_activity_gpx(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| activity_not_found(&id))?;
 
-    let mut trackpoints = db::trackpoints::get_trackpoints(&conn, &id)
+    let trackpoints = db::trackpoints::get_trackpoints(&conn, &id)
         .map_err(|e| e.to_string())?;
 
     if let Some(radius_m) = privacy_radius_m {
         ensure_privacy_radius(radius_m)?;
-        trackpoints = gpx_writer::privacy_trim(&trackpoints, radius_m);
     }
 
     let barometric = activity_has_barometer(&state, &conn, &id);
-    let gpx_content = gpx_writer::activity_to_gpx(&activity, &trackpoints, barometric);
+    let gpx_content = match privacy_radius_m {
+        Some(radius_m) => gpx_writer::activity_to_private_gpx(&activity, &trackpoints, radius_m, barometric),
+        None => gpx_writer::activity_to_gpx(&activity, &trackpoints, barometric),
+    };
 
     if let Some(parent) = Path::new(&dest_path).parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -377,6 +379,40 @@ mod tests {
         let Err(err) = export_activity_gpx("a1".into(), dest("taken.gpx"), None, app.state()) else { panic!("exported") };
         assert_eq!(err.code, Some("export.writeGpxFailed"));
         assert_eq!(err.message, format!("Failed to write GPX file: {}", err.params["detail"].as_str().unwrap()));
+    }
+
+    /// The radius reaches the file: a private export has no point of the zone.
+    #[test]
+    fn a_private_gpx_export_leaves_out_the_privacy_zone() {
+        use tauri::Manager;
+        let tmp = unique_dir("gpx_private");
+        let app = crate::test_support::mock_app_at(&tmp);
+        {
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            conn.execute("INSERT INTO activity (id, start_time) VALUES ('a1', '2026-01-01T10:00:00+00:00')", [])
+                .unwrap();
+            // ~111 m a row, for 22 km.
+            let tps: Vec<crate::models::trackpoint::TrackPoint> = (0..200)
+                .map(|k| crate::models::trackpoint::TrackPoint {
+                    activity_id: "a1".to_string(),
+                    lat: Some(55.0 + k as f64 * 1e-3),
+                    lon: Some(37.0),
+                    ..Default::default()
+                })
+                .collect();
+            db::trackpoints::insert_trackpoints(&conn, &tps).unwrap();
+        }
+        let export = |name: &str, radius: Option<f64>| {
+            let dest = tmp.join(name);
+            export_activity_gpx("a1".into(), dest.to_str().unwrap().to_string(), radius, app.state()).unwrap();
+            fs::read_to_string(dest).unwrap()
+        };
+        let home = "lat=\"55.0000000\"";
+        assert!(export("all.gpx", None).contains(home));
+        let private = export("private.gpx", Some(1000.0));
+        assert!(!private.contains(home));
+        assert_eq!(private.matches("<trkpt").count(), 182, "9 rows gone at each end");
     }
 
     /// Concurrent backups share one .backup-snapshot dir — the second call

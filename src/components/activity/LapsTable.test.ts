@@ -10,10 +10,25 @@ function track(distance_m: number[], t: number[], altitude_m: (number | null)[] 
     t,
     altitude_m: altitude_m.length ? altitude_m : distance_m.map(() => null),
     hr: hr.length ? hr : distance_m.map(() => null),
+    teleported: [],
   } as unknown as TrackPointColumns;
 }
 
 describe("autoLaps", () => {
+  it("climbs nothing at a simulated course's jump (#261)", () => {
+    const flat = track([0, 500, 500, 1000, 1500], [0, 60, 61, 120, 180], [100, 100, 300, 300, 301]);
+    expect(autoLaps(flat, "run")[0].ascent).toBe(200);
+    const marked = { ...flat, teleported: [false, false, true, false, false] };
+    expect(autoLaps(marked, "run")[0].ascent).toBe(0);
+    expect(autoLaps(marked, "run")[1].ascent).toBe(1);
+  });
+
+  it("climbs nothing at a jump that landed on a row without a height", () => {
+    const flat = track([0, 500, 500, 1000], [0, 60, 61, 120], [100, 100, null, 300]);
+    const marked = { ...flat, teleported: [false, false, true, false] };
+    expect(autoLaps(marked, "run")[0].ascent).toBe(0);
+  });
+
   it("splits a steady run into 1 km laps + a trailing partial", () => {
     // 2.5 km at 5:00/km → 300 s per 1 km.
     const dist = [0, 500, 1000, 1500, 2000, 2500];

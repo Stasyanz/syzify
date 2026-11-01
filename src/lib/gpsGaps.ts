@@ -11,6 +11,14 @@
  * step between two rows this long is a pause, and no time without GPS. */
 export const GPS_GAP_MIN_S = 30;
 
+export interface GpsTrack {
+  t: (number | null)[];
+  lat: (number | null)[];
+  lon: (number | null)[];
+  /** The backend's marks of a simulated course's jumps (#261). */
+  teleported?: boolean[];
+}
+
 export interface GpsGap {
   /** Index of the last fix before the gap, -1 when the track starts with it. */
   before: number;
@@ -19,18 +27,12 @@ export interface GpsGap {
   seconds: number;
 }
 
-interface Track {
-  t: (number | null)[];
-  lat: (number | null)[];
-  lon: (number | null)[];
-}
-
-const hasFix = (tr: Track, i: number) => tr.lat[i] != null && tr.lon[i] != null;
+const hasFix = (tr: GpsTrack, i: number) => tr.lat[i] != null && tr.lon[i] != null;
 
 /** The gaps of a track with at least one fix, in order. A pause is not a
  * gap, with or without a row beside it: nothing was recorded, nothing was
  * lost. */
-export function gpsGaps(tr: Track): GpsGap[] {
+export function gpsGaps(tr: GpsTrack): GpsGap[] {
   const n = tr.lat.length;
   const gaps: GpsGap[] = [];
   let i = 0;
@@ -64,15 +66,16 @@ export function gpsGaps(tr: Track): GpsGap[] {
  * leaves out. The minutes before the first fix (waiting for satellites) and
  * after the last (finishing indoors) leave no hole in the route, so they
  * don't count; nor does a track with no fix at all (an indoor ride). */
-export function secondsWithoutGps(tr: Track): number {
+export function secondsWithoutGps(tr: GpsTrack): number {
   return gpsGaps(tr)
     .filter((g) => g.before >= 0 && g.after < tr.lat.length)
     .reduce((s, g) => s + g.seconds, 0);
 }
 
 /** The fixes as runs of [lat, lon], a new run after every gap inside the
- * track — what the map draws as separate lines. */
-export function fixRuns(tr: Track): [number, number][][] {
+ * track and at every jump of a simulated course — what the map draws as
+ * separate lines. */
+export function fixRuns(tr: GpsTrack): [number, number][][] {
   const breaks = new Set(gpsGaps(tr).filter((g) => g.before >= 0).map((g) => g.after));
   const runs: [number, number][][] = [];
   let cur: [number, number][] = [];
@@ -80,7 +83,7 @@ export function fixRuns(tr: Track): [number, number][][] {
     const lat = tr.lat[i];
     const lon = tr.lon[i];
     if (lat == null || lon == null) continue;
-    if (breaks.has(i) && cur.length > 0) {
+    if ((breaks.has(i) || tr.teleported?.[i]) && cur.length > 0) {
       runs.push(cur);
       cur = [];
     }

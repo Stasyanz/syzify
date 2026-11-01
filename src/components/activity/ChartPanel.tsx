@@ -902,7 +902,7 @@ export function ChartPanel({
   // Smoothed grade (%) per trackpoint — meters in, unitless out, so the
   // display-unit setting never touches it.
   const grades = useMemo(
-    () => gradeSeries(trackpoints.distance_m, trackpoints.altitude_m),
+    () => gradeSeries(trackpoints.distance_m, trackpoints.altitude_m, trackpoints.teleported),
     [trackpoints],
   );
   // What the line and the fill paint: the category owning most of the
@@ -1077,6 +1077,7 @@ export function ChartPanel({
       tpA,
       tpB,
       trackpoints.t,
+      trackpoints.teleported,
     );
     return s && formatSelectionStats(s);
   };

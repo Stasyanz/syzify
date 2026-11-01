@@ -36,6 +36,7 @@ function track(km: number): TrackPointColumns {
     t: col((i) => i * 60),
     altitude_m: col(() => null),
     hr: col(() => null),
+    teleported: [],
   } as unknown as TrackPointColumns;
 }
 

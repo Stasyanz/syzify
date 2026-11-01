@@ -82,19 +82,6 @@ fn configure_and_migrate(conn: &mut Connection) -> Result<(), CommandError> {
 /// so they run in a background thread AFTER boot — never in `setup()` on the
 /// main thread, which would freeze the window before it paints.
 pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
-    // Best-effort splits for runs imported before the running-records feature.
-    // v2 recomputes after the max-speed guard that clears GPS-glitch splits.
-    const BACKFILL_FLAG: &str = "best_efforts_backfilled_v2";
-    if db::settings::get_setting(conn, BACKFILL_FLAG)
-        .map_err(|e| format!("Failed to read settings: {}", e))?
-        .is_none()
-    {
-        db::best_efforts::recompute_running(conn)
-            .map_err(|e| format!("Failed to backfill best efforts: {}", e))?;
-        db::settings::set_setting(conn, BACKFILL_FLAG, "1")
-            .map_err(|e| format!("Failed to mark backfill done: {}", e))?;
-    }
-
     // Upgrade sport types from stored sub-sport for activities imported before
     // the 7→24 sport expansion (replaces the old manual button; idempotent).
     const SPORT_BACKFILL_FLAG: &str = "sport_types_backfilled_v1";
@@ -147,6 +134,21 @@ pub(crate) fn run_startup_backfills(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to refile virtual runs: {}", e))?;
         db::settings::set_setting(conn, VIRTUAL_RUNS_FLAG, "1")
             .map_err(|e| format!("Failed to mark virtual-run backfill done: {}", e))?;
+    }
+
+    // Best-effort splits for runs imported before the running-records feature.
+    // v2 recomputes after the max-speed guard that clears GPS-glitch splits;
+    // v3 after a simulated course's jumps left the distance axis (#261). After
+    // the steps above: a run only counts its jumps out once it's filed as virtual.
+    const BACKFILL_FLAG: &str = "best_efforts_backfilled_v3";
+    if db::settings::get_setting(conn, BACKFILL_FLAG)
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .is_none()
+    {
+        db::best_efforts::recompute_running(conn)
+            .map_err(|e| format!("Failed to backfill best efforts: {}", e))?;
+        db::settings::set_setting(conn, BACKFILL_FLAG, "1")
+            .map_err(|e| format!("Failed to mark backfill done: {}", e))?;
     }
 
     // Efforts for segments saved before the matching engine existed. New
@@ -919,6 +921,53 @@ mod startup_backfill_tests {
             db::settings::get_setting(&conn, "virtual_runs_refiled_v1").unwrap().as_deref(),
             Some("1")
         );
+    }
+
+    /// A vault that ran the previous backfill, holding a virtual run with a
+    /// split timed across a jump before #261.
+    fn vault_with_stale_split(sport: &str, sub_sport: Option<&str>) -> Connection {
+        let conn = db::test_db();
+        db::settings::set_setting(&conn, "best_efforts_backfilled_v2", "1").unwrap();
+        conn.execute(
+            "INSERT INTO activity (id, start_time, sport_type, sub_sport) VALUES ('vr', '2026-01-01T10:00:00+00:00', ?1, ?2)",
+            rusqlite::params![sport, sub_sport],
+        )
+        .unwrap();
+        // 3 m/s for 40 minutes, jumping 13 km at the halfway mark.
+        let tps: Vec<crate::models::trackpoint::TrackPoint> = (0..2400)
+            .map(|k: u32| crate::models::trackpoint::TrackPoint {
+                activity_id: "vr".to_string(),
+                t: Some(format!("2026-01-01T10:{:02}:{:02}+00:00", k / 60, k % 60)),
+                lat: Some(55.0 + 3.0 * k as f64 / 111_195.0 + if k >= 1200 { 0.117 } else { 0.0 }),
+                lon: Some(37.0),
+                ..Default::default()
+            })
+            .collect();
+        db::trackpoints::insert_trackpoints(&conn, &tps).unwrap();
+        db::best_efforts::set_best_efforts(&conn, "vr", &[(5000.0, 60.0)]).unwrap();
+        conn
+    }
+
+    fn assert_split_is_retimed(conn: &Connection) {
+        let (_, _, _, seconds) =
+            db::best_efforts::fastest_for_distance(conn, "virtual_run", 5000.0).unwrap().unwrap();
+        assert!((seconds - 5000.0 / 3.0).abs() < 5.0, "5 km at 3 m/s: {seconds}");
+    }
+
+    #[test]
+    fn startup_retimes_a_virtual_runs_splits_across_a_jump() {
+        let conn = vault_with_stale_split("virtual_run", None);
+        run_startup_backfills(&conn).unwrap();
+        assert_split_is_retimed(&conn);
+    }
+
+    /// A vault from before #192: the run becomes virtual in the same startup,
+    /// and only then do its jumps count out.
+    #[test]
+    fn startup_retimes_a_run_it_has_just_filed_as_virtual() {
+        let conn = vault_with_stale_split("run", Some("virtual_activity"));
+        run_startup_backfills(&conn).unwrap();
+        assert_split_is_retimed(&conn);
     }
 
     /// The simulated-course scrub at startup (#190) follows the geocoder

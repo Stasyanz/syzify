@@ -6,6 +6,16 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Fixed
+- A virtual ride or run whose route starts over mid-activity, as a Zwift
+  video route does at its finish, no longer draws a straight line across the
+  course (#261). The map, the share image and an exported GPX break there, with
+  a privacy zone too. The jump adds neither distance nor climbing to the charts
+  and a chart selection, the auto laps, a virtual run's splits (timed again once
+  on the first launch) or a new import's totals. A jump after a pause long enough
+  to look ridden still counts. A file without a device summary, imported before
+  or with its sport changed since, keeps the totals it has.
+
 ## [0.13.0] - 2026-10-31
 
 ### Added

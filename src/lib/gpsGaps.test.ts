@@ -86,4 +86,22 @@ describe("fixRuns", () => {
     const tr = track(100, (i) => i !== 50);
     expect(fixRuns(tr).map((r) => r.length)).toEqual([99]);
   });
+
+  it("breaks the line at a jump the backend marked", () => {
+    const tr = track(5, () => true);
+    const runs = fixRuns({ ...tr, teleported: [false, false, false, true, false] });
+    expect(runs.map((r) => r.length)).toEqual([3, 2]);
+    expect(runs[1][0]).toEqual([55 + 3e-4, 37]);
+    expect(gpsGaps(tr)).toEqual([]);
+  });
+
+  it("draws one line when nothing is marked", () => {
+    const tr = track(5, () => true);
+    expect(fixRuns({ ...tr, teleported: [] }).map((r) => r.length)).toEqual([5]);
+  });
+
+  it("starts no empty line at a mark on the first fix", () => {
+    const tr = track(3, () => true);
+    expect(fixRuns({ ...tr, teleported: [true, false, false] }).map((r) => r.length)).toEqual([3]);
+  });
 });

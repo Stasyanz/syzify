@@ -73,6 +73,16 @@ describe("routeRuns", () => {
     expect(runs.map((r) => r.length)).toEqual([50, 50]);
     expect(runs[1][0]).toEqual({ lat: 50 + 150e-4, lon: 30 });
   });
+
+  it("breaks the route at a simulated course's jump too (#261)", () => {
+    const runs = routeRuns({
+      t: [0, 1, 2, 3],
+      lat: [50, 50.1, 60, 60.1],
+      lon: [30, 30, 30, 30],
+      teleported: [false, false, true, false],
+    });
+    expect(runs.map((r) => r.length)).toEqual([2, 2]);
+  });
 });
 
 describe("computeElevationLayout", () => {

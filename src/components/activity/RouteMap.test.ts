@@ -34,6 +34,7 @@ const tp = (over: Partial<TrackPointColumns> = {}): TrackPointColumns => ({
   right_torque_effectiveness: [null],
   left_pedal_smoothness: [null],
   right_pedal_smoothness: [null],
+  teleported: [],
   ...over,
 });
 
@@ -75,6 +76,32 @@ describe("segmentPositions", () => {
       [
         [95, 77],
         [96, 78],
+      ],
+    ]);
+  });
+
+  it("breaks at a course's jump inside the range, and not at one before it (#261)", () => {
+    const jumping = {
+      ...track,
+      lat: [55.0, 55.1, 55.2, 60.0, 60.1],
+      lon: [37.0, 37.0, 37.0, 37.0, 37.0],
+      teleported: [false, false, false, true, false],
+    };
+    expect(segmentPositions(jumping, [1, 4])).toEqual([
+      [
+        [55.1, 37],
+        [55.2, 37],
+      ],
+      [
+        [60.0, 37],
+        [60.1, 37],
+      ],
+    ]);
+    // A selection that starts on the landing fix is one line: the mark keeps its row.
+    expect(segmentPositions(jumping, [3, 4])).toEqual([
+      [
+        [60.0, 37],
+        [60.1, 37],
       ],
     ]);
   });

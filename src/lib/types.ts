@@ -243,6 +243,10 @@ export interface TrackPointColumns {
   right_torque_effectiveness: (number | null)[];
   left_pedal_smoothness: (number | null)[];
   right_pedal_smoothness: (number | null)[];
+  /** True at a fix a simulated course jumped to (#261), where a line and the
+   * distance don't cross. One entry per trackpoint, or empty when there's no
+   * such fix, which is nearly always. */
+  teleported: boolean[];
 }
 
 /** A record this activity holds within its sport (header trophy chip). */

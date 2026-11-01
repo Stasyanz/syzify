@@ -48,6 +48,7 @@ function columns(n: number, over: Partial<TrackPointColumns> = {}): TrackPointCo
     right_torque_effectiveness: nulls(),
     left_pedal_smoothness: nulls(),
     right_pedal_smoothness: nulls(),
+    teleported: [],
     ...over,
   };
 }

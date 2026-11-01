@@ -107,6 +107,7 @@ function columns(n: number, over: Partial<TrackPointColumns> = {}): TrackPointCo
     right_torque_effectiveness: nulls(),
     left_pedal_smoothness: nulls(),
     right_pedal_smoothness: nulls(),
+    teleported: [],
     ...over,
   };
 }
@@ -449,6 +450,29 @@ describe("ChartPanel elevation layers", () => {
     }
   });
 
+  it("counts no climb in a selection across a simulated course's jump (#261)", async () => {
+    // 1 % up all the way, the jump at row 10 landing 200 m higher at no distance.
+    const road = (i: number) => (i < 10 ? i : i - 1) * 100;
+    const jumping = columns(N, {
+      distance_m: seq(road),
+      altitude_m: seq((i) => 100 + road(i) * 0.01 + (i >= 10 ? 200 : 0)),
+      teleported: Array.from({ length: N }, (_, i) => i === 10),
+    });
+    const { findByTestId } = renderPanel(jumping, vi.fn());
+    const elevation = built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+    const xs = elevation.data[0] as number[];
+    valToPosImpl = (v) => (v / xs[xs.length - 1]) * 760;
+    try {
+      act(() => useActivityStore.setState({ selectedRange: [0, N - 1] }));
+      const badge = await findByTestId("chart-sel-badge");
+      expect(badge.textContent).toContain("+18 m");
+      expect(badge.textContent).not.toContain("218");
+    } finally {
+      valToPosImpl = () => 0;
+      act(() => useActivityStore.setState({ selectedRange: null }));
+    }
+  });
+
   it("fills an inverted chart down from the line toward the slow edge", () => {
     // A run with speed: the pace chart's y axis is inverted, so its fill
     // must start at the data max (the slow edge), not the 0 baseline.
@@ -475,6 +499,25 @@ describe("ChartPanel elevation layers", () => {
     expect(elevation!.opts.series).toHaveLength(2);
     expect(typeof elevation!.opts.series[1].stroke).toBe("function");
     expect(elevation!.data).toHaveLength(2);
+  });
+
+  it("paints no climb at a simulated course's jump (#261)", () => {
+    // Flat 10 m stretches, each ending in a jump 2 m up at no distance.
+    const n = 200;
+    const rows = <T,>(f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
+    const stepped = {
+      distance_m: rows((i) => Math.floor(i / 2) * 10),
+      altitude_m: rows((i) => 100 + Math.ceil(i / 2) * 2),
+    };
+    const elevationOf = (tp: TrackPointColumns) => {
+      built.splice(0);
+      renderPanel(tp, vi.fn());
+      return built.find((b) => b.opts.series[1]?.label?.startsWith("Elevation"))!;
+    };
+    // Unmarked, the steps read as a climb and get its fill.
+    expect(elevationOf(columns(n, stepped)).opts.series.length).toBeGreaterThan(2);
+    const marks = rows((i) => i % 2 === 1);
+    expect(elevationOf(columns(n, { ...stepped, teleported: marks })).opts.series).toHaveLength(2);
   });
 
   it("sizes every chart's y axis by its labels, not by uPlot's fixed default", () => {

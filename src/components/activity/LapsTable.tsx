@@ -49,12 +49,12 @@ function lapLengthLabel(sport: string): string {
 /** Split a GPS track into fixed-distance laps when the source has no laps. */
 export function autoLaps(tp: TrackPointColumns, sport: string): Row[] {
   const lapDist = lapDistanceFor(sport);
-  const pts: { d: number; t: number; alt: number | null; hr: number | null }[] = [];
+  const pts: { d: number; t: number; alt: number | null; hr: number | null; jumped: boolean }[] = [];
   for (let i = 0; i < tp.distance_m.length; i++) {
     const d = tp.distance_m[i];
     const t = tp.t[i];
     if (d == null || t == null) continue;
-    pts.push({ d, t, alt: tp.altitude_m[i] ?? null, hr: tp.hr[i] ?? null });
+    pts.push({ d, t, alt: tp.altitude_m[i] ?? null, hr: tp.hr[i] ?? null, jumped: tp.teleported[i] === true });
   }
   if (pts.length < 2) return [];
 
@@ -65,6 +65,8 @@ export function autoLaps(tp: TrackPointColumns, sport: string): Row[] {
   let hrSum = 0;
   let hrCount = 0;
   let prevAlt = pts[0].alt;
+  // The height a simulated course's jump changed by is no climbing (#261).
+  let jumped = false;
   let lap = 1;
 
   const push = (endT: number, dist: number) => {
@@ -89,8 +91,12 @@ export function autoLaps(tp: TrackPointColumns, sport: string): Row[] {
 
   for (let i = 1; i < pts.length; i++) {
     const s = pts[i];
-    if (s.alt != null && prevAlt != null && s.alt > prevAlt) ascent += s.alt - prevAlt;
-    if (s.alt != null) prevAlt = s.alt;
+    jumped ||= s.jumped;
+    if (s.alt != null) {
+      if (!jumped && prevAlt != null && s.alt > prevAlt) ascent += s.alt - prevAlt;
+      prevAlt = s.alt;
+      jumped = false;
+    }
     if (s.hr != null) {
       hrSum += s.hr;
       hrCount++;

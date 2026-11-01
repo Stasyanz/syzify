@@ -46,6 +46,7 @@ const track: TrackPointColumns = {
   left_pedal_smoothness: [null, null, null],
   right_torque_effectiveness: [null, null, null],
   right_pedal_smoothness: [null, null, null],
+  teleported: [],
 };
 
 /** Mounts the map and hands back the Leaflet instance: the wrapper creates
@@ -373,6 +374,29 @@ describe("a track broken by a GPS gap (#256)", () => {
     const [start, end] = markers(map).map((m) => m.getLatLng());
     expect(start).toEqual(L.latLng(55.7, 37.6));
     expect(end).toEqual(L.latLng(55.7 + 239e-4, 37.6));
+  });
+});
+
+describe("a simulated course that jumps (#261)", () => {
+  it("draws two lines, not one straight across the course", () => {
+    const { map } = mount({
+      sport: "virtual_ride",
+      trackpoints: {
+        ...track,
+        t: [0, 1, 2],
+        lat: [55.7, 55.701, 55.0],
+        lon: [37.6, 37.6, 37.0],
+        teleported: [false, false, true],
+      },
+    });
+    const lines: L.Polyline[] = [];
+    map.eachLayer((l) => {
+      if (l instanceof L.Polyline) lines.push(l);
+    });
+    expect(lines).toHaveLength(1);
+    const parts = lines[0].getLatLngs() as L.LatLng[][];
+    expect(parts.map((p) => p.length)).toEqual([2, 1]);
+    expect(parts[1][0]).toEqual(L.latLng(55.0, 37.0));
   });
 });
 

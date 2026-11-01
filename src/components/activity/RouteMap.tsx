@@ -204,8 +204,9 @@ function HoverMarker({
 
 /** Valid GPS positions of the trackpoint range [a, b] (inclusive, clamped) —
  * the piece of route a chart drag-selection maps to — as lines broken at
- * the GPS gaps inside it, like the route under it (#256). Exported pure for
- * tests. Fewer than 2 usable points can't form a segment → null. */
+ * the GPS gaps and course jumps inside it, like the route under it (#256,
+ * #261). Exported pure for tests. Fewer than 2 usable points can't form a
+ * segment → null. */
 export function segmentPositions(
   trackpoints: TrackPointColumns,
   range: [number, number],
@@ -216,6 +217,7 @@ export function segmentPositions(
     t: trackpoints.t.slice(from, to + 1),
     lat: trackpoints.lat.slice(from, to + 1),
     lon: trackpoints.lon.slice(from, to + 1),
+    teleported: trackpoints.teleported.slice(from, to + 1),
   });
   return lines.reduce((n, l) => n + l.length, 0) >= 2 ? lines : null;
 }
@@ -412,7 +414,8 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
 
 /** All valid GPS positions (bounds, start and end) and the same fixes as
  * the lines the map draws — broken where the GPS was gone (#256), so a
- * jammed stretch is not drawn as a straight line across the town. */
+ * jammed stretch is not drawn as a straight line across the town, and where
+ * a simulated course jumped (#261). */
 function useRoutePositions(trackpoints: TrackPointColumns) {
   return useMemo(() => {
     const lines: L.LatLngExpression[][] = fixRuns(trackpoints);

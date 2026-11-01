@@ -48,6 +48,7 @@ const tp = (t: (number | null)[], distance_m: (number | null)[]): TrackPointColu
   right_torque_effectiveness: t.map(() => null),
   left_pedal_smoothness: t.map(() => null),
   right_pedal_smoothness: t.map(() => null),
+  teleported: [],
 });
 
 describe("isFocusableLeg", () => {
@@ -78,6 +79,17 @@ describe("legTimeWindow", () => {
 
   it("returns null for unfocusable legs", () => {
     expect(legTimeWindow(leg({ is_transition: true }))).toBeNull();
+  });
+});
+
+describe("sliceTrackpoints marks", () => {
+  it("keeps a course jump's mark on its row (#261)", () => {
+    const track = { ...tp([100, 110, 120, 130], [0, 50, 100, 150]), teleported: [false, false, true, false] };
+    expect(sliceTrackpoints(track, 110, 130).teleported).toEqual([false, true, false]);
+  });
+
+  it("leaves a track with no jump with no marks", () => {
+    expect(sliceTrackpoints(tp([100, 110], [0, 50]), 100, 110).teleported).toEqual([]);
   });
 });
 

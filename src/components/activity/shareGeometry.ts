@@ -8,8 +8,7 @@
  * the preview is a pixel-exact replica of the export (WYSIWYG) regardless of crop.
  */
 
-import { fixRuns } from "../../lib/gpsGaps";
-import type { TrackPointColumns } from "../../lib/types";
+import { fixRuns, type GpsTrack } from "../../lib/gpsGaps";
 
 export interface LatLon {
   lat: number;
@@ -17,8 +16,9 @@ export interface LatLon {
 }
 
 /** The route both renderers draw: the fixes, a new line after every GPS
- * gap — the same breaks as the activity's map (#256). */
-export function routeRuns(tps: Pick<TrackPointColumns, "t" | "lat" | "lon">): LatLon[][] {
+ * gap and every jump of a simulated course — the same breaks as the
+ * activity's map (#256, #261). */
+export function routeRuns(tps: GpsTrack): LatLon[][] {
   return fixRuns(tps).map((run) => run.map(([lat, lon]) => ({ lat, lon })));
 }
 

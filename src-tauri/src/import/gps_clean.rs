@@ -379,6 +379,47 @@ pub fn fixes_after_gaps(t: &[Option<f64>], lat: &[Option<f64>], lon: &[Option<f6
     out
 }
 
+/// A step on a simulated course faster than this is no riding: a looping
+/// route starting over puts the rider back at its start between two rows
+/// (#261). Far above what a course lets anyone ride, and the coordinates stay:
+/// unlike a spoofed fix, both ends of the step are where the simulator says.
+const TELEPORT_MPS: f64 = 50.0;
+
+/// Indices of the fixes a simulated course jumped to. Only for a sport with
+/// such a course (`has_simulated_course`): on real ground a jump like this is
+/// for [`clean_trackpoints`] to judge. A step without a time on both ends
+/// can't be told. Speed alone decides, so sparse recording never reads as a
+/// jump, at a price: a jump after a pause long enough to look ridden stays.
+pub fn teleported_fixes(t: &[Option<f64>], lat: &[Option<f64>], lon: &[Option<f64>]) -> Vec<usize> {
+    let n = t.len().min(lat.len()).min(lon.len());
+    let mut out = Vec::new();
+    let mut last: Option<(Option<f64>, f64, f64)> = None;
+    for i in 0..n {
+        let (Some(la), Some(lo)) = (lat[i], lon[i]) else {
+            continue;
+        };
+        if let Some((Some(a), pla, plo)) = last {
+            if let Some(b) = t[i] {
+                // Rows may share a second: that is a second's riding at most.
+                if haversine_m(pla, plo, la, lo) > TELEPORT_MPS * (b - a).max(1.0) {
+                    out.push(i);
+                }
+            }
+        }
+        last = Some((t[i], la, lo));
+    }
+    out
+}
+
+/// [`teleported_fixes`] of a list of points.
+pub fn teleported_points(points: &[TrackPoint]) -> Vec<usize> {
+    let t: Vec<Option<f64>> =
+        points.iter().map(|p| p.t.as_deref().and_then(parse_time_seconds)).collect();
+    let lat: Vec<Option<f64>> = points.iter().map(|p| p.lat).collect();
+    let lon: Vec<Option<f64>> = points.iter().map(|p| p.lon).collect();
+    teleported_fixes(&t, &lat, &lon)
+}
+
 #[derive(Clone, Copy)]
 struct Fix {
     i: usize,
@@ -1222,6 +1263,66 @@ mod tests {
         let t: Vec<Option<f64>> = (0..60).map(|k| Some(k as f64)).chain([Some(900.0)]).collect();
         let lat: Vec<Option<f64>> = (0..61).map(|k| (k == 0 || k == 60).then_some(55.0)).collect();
         assert_eq!(fixes_after_gaps(&t, &lat, &lat), vec![60]);
+    }
+
+    /// Two fixes `metres` apart along a meridian, `dt` seconds apart.
+    fn step(metres: f64, dt: f64) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
+        let deg = metres / 111_194.9;
+        (vec![Some(0.0), Some(dt)], vec![Some(55.0), Some(55.0 + deg)], vec![Some(37.0), Some(37.0)])
+    }
+
+    #[test]
+    fn a_course_teleport_is_a_step_too_fast_to_ride() {
+        // A route starting over: 13 km in a second, at the row that lands there.
+        let (t, lat, lon) = step(13_000.0, 1.0);
+        assert_eq!(teleported_fixes(&t, &lat, &lon), vec![1]);
+        // Either side of the limit, for a second and for two.
+        let (t, lat, lon) = step(49.0, 1.0);
+        assert!(teleported_fixes(&t, &lat, &lon).is_empty());
+        let (t, lat, lon) = step(51.0, 1.0);
+        assert_eq!(teleported_fixes(&t, &lat, &lon), vec![1]);
+        let (t, lat, lon) = step(99.0, 2.0);
+        assert!(teleported_fixes(&t, &lat, &lon).is_empty());
+        // Two rows in one second move no faster than one.
+        let (t, lat, lon) = step(49.0, 0.0);
+        assert!(teleported_fixes(&t, &lat, &lon).is_empty());
+    }
+
+    #[test]
+    fn sparse_recording_is_no_course_teleport() {
+        // A point every five minutes: 1 km of running, not a jump.
+        let (t, lat, lon) = step(1_000.0, 300.0);
+        assert!(teleported_fixes(&t, &lat, &lon).is_empty());
+        // The known price: a jump after a pause long enough to look ridden.
+        let (t, lat, lon) = step(13_000.0, 600.0);
+        assert!(teleported_fixes(&t, &lat, &lon).is_empty());
+        // Without a time on both ends a step can't be told.
+        let (_, lat, lon) = step(13_000.0, 1.0);
+        assert!(teleported_fixes(&[None, None], &lat, &lon).is_empty());
+        assert!(teleported_fixes(&[Some(0.0), None], &lat, &lon).is_empty());
+        assert!(teleported_fixes(&[None, Some(1.0)], &lat, &lon).is_empty());
+    }
+
+    #[test]
+    fn a_course_teleport_reads_across_rows_without_a_fix() {
+        let t: Vec<Option<f64>> = (0..4).map(|i| Some(i as f64)).collect();
+        let lat = [Some(55.0), None, None, Some(55.2)];
+        let lon = [Some(37.0), None, None, Some(37.0)];
+        assert_eq!(teleported_fixes(&t, &lat, &lon), vec![3]);
+        assert!(teleported_fixes(&[], &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_course_teleport_is_found_among_stored_points() {
+        let point = |t: &str, lat: Option<f64>| TrackPoint {
+            t: Some(format!("2026-01-01T10:00:{t}+00:00")),
+            lat,
+            lon: lat.map(|_| 37.0),
+            ..Default::default()
+        };
+        let points = [point("00", Some(55.0)), point("01", None), point("02", Some(56.0))];
+        assert_eq!(teleported_points(&points), vec![2]);
+        assert!(teleported_points(&points[..2]).is_empty());
     }
 
     #[test]

@@ -391,7 +391,24 @@ export const GRADE_MAX_ABS_PCT = 40;
 export function gradeSeries(
   distM: (number | null)[],
   altM: (number | null)[],
+  teleported: boolean[] = [],
   windowM: number = GRADE_WINDOW_M,
+): (number | null)[] {
+  // A simulated course's jump (#261) changes the height over no distance:
+  // no slope, so each stretch between jumps gets windows of its own.
+  const starts = [0];
+  teleported.forEach((jumped, i) => {
+    if (jumped && i > 0) starts.push(i);
+  });
+  return starts.flatMap((from, k) =>
+    gradeOfStretch(distM.slice(from, starts[k + 1]), altM.slice(from, starts[k + 1]), windowM),
+  );
+}
+
+function gradeOfStretch(
+  distM: (number | null)[],
+  altM: (number | null)[],
+  windowM: number,
 ): (number | null)[] {
   const n = distM.length;
   const out: (number | null)[] = new Array(n).fill(null);
@@ -488,7 +505,8 @@ export function externalSelectionCols(
 export interface SelectionGrade {
   /** Horizontal span between the endpoints, meters. */
   distanceM: number;
-  /** Net altitude change end minus start, meters (signed). */
+  /** Net altitude change end minus start, meters (signed), without the height
+   * a simulated course's jumps (#261) changed it by. */
   deltaM: number;
   /** Average grade over the span, percent (signed). */
   gradePct: number;
@@ -510,6 +528,7 @@ export function selectionGrade(
   a: number,
   b: number,
   tSec?: (number | null)[],
+  teleported: boolean[] = [],
 ): SelectionGrade | null {
   let lo = Math.max(0, Math.min(a, b));
   let hi = Math.min(distM.length - 1, Math.max(a, b));
@@ -518,7 +537,17 @@ export function selectionGrade(
   if (lo >= hi) return null;
   const span = distM[hi]! - distM[lo]!;
   if (span < MIN_GRADE_SPAN_M) return null;
-  const delta = altM[hi]! - altM[lo]!;
+  let delta = altM[hi]! - altM[lo]!;
+  let prev = lo;
+  let jumped = false;
+  for (let i = lo + 1; i <= hi; i++) {
+    jumped ||= teleported[i] === true;
+    const alt = altM[i];
+    if (alt == null) continue;
+    if (jumped) delta -= alt - altM[prev]!;
+    prev = i;
+    jumped = false;
+  }
   // Elapsed at the SAME slid-inward endpoints the distance/climb use — a
   // negative delta (clock weirdness across a device restart) reads as null.
   const t0 = tSec?.[lo];
