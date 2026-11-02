@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-02
+
 ### Fixed
 - A virtual ride or run whose route starts over mid-activity, as a Zwift
   video route does at its finish, no longer draws a straight line across the
