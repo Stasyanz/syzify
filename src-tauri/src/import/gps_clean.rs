@@ -420,17 +420,13 @@ pub fn bridged_gaps(
         return Vec::new();
     };
     let fixes = fixes_of(t, lat, lon);
-    fixes_after_gaps(t, lat, lon)
-        .into_iter()
-        .filter(|&resume| {
-            // Both ends of a gap have a time, so both are among `fixes`.
-            let Ok(k) = fixes.binary_search_by_key(&resume, |f| f.i) else {
-                return false;
-            };
-            let Some(before) = k.checked_sub(1).map(|b| fixes[b]) else {
-                return false;
-            };
-            let after = fixes[k];
+    let resumes = fixes_after_gaps(t, lat, lon);
+    // Both ends of a gap have a time, so both are among `fixes`, the fix before
+    // it right before the one resuming.
+    (1..fixes.len())
+        .filter(|&k| resumes.binary_search(&fixes[k].i).is_ok())
+        .filter(|&k| {
+            let (before, after) = (fixes[k - 1], fixes[k]);
             let (Some(back), Some(on)) = (
                 course_from(&fixes, k - 1, true, limits.sustained_mps),
                 course_from(&fixes, k, false, limits.sustained_mps),
@@ -447,6 +443,7 @@ pub fn bridged_gaps(
                 && turn_deg(bearing_deg(&back.far, &before), line) <= BRIDGE_MAX_TURN_DEG
                 && turn_deg(bearing_deg(&after, &on.far), line) <= BRIDGE_MAX_TURN_DEG
         })
+        .map(|k| fixes[k].i)
         .collect()
 }
 
