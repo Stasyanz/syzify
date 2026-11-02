@@ -364,19 +364,134 @@ pub fn fixes_after_gaps(t: &[Option<f64>], lat: &[Option<f64>], lon: &[Option<f6
         }
         if let Some(p) = last_fix {
             // Both ends have a time, or the stretch can't be told.
-            if i > p + 1 && t[p].is_some() && t[i].is_some() {
-                let seconds: f64 = (p..i)
-                    .filter_map(|k| Some(t[k + 1]? - t[k]?))
-                    .filter(|step| *step < GPS_GAP_MIN_S)
-                    .sum();
-                if seconds >= GPS_GAP_MIN_S {
-                    out.push(i);
-                }
+            if i > p + 1 && t[p].is_some() && t[i].is_some() && seconds_without_pauses(t, p, i) >= GPS_GAP_MIN_S {
+                out.push(i);
             }
         }
         last_fix = Some(i);
     }
     out
+}
+
+/// Seconds between rows `from` and `to`, not counting a step of
+/// [`GPS_GAP_MIN_S`] or longer: nothing was recorded in one.
+fn seconds_without_pauses(t: &[Option<f64>], from: usize, to: usize) -> f64 {
+    (from..to)
+        .filter_map(|k| Some(t[k + 1]? - t[k]?))
+        .filter(|step| *step < GPS_GAP_MIN_S)
+        .sum()
+}
+
+/// Of what the sport holds ([`SportLimits::sustained_mps`]), the speed a gap's
+/// straight line may imply: the line is the shortest way, and a real road is
+/// longer. 54 km/h for a bike, the gaps of jammed rides stay well under it.
+const BRIDGE_SPEED_SHARE: f64 = 0.75;
+/// How far the straight line may turn from the track on either side of a gap.
+const BRIDGE_MAX_TURN_DEG: f64 = 25.0;
+/// How much track on each side of a gap gives its heading, so a wobble at the
+/// edge of the fix doesn't. Half of it is the least that says anything.
+const BRIDGE_COURSE_M: f64 = 300.0;
+/// How straight that track must be, its ends' distance over its length: a
+/// U-turn or a hairpin just before a gap has no heading to go by.
+const BRIDGE_MIN_STRAIGHTNESS: f64 = 0.9;
+/// The longest straight line: the longer it is, the further a real road can
+/// stray from it, and the rides this was checked on stop short of 4 km.
+const BRIDGE_MAX_M: f64 = 5_000.0;
+/// The line's speed against the faster side of the track around it. Much slower
+/// means the time went somewhere the line doesn't: a lap, a detour, a stop (the
+/// faster side, as a red light beside the gap slows the other). Much faster
+/// means something else carried the rider.
+const BRIDGE_SLOWEST_SHARE: f64 = 0.5;
+const BRIDGE_FASTEST_SHARE: f64 = 2.0;
+
+/// Indices of the fixes that resume a track after a gap whose way across is
+/// plain (#262): not long, ridden at about the speed around it, and straight
+/// on along a straight track on both sides. Display only: nothing here adds a
+/// position, and it can't see a road, so a line may still cut a corner. No
+/// bridge for a sport with no limits (a simulated course's sport among them),
+/// nor for a multisport event, which has no one speed to judge by.
+pub fn bridged_gaps(
+    sport: &SportType,
+    t: &[Option<f64>],
+    lat: &[Option<f64>],
+    lon: &[Option<f64>],
+) -> Vec<usize> {
+    let Some(limits) = sport_limits(sport).filter(|_| *sport != SportType::Triathlon) else {
+        return Vec::new();
+    };
+    let fixes = fixes_of(t, lat, lon);
+    fixes_after_gaps(t, lat, lon)
+        .into_iter()
+        .filter(|&resume| {
+            // Both ends of a gap have a time, so both are among `fixes`.
+            let Ok(k) = fixes.binary_search_by_key(&resume, |f| f.i) else {
+                return false;
+            };
+            let Some(before) = k.checked_sub(1).map(|b| fixes[b]) else {
+                return false;
+            };
+            let after = fixes[k];
+            let (Some(back), Some(on)) = (
+                course_from(&fixes, k - 1, true, limits.sustained_mps),
+                course_from(&fixes, k, false, limits.sustained_mps),
+            ) else {
+                return false;
+            };
+            let chord = dist(&before, &after);
+            let speed = chord / seconds_without_pauses(t, before.i, after.i);
+            let line = bearing_deg(&before, &after);
+            chord <= BRIDGE_MAX_M
+                && speed <= limits.sustained_mps * BRIDGE_SPEED_SHARE
+                && speed >= back.speed.max(on.speed) * BRIDGE_SLOWEST_SHARE
+                && speed <= back.speed.max(on.speed) * BRIDGE_FASTEST_SHARE
+                && turn_deg(bearing_deg(&back.far, &before), line) <= BRIDGE_MAX_TURN_DEG
+                && turn_deg(bearing_deg(&after, &on.far), line) <= BRIDGE_MAX_TURN_DEG
+        })
+        .collect()
+}
+
+/// A stretch of track beside a gap: where it ends, and how fast it was ridden.
+struct Course {
+    far: Fix,
+    speed: f64,
+}
+
+/// [`BRIDGE_COURSE_M`] of track from `fixes[k]`, backward or forward, stopping
+/// at another gap. `None` when it says nothing about the way on: too little of
+/// it, not straight enough, or faster than the sport holds (a fake that outlived
+/// the cleaning, or an old activity that never went through it).
+fn course_from(fixes: &[Fix], k: usize, backward: bool, sustained_mps: f64) -> Option<Course> {
+    let mut at = k;
+    let mut walked = 0.0;
+    while walked < BRIDGE_COURSE_M {
+        let next = if backward { at.checked_sub(1) } else { Some(at + 1) };
+        let Some((next, step)) = next.and_then(|n| Some((n, fixes.get(n)?))) else { break };
+        if (step.t - fixes[at].t).abs() >= GPS_GAP_MIN_S {
+            break;
+        }
+        walked += dist(&fixes[at], step);
+        at = next;
+    }
+    let (near, far) = (fixes[k], fixes[at]);
+    let seconds = (far.t - near.t).abs();
+    let speed = walked / seconds;
+    let plain = walked >= BRIDGE_COURSE_M / 2.0
+        && seconds > 0.0
+        && speed <= sustained_mps
+        && dist(&near, &far) >= walked * BRIDGE_MIN_STRAIGHTNESS;
+    plain.then_some(Course { far, speed })
+}
+
+fn bearing_deg(from: &Fix, to: &Fix) -> f64 {
+    let (a, b) = (from.lat.to_radians(), to.lat.to_radians());
+    let d_lon = (to.lon - from.lon).to_radians();
+    (d_lon.sin() * b.cos()).atan2(a.cos() * b.sin() - a.sin() * b.cos() * d_lon.cos()).to_degrees()
+}
+
+/// The angle between two bearings, 0 to 180°.
+fn turn_deg(a: f64, b: f64) -> f64 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
 }
 
 /// A step on a simulated course faster than this is no riding: a looping
@@ -1263,6 +1378,300 @@ mod tests {
         let t: Vec<Option<f64>> = (0..60).map(|k| Some(k as f64)).chain([Some(900.0)]).collect();
         let lat: Vec<Option<f64>> = (0..61).map(|k| (k == 0 || k == 60).then_some(55.0)).collect();
         assert_eq!(fixes_after_gaps(&t, &lat, &lat), vec![60]);
+    }
+
+    /// A piece of a test track, a row a second. Bearings in degrees, near
+    /// enough on this small a patch.
+    enum Part {
+        /// Rows with a fix, each the given bearing and m/s from the last.
+        Ride(usize, f64, f64),
+        /// Rows without a fix, the next fix the given metres along the bearing.
+        Gap(usize, f64, f64),
+    }
+    use Part::{Gap, Ride};
+
+    type Columns = (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>);
+
+    fn track_of(parts: &[Part]) -> Columns {
+        let m_lat = 111_194.9;
+        let m_lon = m_lat * 55f64.to_radians().cos();
+        let (mut t, mut lat, mut lon) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut x, mut y, mut now) = (0.0f64, 0.0f64, 0.0);
+        let (mut started, mut landed) = (false, false);
+        for part in parts {
+            match *part {
+                Ride(rows, bearing, speed) => {
+                    for _ in 0..rows {
+                        if started && !landed {
+                            x += speed * bearing.to_radians().sin();
+                            y += speed * bearing.to_radians().cos();
+                        }
+                        t.push(Some(now));
+                        lat.push(Some(55.0 + y / m_lat));
+                        lon.push(Some(37.0 + x / m_lon));
+                        now += 1.0;
+                        (started, landed) = (true, false);
+                    }
+                }
+                Gap(rows, chord, bearing) => {
+                    for _ in 0..rows {
+                        t.push(Some(now));
+                        lat.push(None);
+                        lon.push(None);
+                        now += 1.0;
+                    }
+                    x += chord * bearing.to_radians().sin();
+                    y += chord * bearing.to_radians().cos();
+                    landed = true;
+                }
+            }
+        }
+        (t, lat, lon)
+    }
+
+    /// `before` rows heading `from`, a gap of `gap_s` rows without a fix ending
+    /// `chord_m` further along `across`, `after` rows heading `to`, at 8 m/s.
+    fn gapped(before: usize, from: f64, gap_s: usize, chord_m: f64, across: f64, after: usize, to: f64) -> Columns {
+        track_of(&[Ride(before, from, 8.0), Gap(gap_s, chord_m, across), Ride(after, to, 8.0)])
+    }
+
+    fn is_bridged(sport: SportType, parts: &[Part]) -> bool {
+        let (t, lat, lon) = track_of(parts);
+        !bridged_gaps(&sport, &t, &lat, &lon).is_empty()
+    }
+
+    #[test]
+    fn a_gap_straight_on_along_the_road_is_bridged() {
+        // 100 rows, 200 s at 8 m/s, 100 rows: the same road all the way.
+        let (t, lat, lon) = gapped(100, 40.0, 200, 1600.0, 40.0, 100, 40.0);
+        assert_eq!(bridged_gaps(&SportType::Ride, &t, &lat, &lon), vec![300]);
+        // Either side of the turn allowed, on either side of the gap.
+        let bridged = |from, to| {
+            let (t, lat, lon) = gapped(100, from, 200, 1600.0, 40.0, 100, to);
+            !bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty()
+        };
+        assert!(bridged(16.0, 40.0));
+        assert!(!bridged(14.0, 40.0));
+        assert!(bridged(40.0, 64.0));
+        assert!(!bridged(40.0, 66.0));
+        // Across north: the angle wraps at 360°.
+        let (t, lat, lon) = gapped(100, 350.0, 200, 1600.0, 5.0, 100, 15.0);
+        assert_eq!(bridged_gaps(&SportType::Ride, &t, &lat, &lon), vec![300]);
+    }
+
+    #[test]
+    fn a_gap_too_far_for_its_time_stays_a_break() {
+        // 15 m/s is what a bike may imply, over 101 s from fix to fix.
+        let ride = |chord| {
+            let (t, lat, lon) = gapped(100, 40.0, 100, chord, 40.0, 100, 40.0);
+            bridged_gaps(&SportType::Ride, &t, &lat, &lon)
+        };
+        assert_eq!(ride(14.9 * 101.0), vec![200]);
+        assert!(ride(15.1 * 101.0).is_empty());
+        // On foot the limit is lower: the bike's pass is too fast for a run.
+        let (t, lat, lon) = gapped(100, 40.0, 100, 1200.0, 40.0, 100, 40.0);
+        assert!(bridged_gaps(&SportType::Run, &t, &lat, &lon).is_empty());
+        let (t, lat, lon) = gapped(100, 40.0, 100, 800.0, 40.0, 100, 40.0);
+        assert_eq!(bridged_gaps(&SportType::Run, &t, &lat, &lon), vec![200]);
+    }
+
+    #[test]
+    fn a_pause_inside_a_gap_gives_it_no_time() {
+        // 1.5 km in a minute is too fast, and a ten-minute stop inside the
+        // gap doesn't make it look ridden.
+        let (mut t, lat, lon) = gapped(100, 40.0, 60, 1500.0, 40.0, 100, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+        for row in t.iter_mut().skip(130) {
+            *row = row.map(|s| s + 600.0);
+        }
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+        // Nor does the stop make a ride around it look too slow to bridge.
+        let (mut t, lat, lon) = gapped(100, 40.0, 60, 480.0, 40.0, 100, 40.0);
+        for row in t.iter_mut().skip(130) {
+            *row = row.map(|s| s + 600.0);
+        }
+        assert_eq!(bridged_gaps(&SportType::Ride, &t, &lat, &lon), vec![160]);
+    }
+
+    #[test]
+    fn a_gap_ridden_far_slower_than_the_track_stays_a_break() {
+        // Ten minutes at 8 m/s can't be 20 m, 300 m or 2 km: the time went
+        // into a lap or a detour the straight line would hide.
+        for chord in [0.0, 20.0, 300.0, 2000.0] {
+            for bearing in [0.0, 90.0] {
+                assert!(
+                    !is_bridged(SportType::Ride, &[Ride(100, bearing, 8.0), Gap(600, chord, bearing), Ride(100, bearing, 8.0)]),
+                    "{chord} m heading {bearing}"
+                );
+            }
+        }
+        // Half of the faster side's speed, over 601 s from fix to fix, on
+        // whichever side that is.
+        let ride = |speed: f64, back: f64, on: f64| {
+            is_bridged(SportType::Ride, &[Ride(100, 40.0, back), Gap(600, speed * 601.0, 40.0), Ride(100, 40.0, on)])
+        };
+        assert!(ride(4.1, 8.0, 8.0));
+        assert!(!ride(3.9, 8.0, 8.0));
+        assert!(ride(4.1, 8.0, 4.0));
+        assert!(!ride(3.9, 8.0, 4.0));
+        assert!(ride(4.1, 4.0, 8.0));
+        assert!(!ride(3.9, 4.0, 8.0));
+        assert!(ride(2.5, 4.0, 4.0));
+    }
+
+    #[test]
+    fn a_red_light_beside_a_gap_does_not_excuse_a_slow_line() {
+        // 25 s stopped just before the gap slow that side's speed, not the other's.
+        let parts = |speed: f64| {
+            [
+                Ride(100, 40.0, 8.0),
+                Ride(25, 40.0, 0.0),
+                Gap(600, speed * 601.0, 40.0),
+                Ride(100, 40.0, 8.0),
+            ]
+        };
+        assert!(is_bridged(SportType::Ride, &parts(4.1)));
+        assert!(!is_bridged(SportType::Ride, &parts(3.9)));
+    }
+
+    #[test]
+    fn a_gap_ridden_far_faster_than_the_track_stays_a_break() {
+        // A walk at 1.4 m/s, then 5 km in ten minutes: under the sport's limit,
+        // but no walking.
+        let walk = |speed: f64, faster: f64| {
+            is_bridged(SportType::Walk, &[Ride(300, 40.0, 1.4), Gap(300, speed * 301.0, 40.0), Ride(300, 40.0, faster)])
+        };
+        assert!(!is_bridged(SportType::Walk, &[Ride(300, 40.0, 1.4), Gap(600, 5000.0, 40.0), Ride(300, 40.0, 1.4)]));
+        assert!(walk(2.7, 1.4));
+        assert!(!walk(2.9, 1.4));
+        assert!(walk(5.0, 3.0), "the faster side sets it");
+        assert!(is_bridged(SportType::Walk, &[Ride(300, 40.0, 3.0), Gap(300, 5.0 * 301.0, 40.0), Ride(300, 40.0, 1.4)]));
+    }
+
+    #[test]
+    fn the_track_beside_a_gap_must_be_straight() {
+        // A bend halfway along the 300 m, the line on their average: nothing
+        // but the straightness decides. cos(20°) = 0.94, cos(30°) = 0.87.
+        let bent = |half: f64| {
+            is_bridged(
+                SportType::Ride,
+                &[
+                    Ride(100, 90.0 - half, 8.0),
+                    Ride(19, 90.0 + half, 8.0),
+                    Gap(200, 1600.0, 90.0),
+                    Ride(100, 90.0, 8.0),
+                ],
+            )
+        };
+        assert!(bent(20.0));
+        assert!(!bent(30.0));
+        // And after the gap.
+        let bent = |half: f64| {
+            is_bridged(
+                SportType::Ride,
+                &[
+                    Ride(100, 90.0, 8.0),
+                    Gap(200, 1600.0, 90.0),
+                    Ride(19, 90.0 + half, 8.0),
+                    Ride(100, 90.0 - half, 8.0),
+                ],
+            )
+        };
+        assert!(bent(20.0));
+        assert!(!bent(30.0));
+    }
+
+    #[test]
+    fn a_long_gap_stays_a_break_however_straight() {
+        let long = |chord| gapped(100, 40.0, 700, chord, 40.0, 100, 40.0);
+        let (t, lat, lon) = long(4_900.0);
+        assert_eq!(bridged_gaps(&SportType::Ride, &t, &lat, &lon), vec![800]);
+        let (t, lat, lon) = long(5_100.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+    }
+
+    #[test]
+    fn a_track_that_turned_back_beside_a_gap_has_no_heading() {
+        let gap = Gap(200, 1600.0, 40.0);
+        let road = Ride(100, 40.0, 8.0);
+        // A U-turn 96 m before the gap: its ends still read as the line's way.
+        assert!(!is_bridged(SportType::Ride, &[Ride(100, 40.0, 8.0), Ride(12, 220.0, 8.0), gap, road]));
+        // And after it.
+        let gap = Gap(200, 1600.0, 40.0);
+        assert!(!is_bridged(SportType::Ride, &[Ride(100, 40.0, 8.0), gap, Ride(12, 220.0, 8.0), Ride(100, 40.0, 8.0)]));
+        // Out and back: the ends nearly meet.
+        let (gap, road) = (Gap(200, 1600.0, 40.0), Ride(100, 40.0, 8.0));
+        assert!(!is_bridged(SportType::Ride, &[Ride(100, 40.0, 8.0), Ride(20, 220.0, 8.0), Ride(20, 40.0, 8.0), gap, road]));
+    }
+
+    #[test]
+    fn the_heading_comes_from_300_metres_of_track() {
+        let (gap, road) = (Gap(200, 1600.0, 40.0), Ride(100, 40.0, 8.0));
+        // A square bend 200 m back is within it: the road didn't come this way.
+        assert!(!is_bridged(SportType::Ride, &[Ride(100, 130.0, 8.0), Ride(25, 40.0, 8.0), gap, road]));
+        // A U-turn 312 m back is beyond it.
+        let (gap, road) = (Gap(200, 1600.0, 40.0), Ride(100, 40.0, 8.0));
+        assert!(is_bridged(SportType::Ride, &[Ride(100, 220.0, 8.0), Ride(40, 40.0, 8.0), gap, road]));
+    }
+
+    #[test]
+    fn a_track_too_fast_for_the_sport_gives_no_heading() {
+        // A fake beside the gap, on the line and outliving the cleaning; 12 m/s
+        // across stays above the band's floor at either speed (10.5 m/s at most).
+        let gap = || Gap(200, 2412.0, 40.0);
+        let road = || Ride(100, 40.0, 8.0);
+        let fake = |speed| Ride(100, 40.0, speed);
+        assert!(is_bridged(SportType::Ride, &[fake(19.0), gap(), road()]));
+        assert!(!is_bridged(SportType::Ride, &[fake(21.0), gap(), road()]));
+        assert!(is_bridged(SportType::Ride, &[road(), gap(), fake(19.0)]));
+        assert!(!is_bridged(SportType::Ride, &[road(), gap(), fake(21.0)]));
+    }
+
+    #[test]
+    fn a_gap_with_too_little_track_beside_it_stays_a_break() {
+        // 16 rows are 120 m: too little to tell a heading, at either end.
+        let (t, lat, lon) = gapped(16, 40.0, 200, 1600.0, 40.0, 100, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+        let (t, lat, lon) = gapped(100, 40.0, 200, 1600.0, 40.0, 16, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+        // 20 rows are 152 m: enough, if not the full 300 m. 19 are 144 m.
+        let (t, lat, lon) = gapped(20, 40.0, 200, 1600.0, 40.0, 20, 40.0);
+        assert_eq!(bridged_gaps(&SportType::Ride, &t, &lat, &lon), vec![220]);
+        let (t, lat, lon) = gapped(19, 40.0, 200, 1600.0, 40.0, 20, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+    }
+
+    #[test]
+    fn a_heading_is_not_read_across_another_gap() {
+        // A short piece between two gaps tells nothing, whatever lies beyond:
+        // neither forward from the first gap nor backward from the second.
+        let (t, lat, lon) = track_of(&[
+            Ride(100, 40.0, 8.0),
+            Gap(200, 1600.0, 40.0),
+            Ride(10, 40.0, 8.0),
+            Gap(200, 1600.0, 40.0),
+            Ride(100, 40.0, 8.0),
+        ]);
+        assert_eq!(fixes_after_gaps(&t, &lat, &lon), vec![300, 510]);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+    }
+
+    #[test]
+    fn some_sports_have_no_bridges() {
+        let (t, lat, lon) = gapped(100, 40.0, 200, 1600.0, 40.0, 100, 40.0);
+        for sport in [SportType::VirtualRide, SportType::VirtualRun, SportType::Triathlon, SportType::Other] {
+            assert!(bridged_gaps(&sport, &t, &lat, &lon).is_empty(), "{sport:?}");
+        }
+    }
+
+    #[test]
+    fn no_bridge_without_a_gap_inside_the_track() {
+        let (t, lat, lon) = gapped(100, 40.0, 0, 0.0, 40.0, 100, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
+        assert!(bridged_gaps(&SportType::Ride, &[], &[], &[]).is_empty());
+        // The minutes before the first fix have no line to bridge.
+        let (t, lat, lon) = gapped(0, 40.0, 200, 0.0, 40.0, 100, 40.0);
+        assert!(bridged_gaps(&SportType::Ride, &t, &lat, &lon).is_empty());
     }
 
     /// Two fixes `metres` apart along a meridian, `dt` seconds apart.

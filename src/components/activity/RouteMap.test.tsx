@@ -47,6 +47,7 @@ const track: TrackPointColumns = {
   right_torque_effectiveness: [null, null, null],
   right_pedal_smoothness: [null, null, null],
   teleported: [],
+  gap_bridged: [],
 };
 
 /** Mounts the map and hands back the Leaflet instance: the wrapper creates
@@ -374,6 +375,64 @@ describe("a track broken by a GPS gap (#256)", () => {
     const [start, end] = markers(map).map((m) => m.getLatLng());
     expect(start).toEqual(L.latLng(55.7, 37.6));
     expect(end).toEqual(L.latLng(55.7 + 239e-4, 37.6));
+  });
+});
+
+describe("a GPS gap with a plain way across (#262)", () => {
+  /** 60 s on the road, 120 s without a fix, 60 s on; `bridged` marks the resume. */
+  function gapped(bridged: boolean): TrackPointColumns {
+    const n = 240;
+    const fix = (i: number) => i < 60 || i >= 180;
+    const blank = Array<null>(n).fill(null);
+    return {
+      ...Object.fromEntries(Object.keys(track).map((k) => [k, blank])),
+      t: Array.from({ length: n }, (_, i) => i),
+      lat: Array.from({ length: n }, (_, i) => (fix(i) ? 55.7 + i * 1e-4 : null)),
+      lon: Array.from({ length: n }, (_, i) => (fix(i) ? 37.6 : null)),
+      teleported: [],
+      gap_bridged: bridged ? Array.from({ length: n }, (_, i) => i === 180) : [],
+    } as TrackPointColumns;
+  }
+  const lines = (map: L.Map) => {
+    const found: L.Polyline[] = [];
+    map.eachLayer((l) => {
+      if (l instanceof L.Polyline) found.push(l);
+    });
+    return found;
+  };
+
+  it("draws a dashed line across it, apart from the broken route", () => {
+    const { map } = mount({ trackpoints: gapped(true) });
+    const [route, bridge] = lines(map);
+    expect((route.getLatLngs() as L.LatLng[][]).map((p) => p.length)).toEqual([60, 60]);
+    expect(route.options.dashArray).toBeFalsy();
+    expect(route.options.interactive).not.toBe(false);
+    expect(bridge.options.dashArray).toBe("4 8");
+    expect(bridge.options.interactive).toBe(false);
+    expect(bridge.options.color).toBe(route.options.color);
+    expect(bridge.options.weight).toBe(route.options.weight);
+    expect(bridge.getLatLngs()).toEqual([[L.latLng(55.7 + 59e-4, 37.6), L.latLng(55.7 + 180e-4, 37.6)]]);
+  });
+
+  it("draws every bridge of a track in the one dashed layer", () => {
+    const n = 240;
+    const fix = (i: number) => i < 60 || (i >= 100 && i < 140) || i >= 180;
+    const base = gapped(false);
+    const { map } = mount({
+      trackpoints: {
+        ...base,
+        lat: Array.from({ length: n }, (_, i) => (fix(i) ? 55.7 + i * 1e-4 : null)),
+        lon: Array.from({ length: n }, (_, i) => (fix(i) ? 37.6 : null)),
+        gap_bridged: Array.from({ length: n }, (_, i) => i === 100 || i === 180),
+      },
+    });
+    const [, bridge] = lines(map);
+    expect(bridge.getLatLngs()).toHaveLength(2);
+  });
+
+  it("leaves any other gap a break", () => {
+    const { map } = mount({ trackpoints: gapped(false) });
+    expect(lines(map)).toHaveLength(1);
   });
 });
 

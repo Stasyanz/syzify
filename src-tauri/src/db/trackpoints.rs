@@ -109,6 +109,7 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
         left_pedal_smoothness: Vec::new(),
         right_pedal_smoothness: Vec::new(),
         teleported: Vec::new(),
+        gap_bridged: Vec::new(),
     };
 
     let rows = stmt.query_map(params![activity_id], |row| {
@@ -171,14 +172,14 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
     let sport: Option<String> = conn
         .query_row("SELECT sport_type FROM activity WHERE id = ?1", params![activity_id], |r| r.get(0))
         .optional()?;
-    if sport.as_deref().is_some_and(crate::models::activity::has_simulated_course) {
-        let jumps = crate::import::gps_clean::teleported_fixes(&cols.t, &cols.lat, &cols.lon);
-        if !jumps.is_empty() {
-            cols.teleported = vec![false; cols.lat.len()];
-            for i in jumps {
-                cols.teleported[i] = true;
-            }
+    if let Some(sport) = sport.as_deref() {
+        if crate::models::activity::has_simulated_course(sport) {
+            let jumps = crate::import::gps_clean::teleported_fixes(&cols.t, &cols.lat, &cols.lon);
+            cols.teleported = row_marks(jumps, cols.lat.len());
         }
+        let sport = crate::models::activity::SportType::from_str(sport);
+        let bridges = crate::import::gps_clean::bridged_gaps(&sport, &cols.t, &cols.lat, &cols.lon);
+        cols.gap_bridged = row_marks(bridges, cols.lat.len());
     }
 
     // Cumulative distance by haversine, with no credit for a course's jumps.
@@ -197,6 +198,18 @@ pub fn get_trackpoints_columnar(conn: &Connection, activity_id: &str) -> Result<
     }
 
     Ok(cols)
+}
+
+/// A column of `len` rows true at `rows`, or empty when there are none.
+fn row_marks(rows: Vec<usize>, len: usize) -> Vec<bool> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut marks = vec![false; len];
+    for i in rows {
+        marks[i] = true;
+    }
+    marks
 }
 
 /// The activities with at least one GPS fix.
@@ -548,6 +561,42 @@ mod tests {
             assert_eq!(d[3], d[2], "{sport}: the jump adds nothing");
             assert!((d[4] - 30.0).abs() < 0.01, "{sport}: riding goes on from there: {d:?}");
         }
+    }
+
+    #[test]
+    fn a_plain_gap_is_marked_and_keeps_its_rows_and_distance() {
+        let conn = db::test_db();
+        let a = crate::models::activity::Activity {
+            id: "gap".to_string(),
+            start_time: "2025-06-01T08:00:00+00:00".to_string(),
+            sport_type: "ride".to_string(),
+            ..Default::default()
+        };
+        db::activities::insert_activity(&conn, &a).unwrap();
+        // 8 m/s north for 400 rows, no fix for the middle 200.
+        let tps: Vec<TrackPoint> = (0..400)
+            .map(|k: u32| {
+                let fix = !(100..300).contains(&k);
+                TrackPoint {
+                    activity_id: "gap".to_string(),
+                    t: Some(format!("2025-06-01T08:{:02}:{:02}+00:00", k / 60, k % 60)),
+                    lat: fix.then_some(55.0 + 8.0 * k as f64 / 111_194.9),
+                    lon: fix.then_some(37.62),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        insert_trackpoints(&conn, &tps).unwrap();
+        let cols = get_trackpoints_columnar(&conn, "gap").unwrap();
+        assert_eq!(cols.gap_bridged.len(), 400);
+        assert_eq!(cols.gap_bridged.iter().filter(|m| **m).count(), 1);
+        assert!(cols.gap_bridged[300]);
+        assert_eq!(cols.lat.iter().filter(|l| l.is_some()).count(), 200, "no position added");
+        assert!((cols.distance_m[399].unwrap() - 8.0 * 399.0).abs() < 0.1);
+
+        // A sport with no limits: no mark on the same track.
+        conn.execute("UPDATE activity SET sport_type = 'virtual_ride' WHERE id = 'gap'", []).unwrap();
+        assert!(get_trackpoints_columnar(&conn, "gap").unwrap().gap_bridged.is_empty());
     }
 
     #[test]

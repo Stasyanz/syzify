@@ -2,9 +2,10 @@
  * Stretches of a track without a GPS fix (#256): jamming, a tunnel, or the
  * fixes the import's sanity filter dropped. The rows are still there (they
  * carry heart rate, power, time) — only the position is gone. The map draws
- * a break across such a stretch instead of a straight line, and the
- * activity tells how long it lasted. The same rule breaks an exported GPX
- * (`fixes_after_gaps` in `import/gps_clean.rs`).
+ * a break across such a stretch instead of a solid line, with a dashed one
+ * where the way across is plain ({@link gapBridges}), and the activity tells
+ * how long it lasted. The same rule breaks an exported GPX (`fixes_after_gaps`
+ * in `import/gps_clean.rs`).
  */
 
 /** A stretch is a gap once it lasts this long; shorter ones are noise. A
@@ -17,6 +18,8 @@ export interface GpsTrack {
   lon: (number | null)[];
   /** The backend's marks of a simulated course's jumps (#261). */
   teleported?: boolean[];
+  /** The backend's marks of the gaps whose way across is plain (#262). */
+  gap_bridged?: boolean[];
 }
 
 export interface GpsGap {
@@ -91,4 +94,20 @@ export function fixRuns(tr: GpsTrack): [number, number][][] {
   }
   if (cur.length > 0) runs.push(cur);
   return runs;
+}
+
+/** The straight lines across the gaps whose way is plain (#262), each from the
+ * last fix before a gap to the first after it. A guess, not the recording, so
+ * they stay apart from {@link fixRuns} and are drawn dashed. */
+export function gapBridges(tr: GpsTrack): [[number, number], [number, number]][] {
+  const bridges: [[number, number], [number, number]][] = [];
+  let last: [number, number] | null = null;
+  for (let i = 0; i < tr.lat.length; i++) {
+    const lat = tr.lat[i];
+    const lon = tr.lon[i];
+    if (lat == null || lon == null) continue;
+    if (tr.gap_bridged?.[i] && last) bridges.push([last, [lat, lon]]);
+    last = [lat, lon];
+  }
+  return bridges;
 }

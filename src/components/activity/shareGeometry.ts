@@ -8,7 +8,7 @@
  * the preview is a pixel-exact replica of the export (WYSIWYG) regardless of crop.
  */
 
-import { fixRuns, type GpsTrack } from "../../lib/gpsGaps";
+import { fixRuns, gapBridges, type GpsTrack } from "../../lib/gpsGaps";
 
 export interface LatLon {
   lat: number;
@@ -22,6 +22,16 @@ export function routeRuns(tps: GpsTrack): LatLon[][] {
   return fixRuns(tps).map((run) => run.map(([lat, lon]) => ({ lat, lon })));
 }
 
+/** The dashed lines across plain GPS gaps, as on the activity's map (#262). */
+export function routeBridges(tps: GpsTrack): LatLon[][] {
+  return gapBridges(tps).map((line) => line.map(([lat, lon]) => ({ lat, lon })));
+}
+
+/** The dash pattern of a bridge for a route `lineW` wide, on canvas and in SVG. */
+export function bridgeDash(lineW: number): [number, number] {
+  return [lineW * 1.5, lineW * 3];
+}
+
 export interface MapLayout {
   /** SVG/viewBox inner size, in export-px. */
   innerW: number;
@@ -33,6 +43,8 @@ export interface MapLayout {
   padding: number;
   /** Route polyline path, coordinates inside the viewBox. */
   d: string;
+  /** Dashed lines across plain GPS gaps, empty when there are none. */
+  bridgesD: string;
   /** Start/end markers, coordinates inside the viewBox. */
   start: { x: number; y: number };
   end: { x: number; y: number };
@@ -53,7 +65,11 @@ export interface ElevationLayout {
 /** Route layout in export-px — one line, or several (a route broken by
  * gaps) drawn as subpaths of one path. Returns null when there is nothing
  * to draw. */
-export function computeMapLayout(exportW: number, route: LatLon[] | LatLon[][]): MapLayout | null {
+export function computeMapLayout(
+  exportW: number,
+  route: LatLon[] | LatLon[][],
+  bridges: LatLon[][] = [],
+): MapLayout | null {
   const runs = (route.length > 0 && Array.isArray(route[0]) ? route : [route]) as LatLon[][];
   const points = runs.flat();
   if (points.length < 2) return null;
@@ -77,17 +93,19 @@ export function computeMapLayout(exportW: number, route: LatLon[] | LatLon[][]):
   const px = (p: LatLon) => offX + (p.lon - minLon) * scale;
   const py = (p: LatLon) => innerH - (offY + (p.lat - minLat) * scale);
 
-  const d = runs
-    .filter((run) => run.length > 0)
-    .map((run) => run.map((p, i) => `${i === 0 ? "M" : "L"}${px(p).toFixed(1)},${py(p).toFixed(1)}`).join(" "))
-    .join(" ");
+  const path = (lines: LatLon[][]) =>
+    lines
+      .filter((line) => line.length > 0)
+      .map((line) => line.map((p, i) => `${i === 0 ? "M" : "L"}${px(p).toFixed(1)},${py(p).toFixed(1)}`).join(" "))
+      .join(" ");
   return {
     innerW,
     innerH,
     blockW: innerW + padding * 2,
     blockH: innerH + padding * 2,
     padding,
-    d,
+    d: path(runs),
+    bridgesD: path(bridges),
     start: { x: px(points[0]), y: py(points[0]) },
     end: { x: px(points[points.length - 1]), y: py(points[points.length - 1]) },
   };

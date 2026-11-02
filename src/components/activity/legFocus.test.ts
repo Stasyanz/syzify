@@ -49,6 +49,7 @@ const tp = (t: (number | null)[], distance_m: (number | null)[]): TrackPointColu
   left_pedal_smoothness: t.map(() => null),
   right_pedal_smoothness: t.map(() => null),
   teleported: [],
+  gap_bridged: [],
 });
 
 describe("isFocusableLeg", () => {
@@ -88,8 +89,17 @@ describe("sliceTrackpoints marks", () => {
     expect(sliceTrackpoints(track, 110, 130).teleported).toEqual([false, true, false]);
   });
 
+  it("keeps a bridged gap's mark on its row (#262)", () => {
+    const track = { ...tp([100, 110, 120, 130], [0, 50, 100, 150]), gap_bridged: [false, false, true, false] };
+    const sliced = sliceTrackpoints(track, 110, 130);
+    expect(sliced.gap_bridged).toEqual([false, true, false]);
+    expect(sliced.teleported).toEqual([]);
+  });
+
   it("leaves a track with no jump with no marks", () => {
-    expect(sliceTrackpoints(tp([100, 110], [0, 50]), 100, 110).teleported).toEqual([]);
+    const sliced = sliceTrackpoints(tp([100, 110], [0, 50]), 100, 110);
+    expect(sliced.teleported).toEqual([]);
+    expect(sliced.gap_bridged).toEqual([]);
   });
 });
 

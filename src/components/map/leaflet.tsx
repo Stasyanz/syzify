@@ -154,6 +154,7 @@ export function Polyline({
   weight,
   opacity,
   className,
+  dashArray,
 }: {
   /** One line, or several drawn as one layer (a track broken by gaps). */
   positions: L.LatLngExpression[] | L.LatLngExpression[][];
@@ -163,18 +164,24 @@ export function Polyline({
   /** CSS class on the SVG path (creation-time only — Leaflet can't restyle
    * it later, so pass a constant). */
   className?: string;
+  /** A dashed line, which takes no clicks of its own: it's no recorded route
+   * to pick a point on (creation-time only, like `className`). */
+  dashArray?: string;
 }) {
   const map = useMap();
   const lineRef = useRef<L.Polyline | null>(null);
 
   useEffect(() => {
-    const line = L.polyline([], className ? { className } : {}).addTo(map);
+    const line = L.polyline([], {
+      ...(className ? { className } : {}),
+      ...(dashArray ? { dashArray, interactive: false } : {}),
+    }).addTo(map);
     lineRef.current = line;
     return () => {
       lineRef.current = null;
       line.remove();
     };
-    // className is creation-time only by contract — not a dep.
+    // className and dashArray are creation-time only by contract — not deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 

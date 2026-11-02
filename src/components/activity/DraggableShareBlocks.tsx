@@ -5,7 +5,7 @@ import { formatDate } from "../../lib/format";
 import { currentLanguage, useT } from "../../lib/i18n";
 import { displayTitle } from "../../lib/activityTitle";
 import { avoidZone, clampBlockScale, type BlockKind, type BlockPositions, type BlockScales } from "./shareLayout";
-import { computeMapLayout, computeElevationLayout, routeRuns } from "./shareGeometry";
+import { bridgeDash, computeMapLayout, computeElevationLayout, routeBridges, routeRuns } from "./shareGeometry";
 import {
   BRAND_MARK_PATH,
   BRAND_MARK_DOT,
@@ -324,7 +324,7 @@ function MapBlock(props: Props) {
   // Rebuilding the route path over every trackpoint on each render would run
   // on every mousemove of a drag; the layout depends only on these three.
   const L = useMemo(
-    () => computeMapLayout(exportWidth * scales.map, routeRuns(trackpoints)),
+    () => computeMapLayout(exportWidth * scales.map, routeRuns(trackpoints), routeBridges(trackpoints)),
     [trackpoints, exportWidth, scales.map],
   );
   if (!L) return null;
@@ -357,6 +357,17 @@ function MapBlock(props: Props) {
         style={{ display: "block" }}
       >
         <path d={L.d} fill="none" stroke={stroke} strokeWidth={lineW} strokeLinejoin="round" strokeLinecap="round" />
+        {L.bridgesD && (
+          <path
+            d={L.bridgesD}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={lineW}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            strokeDasharray={bridgeDash(lineW).join(" ")}
+          />
+        )}
         <circle cx={L.start.x} cy={L.start.y} r={dotR} fill="#22c55e" stroke={stroke} strokeWidth={dotStroke} />
         <circle cx={L.end.x} cy={L.end.y} r={dotR} fill="#ef4444" stroke={stroke} strokeWidth={dotStroke} />
       </svg>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixRuns, gpsGaps, GPS_GAP_MIN_S, secondsWithoutGps } from "./gpsGaps";
+import { fixRuns, gapBridges, gpsGaps, GPS_GAP_MIN_S, secondsWithoutGps } from "./gpsGaps";
 
 /** One row a second from t = 0; `fix(i)` decides whether row i has a position. */
 function track(n: number, fix: (i: number) => boolean) {
@@ -71,6 +71,40 @@ describe("gpsGaps beside a pause", () => {
       lon: Array.from({ length: n }, (_, i) => (i === 0 || i === 60 ? 37 : null)),
     };
     expect(gpsGaps(tr)).toEqual([{ before: 0, after: 60, seconds: 59 }]);
+  });
+});
+
+describe("gapBridges", () => {
+  const tr = track(300, (i) => i < 100 || i >= 200);
+
+  it("joins the fixes on both sides of a marked gap, and the route stays broken", () => {
+    const marks = Array.from({ length: 300 }, (_, i) => i === 200);
+    expect(gapBridges({ ...tr, gap_bridged: marks })).toEqual([
+      [
+        [55 + 99e-4, 37],
+        [55 + 200e-4, 37],
+      ],
+    ]);
+    expect(fixRuns({ ...tr, gap_bridged: marks }).map((r) => r.length)).toEqual([100, 100]);
+  });
+
+  it("draws one line for each marked gap", () => {
+    const two = track(400, (i) => i < 100 || (i >= 200 && i < 300));
+    const three = { ...two, lat: [...two.lat], lon: [...two.lon] };
+    three.lat[399] = 56;
+    three.lon[399] = 37;
+    const marks = Array.from({ length: 400 }, (_, i) => i === 200 || i === 399);
+    expect(gapBridges({ ...three, gap_bridged: marks }).map((b) => b[1][0])).toEqual([55 + 200e-4, 56]);
+  });
+
+  it("has nothing to draw with no mark", () => {
+    expect(gapBridges(tr)).toEqual([]);
+    expect(gapBridges({ ...tr, gap_bridged: [] })).toEqual([]);
+  });
+
+  it("draws no line from nowhere at a mark on the first fix", () => {
+    const marks = Array.from({ length: 300 }, (_, i) => i === 0);
+    expect(gapBridges({ ...tr, gap_bridged: marks })).toEqual([]);
   });
 });
 

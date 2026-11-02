@@ -6,7 +6,7 @@ import { displayTitle } from "../../lib/activityTitle";
 import type { BlockPositions, BlockScales, CropRect } from "./shareLayout";
 import { fullCrop, defaultScales, clampBlockScale, normalizeStraighten, normalizeOrientation } from "./shareLayout";
 import { clampCropRotated } from "./cropOverlayMath";
-import { computeMapLayout, computeElevationLayout, routeRuns } from "./shareGeometry";
+import { bridgeDash, computeMapLayout, computeElevationLayout, routeBridges, routeRuns } from "./shareGeometry";
 
 export interface CanvasField {
   label: string;
@@ -356,7 +356,7 @@ export function drawMapBlock(
   const { ctx, W, theme } = d;
   // The layout is proportional to the width it's given — scaling the input
   // width scales the whole block identically in canvas and SVG.
-  const L = computeMapLayout(W * scale, routeRuns(trackpoints));
+  const L = computeMapLayout(W * scale, routeRuns(trackpoints), routeBridges(trackpoints));
   if (!L) return;
   const c = chipColors(theme);
 
@@ -372,6 +372,11 @@ export function drawMapBlock(
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.stroke(new Path2D(L.d));
+  if (L.bridgesD) {
+    ctx.setLineDash(bridgeDash(ctx.lineWidth));
+    ctx.stroke(new Path2D(L.bridgesD));
+    ctx.setLineDash([]);
+  }
 
   const r = Math.max(3, L.innerW * 0.016);
   ctx.lineWidth = Math.max(1, L.innerW * 0.006);

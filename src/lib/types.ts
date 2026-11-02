@@ -247,6 +247,9 @@ export interface TrackPointColumns {
    * distance don't cross. One entry per trackpoint, or empty when there's no
    * such fix, which is nearly always. */
   teleported: boolean[];
+  /** True at a fix resuming after a GPS gap whose way across is plain (#262),
+   * drawn dashed. One entry per trackpoint, or empty when there's no such fix. */
+  gap_bridged: boolean[];
 }
 
 /** A record this activity holds within its sport (header trophy chip). */

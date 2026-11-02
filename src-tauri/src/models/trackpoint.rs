@@ -84,4 +84,8 @@ pub struct TrackPointColumns {
     /// distance don't cross. One entry per trackpoint, or empty when there's
     /// no such fix, which is nearly always.
     pub teleported: Vec<bool>,
+    /// True at a fix resuming after a GPS gap whose way across is plain (#262),
+    /// drawn dashed. The rows stay as they were. One entry per trackpoint, or
+    /// empty when there's no such fix.
+    pub gap_bridged: Vec<bool>,
 }

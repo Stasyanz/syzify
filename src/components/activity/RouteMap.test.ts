@@ -35,6 +35,7 @@ const tp = (over: Partial<TrackPointColumns> = {}): TrackPointColumns => ({
   left_pedal_smoothness: [null],
   right_pedal_smoothness: [null],
   teleported: [],
+  gap_bridged: [],
   ...over,
 });
 

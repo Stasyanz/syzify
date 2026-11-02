@@ -20,7 +20,7 @@ import {
   BRAND_WORDMARK_TYPESET,
   type DrawCtx,
 } from "./shareCanvas";
-import { computeMapLayout, computeElevationLayout } from "./shareGeometry";
+import { bridgeDash, computeMapLayout, computeElevationLayout } from "./shareGeometry";
 import { useLanguageStore } from "../../lib/i18n";
 
 const ROUTE = [
@@ -275,6 +275,82 @@ describe("a simulated course that jumps (#261)", () => {
       />
     );
     expect(container.querySelector("svg path")!.getAttribute("d")).toBe(L.d);
+  });
+});
+
+describe("a GPS gap with a plain way across (#262)", () => {
+  const bridged = {
+    ...trackpoints,
+    t: [0, 1, 2, 3],
+    gap_bridged: [false, true, false, true],
+  } as TrackPointColumns;
+
+  it("draws every dashed line alike on the canvas and in the preview", () => {
+    const L = computeMapLayout(EXPORT_W, ROUTE, [
+      [ROUTE[0], ROUTE[1]],
+      [ROUTE[2], ROUTE[3]],
+    ])!;
+    expect(L.bridgesD.match(/M/g)).toHaveLength(2);
+    const lineW = Math.max(2, L.innerW * 0.012);
+
+    // Each stroke with the dash in force as it's drawn; a plain stroke is a marker's.
+    let dash: number[] = [];
+    const strokes: { d: string | null; dash: number[]; width: number }[] = [];
+    const { ctx } = makeFakeCtx();
+    const dashing = Object.assign(ctx, {
+      setLineDash: (pattern: number[]) => {
+        dash = pattern;
+      },
+      stroke: (p?: { d: string }) => {
+        strokes.push({ d: p?.d ?? null, dash, width: ctx.lineWidth });
+      },
+    });
+    const d: DrawCtx = { ctx: dashing as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 0 };
+    drawMapBlock(d, MAP_POS, bridged);
+    const dotW = Math.max(1, L.innerW * 0.006);
+    expect(strokes).toEqual([
+      { d: L.d, dash: [], width: lineW },
+      { d: L.bridgesD, dash: bridgeDash(lineW), width: lineW },
+      // The start and finish markers: solid again.
+      { d: null, dash: [], width: dotW },
+      { d: null, dash: [], width: dotW },
+    ]);
+
+    const { container } = render(
+      <DraggableShareBlocks
+        activity={activity}
+        trackpoints={bridged}
+        fields={[]}
+        theme="dark"
+        showTitle
+        showMap
+        showElevation={false}
+        positions={positions}
+        onPositionChange={() => {}}
+        scales={SCALES_1}
+        onScaleChange={() => {}}
+        previewWidth={PREVIEW_W}
+        previewHeight={(PREVIEW_W * EXPORT_H) / EXPORT_W}
+        exportWidth={EXPORT_W}
+      />
+    );
+    const paths = container.querySelector("svg")!.querySelectorAll("path");
+    expect(paths[0].getAttribute("d")).toBe(L.d);
+    expect(paths[0].getAttribute("stroke-dasharray")).toBeNull();
+    expect(paths[1].getAttribute("d")).toBe(L.bridgesD);
+    expect(paths[1].getAttribute("stroke-dasharray")).toBe(bridgeDash(lineW).join(" "));
+    // Otherwise the same stroke as the route's, as on the canvas.
+    for (const attr of ["stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "fill"]) {
+      expect(paths[1].getAttribute(attr), attr).toBe(paths[0].getAttribute(attr));
+    }
+    expect(Number(paths[1].getAttribute("stroke-width"))).toBeCloseTo(lineW, 6);
+  });
+
+  it("asks nothing of the canvas with no bridge", () => {
+    const { ctx, calls } = makeFakeCtx(); // has no setLineDash: a call would throw
+    const d: DrawCtx = { ctx: ctx as unknown as CanvasRenderingContext2D, W: EXPORT_W, H: EXPORT_H, theme: "dark", baseFs: 0 };
+    drawMapBlock(d, MAP_POS, trackpoints);
+    expect(calls.strokePaths).toHaveLength(1);
   });
 });
 

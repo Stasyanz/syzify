@@ -23,7 +23,7 @@ import { api, isTauri } from "../../lib/tauri";
 import { useResizeGrip } from "./useResizeGrip";
 import { protocolBase } from "../../lib/protocolUrl";
 import { errorText } from "../../lib/errors";
-import { fixRuns } from "../../lib/gpsGaps";
+import { fixRuns, gapBridges } from "../../lib/gpsGaps";
 import { useT } from "../../lib/i18n";
 
 interface Props {
@@ -414,8 +414,8 @@ function LayerSwitcher({ layer, onSelect }: { layer: LayerId; onSelect: (id: Lay
 
 /** All valid GPS positions (bounds, start and end) and the same fixes as
  * the lines the map draws — broken where the GPS was gone (#256), so a
- * jammed stretch is not drawn as a straight line across the town, and where
- * a simulated course jumped (#261). */
+ * jammed stretch is not drawn as a solid line across the town, and where a
+ * simulated course jumped (#261). A plain gap's dashed line is `gapBridges`. */
 function useRoutePositions(trackpoints: TrackPointColumns) {
   return useMemo(() => {
     const lines: L.LatLngExpression[][] = fixRuns(trackpoints);
@@ -447,6 +447,7 @@ export function RouteMap(props: Props) {
   useUnits();
   const t = useT();
   const { positions, lines } = useRoutePositions(props.trackpoints);
+  const bridges = useMemo(() => gapBridges(props.trackpoints), [props.trackpoints]);
 
   if (positions.length === 0) {
     // No GPS track — don't reserve a full map canvas; a slim notice is enough.
@@ -466,6 +467,7 @@ export function RouteMap(props: Props) {
       key={simulated ? "course" : "map"}
       positions={positions}
       lines={lines}
+      bridges={bridges}
       simulated={simulated}
       {...props}
     />
@@ -475,13 +477,19 @@ export function RouteMap(props: Props) {
 function RouteMapCanvas({
   positions,
   lines,
+  bridges,
   simulated,
   trackpoints,
   sport,
   activityId,
   location,
   locationName,
-}: Props & { positions: L.LatLngExpression[]; lines: L.LatLngExpression[][]; simulated: boolean }) {
+}: Props & {
+  positions: L.LatLngExpression[];
+  lines: L.LatLngExpression[][];
+  bridges: L.LatLngExpression[][];
+  simulated: boolean;
+}) {
   // The layer state below goes unused on a simulated course; it stays
   // unconditional, as hooks must.
   const { data: savedLayer } = useQuery({
@@ -602,6 +610,8 @@ function RouteMapCanvas({
           />
         )}
         <Polyline positions={lines} color="#d8521d" weight={3} />
+        {/* The way across a plain GPS gap: a guess, so dashed and not clickable. */}
+        {bridges.length > 0 && <Polyline positions={bridges} color="#d8521d" weight={3} dashArray="4 8" />}
         <SelectedSegment trackpoints={trackpoints} />
         <Marker position={start} icon={startIcon} />
         <Marker position={end} icon={finishIcon} />

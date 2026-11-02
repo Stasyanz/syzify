@@ -6,6 +6,15 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+### Added
+- Where the GPS was lost, the map and the share image draw a dashed straight
+  line across a gap when the way is plain (#262): no longer than 5 km, ridden at
+  about the speed around it, and straight on along a straight track on both
+  sides. Any other gap stays a break. The app has no road data, so the line is a
+  guess and can cut a corner, and nothing else changes: an exported GPX, the
+  distance and the "no GPS" notice stay as they were. Activities already in the
+  vault get it too, without a re-import.
+
 ## [0.13.1] - 2026-11-02
 
 ### Fixed
