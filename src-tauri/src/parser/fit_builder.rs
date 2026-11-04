@@ -8,6 +8,7 @@ use std::collections::HashMap;
 /// FIT base types (the byte in a field definition).
 pub const ENUM: u8 = 0x00;
 pub const UINT8: u8 = 0x02;
+pub const STRING: u8 = 0x07;
 pub const SINT16: u8 = 0x83;
 pub const UINT16: u8 = 0x84;
 pub const SINT32: u8 = 0x85;
@@ -54,6 +55,8 @@ pub enum Val {
     I32(i32),
     /// A three-element uint16 array — a field defined with size 6.
     U16x3([u16; 3]),
+    /// Raw bytes as they are, such as a string field and what pads it.
+    Bytes(&'static [u8]),
 }
 
 /// The FIT CRC-16 (the 4-bit-table variant from the SDK).
@@ -114,6 +117,7 @@ impl FitBuilder {
                 Val::U32(x) => x.to_le_bytes().to_vec(),
                 Val::I32(x) => x.to_le_bytes().to_vec(),
                 Val::U16x3(xs) => xs.iter().flat_map(|x| x.to_le_bytes()).collect(),
+                Val::Bytes(bytes) => bytes.to_vec(),
             };
             assert_eq!(bytes.len(), size as usize, "value size must match the definition");
             self.records.extend_from_slice(&bytes);

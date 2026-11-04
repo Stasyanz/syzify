@@ -15,6 +15,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   distance and the "no GPS" notice stay as they were. Activities already in the
   vault get it too, without a re-import.
 
+### Fixed
+- A Zwift activity no longer shows a garbled device name such as "t[$" (#267).
+  Zwift fills the device name field of its FIT files with random bytes, and now
+  and then they read as text; they are ignored now, and so is a FIT device name
+  with a control character in it. Zwift activities already named that way read
+  "Zwift" after the next launch.
+
 ## [0.13.1] - 2026-11-02
 
 ### Fixed

@@ -64,7 +64,14 @@ impl DeviceFields {
                 continue;
             }
             match field.name() {
-                "product_name" => d.product_name = Some(val),
+                "product_name" => {
+                    // Bytes that happen to decode are no name: a control
+                    // character inside it means it was never text (#267).
+                    let name = val.trim();
+                    if !name.is_empty() && !name.chars().any(char::is_control) {
+                        d.product_name = Some(name.to_string());
+                    }
+                }
                 "manufacturer" => d.manufacturer = Some(val),
                 // The SDK resolves manufacturer-specific product enums to
                 // model names ("fenix6x", "edge_840"); unknown ids stay numeric.
@@ -90,7 +97,11 @@ impl DeviceFields {
     }
 
     fn name(self) -> Option<String> {
-        compose_device_name(self.product_name, self.manufacturer, self.product)
+        // Zwift fills product_name with random bytes, different in every file
+        // (#267); when they happen to decode, they'd be shown as the device.
+        let product_name =
+            self.product_name.filter(|_| self.manufacturer.as_deref() != Some("zwift"));
+        compose_device_name(product_name, self.manufacturer, self.product)
     }
 }
 
@@ -1669,6 +1680,76 @@ mod tests {
 
         assert_eq!(source_device_of(&[]), None);
         assert_eq!(source_device_of_bytes(b"not a fit file"), None);
+    }
+
+    /// #267: Zwift writes random bytes into product_name. When they decode as
+    /// text, they are still no name.
+    #[test]
+    fn a_zwift_file_is_named_zwift_whatever_its_product_name_holds() {
+        let s = |v: &str| Some(v.to_string());
+        for junk in ["t[\u{5}$", "t[a$", "Edge 1030"] {
+            let msgs = vec![
+                device_msg(MesgNum::FileId, &[("manufacturer", "zwift"), ("product", "0"), ("product_name", junk)]),
+                device_msg(MesgNum::DeviceInfo, &[("device_index", "0"), ("manufacturer", "zwift"), ("product", "0")]),
+            ];
+            assert_eq!(source_device_of(&msgs), s("Zwift"), "{junk:?}");
+        }
+        // The junk in the creator's device_info, the manufacturer in file_id:
+        // the merged fields still name Zwift.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("manufacturer", "zwift")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "0"), ("product_name", "t[a$")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("Zwift"));
+    }
+
+    #[test]
+    fn a_product_name_with_a_control_character_is_no_name() {
+        let s = |v: &str| Some(v.to_string());
+        let named = |name: &str| {
+            source_device_of(&[device_msg(
+                MesgNum::FileId,
+                &[("manufacturer", "garmin"), ("garmin_product", "edge_830"), ("product_name", name)],
+            )])
+        };
+        assert_eq!(named("t[\u{5}$"), s("Garmin edge_830"));
+        // A C1 control decodes from valid UTF-8 (C2 85) too. At an end it's
+        // trimmed as a line end; inside, it's junk.
+        assert_eq!(named("Ed\u{85}ge"), s("Garmin edge_830"));
+        // A real name, accents and all, still wins; trimmed, a line end at
+        // its end makes it no less a name, and blanks are none.
+        assert_eq!(named("Édge 830 Pro"), s("Édge 830 Pro"));
+        assert_eq!(named("Karoo 2\n"), s("Karoo 2"));
+        assert_eq!(named("   "), s("Garmin edge_830"));
+        // Junk in file_id gives way to the creator's real name, not to the
+        // manufacturer and model: it's dropped before the two are merged.
+        let msgs = vec![
+            device_msg(MesgNum::FileId, &[("manufacturer", "wahoo_fitness"), ("product", "31"), ("product_name", "t[\u{5}$")]),
+            device_msg(MesgNum::DeviceInfo, &[("device_index", "0"), ("product_name", "ELEMNT BOLT")]),
+        ];
+        assert_eq!(source_device_of(&msgs), s("ELEMNT BOLT"));
+    }
+
+    /// The same through the decoder, from a file_id as Zwift writes it:
+    /// manufacturer 260, product 0, 20 bytes of junk for a product_name.
+    #[test]
+    fn a_zwift_file_id_decodes_to_zwift_whatever_its_junk() {
+        use crate::parser::fit_builder::{FitBuilder, Val, ENUM, FILE_TYPE_ACTIVITY, MSG_FILE_ID, STRING, UINT16};
+        let file = |manufacturer: u16, junk: &'static [u8]| {
+            let mut b = FitBuilder::new();
+            b.define(0, MSG_FILE_ID, &[(0, 1, ENUM), (1, 2, UINT16), (2, 2, UINT16), (8, 20, STRING)]);
+            b.data(0, &[Val::U8(FILE_TYPE_ACTIVITY), Val::U16(manufacturer), Val::U16(0), Val::Bytes(junk)]);
+            source_device_of_bytes(&b.build())
+        };
+        let s = |v: &str| Some(v.to_string());
+        // Decodes with a control character (the file behind #267).
+        assert_eq!(file(260, b"t[\x05$\0\0\0\0\0\x10\xf6\x02\x01\0\0\0\x01\0\0\0"), s("Zwift"));
+        // Decodes as plain text: only the manufacturer tells.
+        assert_eq!(file(260, b"t[a$\0\0\0\0\0\x10\xf6\x02\x01\0\0\0\x01\0\0\0"), s("Zwift"));
+        // Doesn't decode at all, as most of Zwift's junk.
+        assert_eq!(file(260, b"\xabH\xe4~\0\0\0\0\0P\xb8\x02\x01\0\0\0\x01\0\0\0"), s("Zwift"));
+        // Another maker's real name still comes through the decoder.
+        assert_eq!(file(255, b"Trainer One\0\0\0\0\0\0\0\0\0"), s("Trainer One"));
     }
 
     /// The per-leg breakdown: multisport sessions become ordered legs with

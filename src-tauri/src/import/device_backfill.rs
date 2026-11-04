@@ -17,7 +17,8 @@ use crate::db;
 use crate::models::raw_file::ActivityFitFile;
 use crate::state::AppState;
 
-pub const FLAG: &str = "source_device_backfilled_v1";
+/// v2: Zwift's random product_name bytes are no longer a name (#267).
+pub const FLAG: &str = "source_device_backfilled_v2";
 const CHUNK: usize = 50;
 
 /// One activity → the device it should name from now on.
