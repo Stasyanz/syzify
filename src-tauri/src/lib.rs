@@ -14,6 +14,7 @@ pub mod parser;
 mod plugins;
 pub mod recovery;
 pub mod state;
+pub mod trainer;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod updates;
