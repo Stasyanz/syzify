@@ -106,6 +106,7 @@ function renderAt(path: string, { strict = false } = {}) {
               }
             />
             <Route path="/away" element={<div>AWAY</div>} />
+            <Route path="/training" element={<div>TRAINING</div>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -338,6 +339,15 @@ describe("SettingsPage tabs", () => {
     await startEnablingEncryption({ strict: true });
     await waitFor(() => expect(screen.getByText("Failed: disk full")).toBeTruthy());
     expect(useToastStore.getState().addToast).not.toHaveBeenCalled();
+  });
+
+  it("leads to the unfinished indoor rides that hold the switch up (#273)", async () => {
+    vi.mocked(api.enableEncryption).mockRejectedValue(
+      commandError("training.pendingRides", "Finish or discard the unfinished indoor rides first"),
+    );
+    await startEnablingEncryption();
+    fireEvent.click(await screen.findByText("Open the unfinished rides"));
+    expect(await screen.findByText("TRAINING")).toBeTruthy();
   });
 
   it("shows a failed encryption switch in the dialog while the Vault tab is open, without a toast — the same words when the backend refuses with a plain string (#182)", async () => {

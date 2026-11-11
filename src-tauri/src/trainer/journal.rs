@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::fit::{Device, DeviceKind, Ride, Sample, SubSport};
+use super::fit::{lap_indexes, Device, DeviceKind, Ride, Sample, SubSport};
 use crate::crypto;
 
 /// Where unfinished rides live, inside the vault.
@@ -46,14 +46,8 @@ fn aad(start_unix: i64) -> Vec<u8> {
     format!("syzify-ride-journal|{start_unix}").into_bytes()
 }
 
-/// Which sensor a value came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Source {
-    Trainer,
-    Pedals,
-    Strap,
-}
+/// Which sensor a value came from (the screen's `SensorRole`).
+pub use crate::models::training::SensorRole as Source;
 
 /// One second as recorded: the values, where power and cadence came from,
 /// and the trainer's own watts (what power match compares the pedals with).
@@ -76,6 +70,10 @@ pub enum Entry {
     /// A new lap begins at this second (its `t`, not its place in the
     /// journal: a lost line must not move the lap).
     Lap { at: usize },
+    /// The timer stops from this second on…
+    Pause { at: u32 },
+    /// …and runs again from this one.
+    Resume { at: u32 },
 }
 
 /// An open journal, appended to during the ride.
@@ -93,7 +91,7 @@ impl Journal {
     pub fn create(vault: &Path, start_unix: i64, sub_sport: SubSport, key: KeyFn) -> Result<Journal, String> {
         let dir = vault.join(DIR);
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        let path = dir.join(format!("{start_unix}.{EXTENSION}"));
+        let path = path_of(vault, start_unix);
         let file = OpenOptions::new()
             .create_new(true)
             .append(true)
@@ -150,6 +148,9 @@ pub struct Recovered {
     pub seconds: Vec<Second>,
     /// The seconds (`t`) laps begin at.
     pub lap_starts: Vec<usize>,
+    /// Paused spans `[stop, start)`; one still open at the crash is left
+    /// out (no seconds follow it).
+    pub pauses: Vec<(u32, u32)>,
     /// Lines that could not be read (a line cut by a crash).
     pub skipped: usize,
 }
@@ -167,12 +168,8 @@ impl Recovered {
         devices.sort_by_key(rank);
         let samples: Vec<_> = self.seconds.iter().map(|s| s.sample).collect();
         // The encoder splits laps by place; a lost second shifts the places.
-        let lap_starts = self
-            .lap_starts
-            .iter()
-            .map(|&at| samples.partition_point(|s| (s.t as usize) < at))
-            .collect();
-        Ride { start_unix: self.start_unix, sub_sport: self.sub_sport, samples, lap_starts, devices }
+        let lap_starts = lap_indexes(&samples, &self.lap_starts);
+        Ride { start_unix: self.start_unix, sub_sport: self.sub_sport, samples, lap_starts, devices, pauses: self.pauses.clone() }
     }
 }
 
@@ -227,7 +224,7 @@ fn decode(line: &str, key: Option<&[u8; 32]>, start_unix: Option<i64>) -> Line {
 }
 
 /// The start a journal's name gives (`<start>.journal`).
-fn start_of(path: &Path) -> Option<i64> {
+pub fn start_of(path: &Path) -> Option<i64> {
     path.file_stem()?.to_str()?.parse().ok()
 }
 
@@ -245,8 +242,10 @@ pub fn read(path: &Path, key: Option<&[u8; 32]>) -> Result<Recovered, ReadError>
         devices: Vec::new(),
         seconds: Vec::new(),
         lap_starts: Vec::new(),
+        pauses: Vec::new(),
         skipped: 0,
     };
+    let mut paused_at = None;
     let mut locked = false;
     let mut first_error = None;
     for bytes in bytes.split(|&b| b == b'\n') {
@@ -267,8 +266,23 @@ pub fn read(path: &Path, key: Option<&[u8; 32]>) -> Result<Recovered, ReadError>
                 out.devices.retain(|known| known.kind != d.kind);
                 out.devices.push(d);
             }
-            Line::Entry(Entry::Second(s)) => out.seconds.push(s),
+            Line::Entry(Entry::Second(s)) => {
+                // A second recorded at or after an open pause's stop: the
+                // Resume line was lost, and this is where riding went on.
+                if let Some(stop) = paused_at.filter(|&stop| s.sample.t >= stop) {
+                    paused_at = None;
+                    out.pauses.push((stop, s.sample.t));
+                }
+                out.seconds.push(s);
+            }
             Line::Entry(Entry::Lap { at }) => out.lap_starts.push(at),
+            Line::Entry(Entry::Pause { at }) => paused_at = paused_at.or(Some(at)),
+            Line::Entry(Entry::Resume { at }) => {
+                // A lost Pause line: the pause began after the last second
+                // recorded.
+                let stop = paused_at.take().unwrap_or_else(|| out.seconds.last().map_or(0, |s| s.sample.t + 1));
+                out.pauses.push((stop, at));
+            }
             Line::Locked => {
                 locked = true;
                 out.skipped += 1;
@@ -279,6 +293,10 @@ pub fn read(path: &Path, key: Option<&[u8; 32]>) -> Result<Recovered, ReadError>
             }
         }
     }
+    // A pause holds no recorded second: one that does was guessed wrong (a
+    // Resume within the second paused, its Pause lost), as is an empty one.
+    let seconds = &out.seconds;
+    out.pauses.retain(|&(a, b)| a < b && !seconds.iter().any(|s| (a..b).contains(&s.sample.t)));
     if locked {
         return Err(ReadError::Locked);
     }
@@ -288,6 +306,11 @@ pub fn read(path: &Path, key: Option<&[u8; 32]>) -> Result<Recovered, ReadError>
     out.start_unix = start_unix;
     out.sub_sport = sub_sport;
     Ok(out)
+}
+
+/// Where the journal of the ride that started at `start_unix` lives.
+pub fn path_of(vault: &Path, start_unix: i64) -> PathBuf {
+    vault.join(DIR).join(format!("{start_unix}.{EXTENSION}"))
 }
 
 /// Unfinished rides in the vault, oldest first.
@@ -379,6 +402,47 @@ mod tests {
         let ride = read(j.path(), None).unwrap().ride();
         assert_eq!(ride.lap_starts, vec![2], "the lap begins at t = 3, the third sample");
         assert_eq!(ride.samples[ride.lap_starts[0]].t, 3);
+    }
+
+    #[test]
+    fn pauses_read_back_and_an_open_or_orphan_one_is_left_out() {
+        let vault = ScratchDir::new("journal_pauses");
+        let mut j = Journal::create(&vault, START, SubSport::IndoorCycling, fixed(None)).unwrap();
+        j.append(&second(0, 150)).unwrap();
+        j.append(&Entry::Resume { at: 1 }).unwrap(); // its Pause was lost
+        j.append(&Entry::Pause { at: 1 }).unwrap();
+        j.append(&Entry::Pause { at: 2 }).unwrap(); // twice: the first stands
+        j.append(&Entry::Resume { at: 30 }).unwrap();
+        j.append(&second(30, 160)).unwrap();
+        j.append(&Entry::Pause { at: 31 }).unwrap();
+        j.append(&Entry::Resume { at: 31 }).unwrap(); // within the second: none
+        j.append(&Entry::Pause { at: 31 }).unwrap(); // the crash came while paused
+        let r = read(j.path(), None).unwrap();
+        assert_eq!(r.pauses, vec![(1, 30)]);
+        assert_eq!(r.ride().pauses, vec![(1, 30)]);
+    }
+
+    /// A pause whose Pause or Resume line was lost is found from the seconds
+    /// around it, not counted as riding.
+    #[test]
+    fn a_pause_with_a_lost_line_is_still_a_pause() {
+        let read_back = |entries: Vec<Entry>| {
+            let vault = ScratchDir::new("journal_lost_pause");
+            let mut j = Journal::create(&vault, START, SubSport::IndoorCycling, fixed(None)).unwrap();
+            for e in entries {
+                j.append(&e).unwrap();
+            }
+            read(j.path(), None).unwrap().pauses
+        };
+        let ride = |range: std::ops::Range<u32>| range.map(|t| second(t, 150)).collect::<Vec<_>>();
+        let lost_resume = [ride(0..60), vec![Entry::Pause { at: 60 }], ride(120..180)].concat();
+        assert_eq!(read_back(lost_resume), vec![(60, 120)]);
+        let lost_pause = [ride(0..60), vec![Entry::Resume { at: 120 }], ride(120..180)].concat();
+        assert_eq!(read_back(lost_pause), vec![(60, 120)]);
+        // Resumed within the second paused, the Pause lost: second 10 was
+        // ridden, so there was no pause.
+        let within = [ride(0..10), vec![Entry::Resume { at: 11 }], ride(10..20)].concat();
+        assert_eq!(read_back(within), vec![]);
     }
 
     #[test]

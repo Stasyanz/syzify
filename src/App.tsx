@@ -6,6 +6,7 @@ import { DashboardPage } from "./routes/Dashboard";
 import { ActivityDetailPage } from "./routes/ActivityDetail";
 import { SettingsPage } from "./routes/Settings";
 import { Segments } from "./routes/Segments";
+import { Training } from "./routes/Training";
 import { PluginPage } from "./routes/PluginPage";
 import { UnlockModal } from "./components/UnlockModal";
 import { api } from "./lib/tauri";
@@ -226,6 +227,7 @@ function AppContent() {
             <Route path="/library" element={<Library />} />
             <Route path="/activity/:id" element={<ActivityDetailPage />} />
             <Route path="/segments" element={<Segments />} />
+            <Route path="/training" element={<Training />} />
             <Route path="/settings" element={<SettingsPage />} />
             {/* The registry moved into Settings → Plugins; old links still land there. */}
             <Route path="/plugins" element={<Navigate to={settingsPath("plugins")} replace />} />

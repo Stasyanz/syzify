@@ -626,6 +626,7 @@ pub fn run() {
             geocoding_flight: crate::state::SingleFlight::default(),
             vault_flight: crate::state::SingleFlight::default(),
             });
+            app.manage(commands::training::TrainingState::default());
 
             // Only a fully-open plaintext vault starts services now; encrypted
             // vaults start after unlock, errored ones not until reopened.
@@ -723,6 +724,20 @@ pub fn run() {
             commands::plugins::get_plugin_network_endpoints,
             commands::plugins::get_plugin_contributions,
             commands::plugins::render_plugin_view,
+            commands::training::training_scan,
+            commands::training::training_connect,
+            commands::training::training_begin,
+            commands::training::training_lap,
+            commands::training::training_pause,
+            commands::training::training_resume,
+            commands::training::training_finish,
+            commands::training::training_discard,
+            commands::training::training_leave,
+            commands::training::training_live,
+            commands::training::training_ftp,
+            commands::training::training_pending,
+            commands::training::training_finish_pending,
+            commands::training::training_discard_pending,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

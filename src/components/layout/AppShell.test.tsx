@@ -8,7 +8,7 @@ import { MemoryRouter } from "react-router";
 vi.mock("../import/ImportDialog", () => ({ ImportDialog: () => null }));
 vi.mock("./OnboardingOverlay", () => ({ OnboardingOverlay: () => null }));
 
-import { AppShell } from "./AppShell";
+import { AppShell, railFor } from "./AppShell";
 import { useLanguageStore } from "../../lib/i18n";
 import { useThemeStore } from "../../lib/theme";
 
@@ -32,6 +32,13 @@ function renderShell(path = "/") {
 
 const railTitles = (container: HTMLElement) =>
   Array.from(container.querySelectorAll(".rail .ri"), (el) => el.getAttribute("title"));
+
+describe("the rail", () => {
+  it("offers the indoor ride on macOS only (#273)", () => {
+    expect(railFor(true).map((i) => i.key)).toContain("training");
+    expect(railFor(false).map((i) => i.key)).not.toContain("training");
+  });
+});
 
 describe("AppShell in the interface language (#233)", () => {
   it("names the rail, the filters, the theme switch and Settings in English", () => {

@@ -26,6 +26,7 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, Mutex, OnceCell};
 use uuid::Uuid;
 
+use super::discover::{Discovery, Found, SERVICES};
 use super::gatt;
 use super::inbox::{forward, refuse_remaining, Command, Inbox};
 use super::machine::{Action, Advert, Conn, Input, Machine, RadioState, Target};
@@ -201,24 +202,81 @@ struct Radio {
     inputs: mpsc::UnboundedSender<Input>,
 }
 
+/// The peripheral an advertising event is about.
+fn advertiser(event: &CentralEvent) -> Option<&PeripheralId> {
+    match event {
+        CentralEvent::DeviceDiscovered(id)
+        | CentralEvent::DeviceUpdated(id)
+        | CentralEvent::ServicesAdvertisement { id, .. }
+        | CentralEvent::ServiceDataAdvertisement { id, .. }
+        | CentralEvent::ManufacturerDataAdvertisement { id, .. } => Some(id),
+        _ => None,
+    }
+}
+
+/// What a peripheral advertises, as the machine reads it.
+async fn advert(central: &Adapter, id: &PeripheralId) -> Option<Advert> {
+    let p = central.peripheral(id).await.ok()?;
+    let props = p.properties().await.ok().flatten()?;
+    let services = props.services.into_iter().filter_map(short).collect();
+    Some(Advert { address: id.to_string(), name: props.local_name, services })
+}
+
+/// Changes what one link looks for and tells the radio, all under the
+/// coordinator's lock.
+async fn scan_for(central: &Adapter, change: impl FnOnce(&mut Scans) -> ScanOrder) {
+    let mut scans = SCANS.lock().await;
+    match change(&mut scans) {
+        ScanOrder::Scan(services) => {
+            let services = services.into_iter().map(|s| Uuid::from_u128(gatt::full_uuid(s))).collect();
+            if let Err(e) = central.start_scan(ScanFilter { services }).await {
+                eprintln!("[ble] scan failed: {e}");
+            }
+        }
+        ScanOrder::Stop => {
+            let _ = central.stop_scan().await;
+        }
+        ScanOrder::Keep => {}
+    }
+}
+
+/// Scans for trainers, power meters and straps for `window` and lists what
+/// advertised. Shares the scan with any running link. A device already
+/// linked does not advertise and is not listed.
+pub async fn find_devices(window: Duration) -> Result<Vec<Found>, LinkFailure> {
+    let central = adapter().await?;
+    let mut events = central.events().await.map_err(failure)?;
+    // One scan coordinator entry per service: they share the union scan.
+    let links: Vec<(u64, u16)> = SERVICES.iter().map(|&s| (NEXT_LINK.fetch_add(1, Ordering::Relaxed), s)).collect();
+    for &(link, service) in &links {
+        scan_for(&central, |s| s.start(link, service)).await;
+    }
+    let mut found = Discovery::default();
+    let deadline = tokio::time::Instant::now() + window;
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, events.next()).await {
+        if let Some(id) = advertiser(&event) {
+            if let Some(ad) = advert(&central, id).await {
+                found.saw(&ad);
+            }
+        }
+    }
+    for &(link, _) in &links {
+        scan_for(&central, |s| s.stop(link)).await;
+    }
+    Ok(found.into_found())
+}
+
 impl Radio {
     async fn input_from(&mut self, event: CentralEvent) -> Option<Input> {
+        if let Some(id) = advertiser(&event) {
+            let ad = advert(&self.central, id).await?;
+            self.ids.insert(ad.address.clone(), id.clone());
+            return Some(Input::Advertised(ad));
+        }
         match event {
             CentralEvent::StateUpdate(state) => Some(Input::Radio(radio_state(state))),
-            CentralEvent::DeviceDiscovered(id)
-            | CentralEvent::DeviceUpdated(id)
-            | CentralEvent::ServicesAdvertisement { id, .. }
-            | CentralEvent::ServiceDataAdvertisement { id, .. }
-            | CentralEvent::ManufacturerDataAdvertisement { id, .. } => {
-                let p = self.central.peripheral(&id).await.ok()?;
-                let props = p.properties().await.ok().flatten()?;
-                let address = id.to_string();
-                self.ids.insert(address.clone(), id);
-                let services = props.services.into_iter().filter_map(short).collect();
-                Some(Input::Advertised(Advert { address, name: props.local_name, services }))
-            }
             CentralEvent::DeviceDisconnected(id) => Some(Input::Disconnected { address: id.to_string() }),
-            CentralEvent::DeviceConnected(_) => None,
+            _ => None,
         }
     }
 
@@ -322,23 +380,9 @@ impl Radio {
         }
     }
 
-    /// Changes what this link looks for and tells the radio, all under the
-    /// coordinator's lock.
+    /// Changes what this link looks for.
     async fn scan(&self, change: impl FnOnce(&mut Scans) -> ScanOrder) {
-        let mut scans = SCANS.lock().await;
-        let order = change(&mut scans);
-        match order {
-            ScanOrder::Scan(services) => {
-                let services = services.into_iter().map(|s| Uuid::from_u128(gatt::full_uuid(s))).collect();
-                if let Err(e) = self.central.start_scan(ScanFilter { services }).await {
-                    eprintln!("[ble] scan failed: {e}");
-                }
-            }
-            ScanOrder::Stop => {
-                let _ = self.central.stop_scan().await;
-            }
-            ScanOrder::Keep => {}
-        }
+        scan_for(&self.central, change).await;
     }
 
     /// Bounded: on a handle btleplug already forgot, disconnect never

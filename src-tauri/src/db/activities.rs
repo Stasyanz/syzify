@@ -621,6 +621,21 @@ pub fn ftp_before(conn: &Connection, id: &str, sports: &[&str]) -> Result<Option
     conn.query_row(&sql, id_and_sports(&id, sports).as_slice(), |r| r.get(0)).optional()
 }
 
+/// The FTP of the newest top-level activity of one of `sports` that carried
+/// one: the rider's current threshold, for zones on the training screen.
+pub fn latest_ftp(conn: &Connection, sports: &[&str]) -> Result<Option<f64>> {
+    if sports.is_empty() {
+        return Ok(None);
+    }
+    let placeholders = (1..=sports.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT threshold_power_w FROM activity
+         WHERE threshold_power_w > 0 AND parent_id IS NULL AND sport_type IN ({placeholders})
+         ORDER BY start_time DESC, id DESC LIMIT 1"
+    );
+    conn.query_row(&sql, rusqlite::params_from_iter(sports.iter()), |r| r.get(0)).optional()
+}
+
 /// `?2, ?3, …` for `n` sports bound after the activity id.
 fn sport_placeholders(n: usize) -> String {
     (0..n).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ")
@@ -1455,6 +1470,11 @@ mod tests {
         assert_eq!(ftp_before(&conn, "old", rides).unwrap(), None, "nothing earlier");
         assert_eq!(ftp_before(&conn, "zwift", &[]).unwrap(), None);
         assert_eq!(ftp_before(&conn, "nowhere", rides).unwrap(), None);
+
+        assert_eq!(latest_ftp(&conn, rides).unwrap(), Some(300.0), "the newest ride's");
+        assert_eq!(latest_ftp(&conn, &["indoor_ride"]).unwrap(), Some(250.0));
+        assert_eq!(latest_ftp(&conn, &["swim"]).unwrap(), None);
+        assert_eq!(latest_ftp(&conn, &[]).unwrap(), None);
     }
 
     /// The startup walk is every activity oldest first; a batch's end lends

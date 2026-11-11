@@ -979,3 +979,68 @@ export interface MonitoringDeleted {
   failed: number;
   error: string | null;
 }
+
+// ── Indoor training (#273), models/training.rs ──
+
+/** Which sensor: the trainer, power pedals, a heart rate strap. */
+export type SensorRole = "trainer" | "pedals" | "strap";
+
+/** A device that advertised during `training_scan`. */
+export interface FoundDevice {
+  role: SensorRole;
+  /** What the OS calls it; what `training_connect` takes. */
+  address: string;
+  name: string | null;
+}
+
+export type TrainingPhase = "pairing" | "riding" | "paused" | "finishing";
+export type LinkState = "searching" | "connected" | "lost" | "failed";
+export type LinkProblem = "permission_denied" | "radio_off" | "adapter_gone" | "other";
+
+export interface LinkStatus {
+  role: SensorRole;
+  state: LinkState;
+  name: string | null;
+  problem: LinkProblem | null;
+  /** The library's own words for `other`. */
+  detail: string | null;
+}
+
+/** The ride as it is now (`training:live`, a few times a second). */
+export interface TrainingLive {
+  phase: TrainingPhase;
+  /** Seconds recorded: the timer, pauses left out. */
+  ride_s: number;
+  lap_s: number;
+  lap: number;
+  watts: number | null;
+  power_from: SensorRole | null;
+  trainer_watts: number | null;
+  cadence_rpm: number | null;
+  heart_rate: number | null;
+  speed_kmh: number | null;
+  distance_m: number;
+  avg_watts: number | null;
+  /** The trainer's profile name, once it said who it is. */
+  profile: string | null;
+  links: LinkStatus[];
+  /** Journal writes that failed (the ride goes on); the OS's words. */
+  warnings: string[];
+  /** Seconds the Mac slept during the ride: not in it. */
+  slept_s: number;
+}
+
+export interface TrainingFinish {
+  kind: "imported" | "duplicate" | "empty";
+  activity_id: string | null;
+}
+
+/** A ride a crash or a closed app left unfinished. */
+export interface PendingRide {
+  start_unix: number;
+  ride_s: number | null;
+  /** Encrypted and the vault locked. */
+  locked: boolean;
+  /** Why it does not read; the journal's own words. */
+  unreadable: string | null;
+}

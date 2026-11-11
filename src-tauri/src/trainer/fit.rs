@@ -118,6 +118,22 @@ pub struct Ride {
     /// Where each lap after the first begins: indexes into `samples`.
     pub lap_starts: Vec<usize>,
     pub devices: Vec<Device>,
+    /// Paused spans `[stop, start)` in seconds since the start, in order:
+    /// no samples in them, the timer stopped.
+    pub pauses: Vec<(u32, u32)>,
+}
+
+/// Indexes into `samples` of the laps that begin at the seconds `at`: the
+/// first sample at or after each. Seconds are not places once a pause or
+/// a lost journal line leaves a gap.
+pub fn lap_indexes(samples: &[Sample], at: &[usize]) -> Vec<usize> {
+    at.iter().map(|&t| samples.partition_point(|s| (s.t as usize) < t)).collect()
+}
+
+/// Seconds of `[start, end)` the timer ran: the span less its pauses.
+fn timer_secs(start: u32, end: u32, pauses: &[(u32, u32)]) -> u32 {
+    let paused: u32 = pauses.iter().map(|&(a, b)| b.min(end).saturating_sub(a.max(start))).sum();
+    (end - start).saturating_sub(paused)
 }
 
 /// The FIT SDK's CRC-16.
@@ -318,8 +334,22 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
     w.define(2, EVENT, &[(253, 4, UINT32), (0, 1, ENUM), (1, 1, ENUM)]);
     w.write(2, &[V::U32(Some(at(first))), V::U8(Some(EVENT_TIMER)), V::U8(Some(EVENT_TYPE_START))]);
 
+    let end = ride.samples.last().map_or(0, |s| s.t + 1);
+    // Only pauses between samples stop the timer; one at the edge is no
+    // more than where the ride starts or ends.
+    let pauses: Vec<(u32, u32)> = ride.pauses.iter().copied().filter(|&(a, b)| a < b && a > first && b < end).collect();
+    let mut pending = pauses.iter().peekable();
+
     w.define(3, RECORD, &[(253, 4, UINT32), (7, 2, UINT16), (4, 1, UINT8), (3, 1, UINT8), (6, 2, UINT16), (5, 4, UINT32)]);
     for s in &ride.samples {
+        while let Some(&&(stop, start)) = pending.peek() {
+            if start > s.t {
+                break;
+            }
+            pending.next();
+            w.write(2, &[V::U32(Some(at(stop))), V::U8(Some(EVENT_TIMER)), V::U8(Some(EVENT_TYPE_STOP_ALL))]);
+            w.write(2, &[V::U32(Some(at(start))), V::U8(Some(EVENT_TIMER)), V::U8(Some(EVENT_TYPE_START))]);
+        }
         w.write(
             3,
             &[
@@ -333,7 +363,6 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
         );
     }
 
-    let end = ride.samples.last().map_or(0, |s| s.t + 1);
     w.write(2, &[V::U32(Some(at(end))), V::U8(Some(EVENT_TIMER)), V::U8(Some(EVENT_TYPE_STOP_ALL))]);
 
     // Laps: the bounds, clipped to the samples, in order, never empty.
@@ -350,7 +379,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
             V::U32(Some(at(t.end))),
             V::U32(Some(at(t.start))),
             V::U32(Some((t.end - t.start) * 1000)),
-            V::U32(Some((t.end - t.start) * 1000)),
+            V::U32(Some(timer_secs(t.start, t.end, &pauses) * 1000)),
             V::U32(scaled(t.distance, 100.0, 0xFFFF_FFFE)),
             V::U16(scaled(t.avg_speed, 1000.0, 0xFFFE).map(|v| v as u16)),
             V::U16(scaled(t.max_speed, 1000.0, 0xFFFE).map(|v| v as u16)),
@@ -457,7 +486,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
         6,
         &[
             V::U32(Some(at(end))),
-            V::U32(Some((end - first) * 1000)),
+            V::U32(Some(timer_secs(first, end, &pauses) * 1000)),
             V::U16(Some(1)),
             V::U8(Some(ACTIVITY_MANUAL)),
             V::U8(Some(EVENT_ACTIVITY)),
@@ -504,6 +533,7 @@ mod tests {
             sub_sport: SubSport::IndoorCycling,
             samples,
             lap_starts: vec![],
+            pauses: vec![],
             devices: vec![
                 Device {
                     kind: DeviceKind::FitnessEquipment,
@@ -656,6 +686,40 @@ mod tests {
         let strap = devices[1];
         assert_eq!(field(strap, "serial_number"), None, "no serial: invalid, not 0");
         assert_eq!(text(field(strap, "source_type")).as_deref(), Some("bluetooth_low_energy"));
+    }
+
+    #[test]
+    fn a_pause_stops_the_timer_and_leaves_the_elapsed_time() {
+        // 120 s of riding with seconds 40–99 paused: 60 s ridden.
+        let mut r = ride(160);
+        r.samples.retain(|s| !(40..100).contains(&s.t));
+        r.pauses = vec![(40, 100), (0, 0), (150, 400)]; // empty and past-the-end ones go
+        r.lap_starts = lap_indexes(&r.samples, &[130]);
+        assert_eq!(r.lap_starts, vec![70], "the lap at t = 130 is the 71st sample");
+        let records = fitparser::from_bytes(&encode(&r)).expect("valid");
+        let events = of(&records, MesgNum::Event);
+        let timeline: Vec<(Option<i64>, Option<String>)> =
+            events.iter().map(|e| (unix(field(e, "timestamp")), text(field(e, "event_type")))).collect();
+        let kind = |k: &str| Some(k.to_string());
+        assert_eq!(
+            timeline,
+            vec![
+                (Some(START), kind("start")),
+                (Some(START + 40), kind("stop_all")),
+                (Some(START + 100), kind("start")),
+                (Some(START + 160), kind("stop_all")),
+            ]
+        );
+        let session = of(&records, MesgNum::Session);
+        assert_eq!(number(field(session[0], "total_timer_time")), Some(100.0));
+        assert_eq!(number(field(session[0], "total_elapsed_time")), Some(160.0));
+        let activity = of(&records, MesgNum::Activity);
+        assert_eq!(number(field(activity[0], "total_timer_time")), Some(100.0));
+        let laps = of(&records, MesgNum::Lap);
+        let timers: Vec<Option<f64>> = laps.iter().map(|l| number(field(l, "total_timer_time"))).collect();
+        assert_eq!(timers, vec![Some(70.0), Some(30.0)], "the pause is in the first lap's span, not its timer");
+        let elapsed: Vec<Option<f64>> = laps.iter().map(|l| number(field(l, "total_elapsed_time"))).collect();
+        assert_eq!(elapsed, vec![Some(130.0), Some(30.0)]);
     }
 
     #[test]

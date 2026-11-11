@@ -6,6 +6,18 @@ pub fn insert_raw_file(conn: &Connection, raw: &RawFile) -> Result<()> {
     insert_raw_file_of_kind(conn, raw, RawFileKind::Activity)
 }
 
+/// The activity a file came in as, by the name it had (the newest, should
+/// the name have come twice).
+pub fn activity_of_original(conn: &Connection, original_path: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT activity_id FROM raw_file WHERE original_path = ?1 AND activity_id IS NOT NULL
+         ORDER BY rowid DESC LIMIT 1",
+        params![original_path],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
 /// Monitor files share the table (hash dedup, encryption, backups) with
 /// `activity_id` NULL and `kind = 'monitoring'`.
 pub fn insert_raw_file_of_kind(conn: &Connection, raw: &RawFile, kind: RawFileKind) -> Result<()> {

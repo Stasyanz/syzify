@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router";
 import {
+  Bike,
   PieChart,
   Calendar,
   List,
@@ -18,6 +19,7 @@ import { OnboardingOverlay } from "./OnboardingOverlay";
 import { useActivityStore } from "../../stores/activityStore";
 import { useThemeStore, resolveDark, systemPrefersDark } from "../../lib/theme";
 import { useT } from "../../lib/i18n";
+import { trainingSupported } from "../../lib/training";
 
 /**
  * Trailhead app shell — navbar with a centered icon-only nav-rail and a right
@@ -27,7 +29,7 @@ import { useT } from "../../lib/i18n";
  * its own route. The filter button (and right drawer) only show on the library
  * views and toggle `activityStore.filtersOpen`.
  */
-type RailKey = "dashboard" | "calendar" | "library" | "map" | "segments";
+type RailKey = "dashboard" | "calendar" | "library" | "map" | "segments" | "training";
 type RailItem =
   | { key: RailKey; icon: typeof List; path: string }
   | { key: RailKey; icon: typeof List; view: "list" | "calendar" | "map" };
@@ -39,7 +41,13 @@ const RAIL: RailItem[] = [
   { key: "library", icon: List, view: "list" },
   { key: "map", icon: MapIcon, view: "map" },
   { key: "segments", icon: RouteIcon, path: "/segments" },
+  { key: "training", icon: Bike, path: "/training" },
 ];
+
+/** Indoor training runs on macOS only (#273): the rail hides it elsewhere. */
+export function railFor(mac: boolean): RailItem[] {
+  return mac ? RAIL : RAIL.filter((item) => item.key !== "training");
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -91,7 +99,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <div className="rail">
-          {RAIL.map((item) => {
+          {railFor(trainingSupported()).map((item) => {
             const Icon = item.icon;
             return (
               <div

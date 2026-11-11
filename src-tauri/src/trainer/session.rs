@@ -19,15 +19,22 @@
 //!
 //! `tick` syncs the journal (an fsync a second): run it off the async
 //! runtime's workers.
+//!
+//! A session starts **pairing** (`Session::pairing`): the links connect and
+//! say who they are, readings are only shown. `begin` starts the ride's
+//! clock. `pause` stops it from the next second on (those seconds are not
+//! recorded, the timer stops), `resume` runs it again. `end` closes the
+//! ride but keeps the links, so the trainer can be let go before they are
+//! dropped.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::fit::{Device, DeviceKind, Radio, Ride, Sample, SubSport};
+use super::fit::{lap_indexes, Device, DeviceKind, Radio, Ride, Sample, SubSport};
 use super::journal::{Entry, Journal, Second, Source};
-use super::link::{Identity, LinkEvent, Reading, SensorLink, TrainerLink, Transport};
-use super::profile::profile_for;
+use super::link::{Control, ControlId, Identity, LinkEvent, Reading, SensorLink, TrainerLink, Transport};
+use super::profile::{profile_for, TrainerProfile, GENERIC};
 
 /// The pedals' last power and cadence stand for this many seconds after
 /// their last message, unless they are lost.
@@ -96,7 +103,10 @@ fn mean(values: impl Iterator<Item = f32>) -> Option<f32> {
 }
 
 pub struct Session {
-    origin: Duration,
+    /// Session time the ride starts; None while pairing.
+    origin: Option<Duration>,
+    /// The ride is over: nothing more is recorded.
+    ended: bool,
     start_unix: i64,
     sub_sport: SubSport,
     trainer: Box<dyn TrainerLink>,
@@ -105,9 +115,14 @@ pub struct Session {
     journal: Option<Journal>,
     controllers: Vec<Box<dyn Controller>>,
     seconds: Vec<Second>,
+    /// The seconds laps begin at.
     lap_starts: Vec<usize>,
+    /// The second the running pause began at.
+    paused_at: Option<u32>,
+    /// Pauses over: `[stop, start)`.
+    pauses: Vec<(u32, u32)>,
     devices: [Option<Device>; 3],
-    profile: Option<&'static str>,
+    profile: Option<&'static TrainerProfile>,
     /// Readings by the second they fall in, until it closes.
     buckets: BTreeMap<u32, Vec<(Source, Reading)>>,
     /// The first second not closed yet.
@@ -137,17 +152,32 @@ impl Session {
         strap: Option<Box<dyn SensorLink>>,
         journal: Option<Journal>,
     ) -> Session {
+        let mut s = Session::pairing(trainer, pedals, strap);
+        s.begin(origin, start_unix, sub_sport, journal);
+        s
+    }
+
+    /// The links before the ride: they connect and identify, nothing is
+    /// recorded until `begin`.
+    pub fn pairing(
+        trainer: Box<dyn TrainerLink>,
+        pedals: Option<Box<dyn SensorLink>>,
+        strap: Option<Box<dyn SensorLink>>,
+    ) -> Session {
         Session {
-            origin,
-            start_unix,
-            sub_sport,
+            origin: None,
+            ended: false,
+            start_unix: 0,
+            sub_sport: SubSport::IndoorCycling,
             trainer,
             pedals,
             strap,
-            journal,
+            journal: None,
             controllers: Vec::new(),
             seconds: Vec::new(),
             lap_starts: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             devices: [None, None, None],
             profile: None,
             buckets: BTreeMap::new(),
@@ -160,6 +190,101 @@ impl Session {
             late: 0,
             distance_m: 0.0,
         }
+    }
+
+    /// Starts the ride at session time `origin`: what the links said about
+    /// themselves while pairing goes into the journal first.
+    pub fn begin(&mut self, origin: Duration, start_unix: i64, sub_sport: SubSport, journal: Option<Journal>) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.origin.is_some() {
+            return warnings;
+        }
+        self.origin = Some(origin);
+        self.start_unix = start_unix;
+        self.sub_sport = sub_sport;
+        self.journal = journal;
+        for device in self.devices.clone().into_iter().flatten() {
+            self.journal(&Entry::Device(device), &mut warnings);
+        }
+        warnings
+    }
+
+    /// The ride's clock runs (begun, not ended).
+    pub fn riding(&self) -> bool {
+        self.origin.is_some() && !self.ended
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+
+    /// The trainer's profile, generic until it said who it is.
+    pub fn profile(&self) -> &'static TrainerProfile {
+        self.profile.unwrap_or(&GENERIC)
+    }
+
+    /// The profile the trainer's identity picked, once it said.
+    pub fn identified_profile(&self) -> Option<&'static TrainerProfile> {
+        self.profile
+    }
+
+    /// The devices this session has: the trainer, then pedals and strap if
+    /// given.
+    pub fn roles(&self) -> Vec<Source> {
+        let mut roles = vec![Source::Trainer];
+        roles.extend(self.pedals.as_ref().map(|_| Source::Pedals));
+        roles.extend(self.strap.as_ref().map(|_| Source::Strap));
+        roles
+    }
+
+    /// The second the lap under way began at.
+    pub fn lap_began(&self) -> u32 {
+        self.lap_starts.last().map_or(0, |&s| s as u32)
+    }
+
+    /// Sends the trainer a control; its outcome comes in a later tick.
+    pub fn control(&mut self, control: Control) -> ControlId {
+        self.trainer.send(control)
+    }
+
+    /// The second `now` falls in, counted from the origin.
+    fn second_of(&self, now: Duration) -> Option<u32> {
+        self.origin.map(|o| now.saturating_sub(o).as_secs() as u32)
+    }
+
+    /// Stops the timer from the next second on; the links keep running.
+    pub fn pause(&mut self, now: Duration) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if !self.riding() || self.paused() {
+            return warnings;
+        }
+        if let Some(s) = self.second_of(now) {
+            // The second under way is ridden to its end.
+            let at = s + 1;
+            self.paused_at = Some(at);
+            self.journal(&Entry::Pause { at }, &mut warnings);
+        }
+        warnings
+    }
+
+    /// Runs the timer again from the second `now` falls in.
+    pub fn resume(&mut self, now: Duration) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let (Some(stop), Some(s)) = (self.paused_at, self.second_of(now)) else { return warnings };
+        if self.ended {
+            return warnings;
+        }
+        self.paused_at = None;
+        let at = s.max(stop);
+        if at > stop {
+            self.pauses.push((stop, at));
+        }
+        self.journal(&Entry::Resume { at }, &mut warnings);
+        warnings
+    }
+
+    fn is_paused(&self, s: u32) -> bool {
+        self.paused_at.is_some_and(|p| s >= p) || self.pauses.iter().any(|&(a, b)| (a..b).contains(&s))
     }
 
     pub fn add_controller(&mut self, controller: Box<dyn Controller>) {
@@ -188,8 +313,9 @@ impl Session {
     /// that is over.
     pub fn tick(&mut self, now: Duration) -> Tick {
         let mut out = self.poll(now);
-        let elapsed = now.saturating_sub(self.origin);
-        self.close_until(elapsed.as_secs() as u32, &mut out);
+        if let (true, Some(s)) = (self.riding(), self.second_of(now)) {
+            self.close_until(s, &mut out);
+        }
         if let Some(last) = out.seconds.last().copied() {
             let events = std::mem::take(&mut self.for_controllers);
             for c in self.controllers.iter_mut() {
@@ -201,8 +327,14 @@ impl Session {
 
     fn poll(&mut self, now: Duration) -> Tick {
         let mut out = Tick::default();
+        // Controllers act on the ride: what the trainer said while pairing,
+        // paused or after the end is not theirs (a stale outcome would be
+        // read as fresh on the first second after).
+        let for_controllers = self.riding() && !self.paused();
         for event in self.trainer.poll(now) {
-            self.for_controllers.push(event.clone());
+            if for_controllers {
+                self.for_controllers.push(event.clone());
+            }
             out.events.push((Source::Trainer, event));
         }
         if let Some(p) = self.pedals.as_mut() {
@@ -215,7 +347,9 @@ impl Session {
         for (source, event) in &events {
             match event {
                 LinkEvent::Reading(r) => {
-                    let Some(since) = r.at.checked_sub(self.origin) else { continue }; // before the ride
+                    // Pairing, or after the ride: shown, not recorded.
+                    let (Some(origin), false) = (self.origin, self.ended) else { continue };
+                    let Some(since) = r.at.checked_sub(origin) else { continue }; // before the ride
                     let s = since.as_secs() as u32;
                     if s < self.next_second {
                         self.late += 1;
@@ -245,8 +379,8 @@ impl Session {
     fn identified(&mut self, source: Source, identity: &Identity, warnings: &mut Vec<String>) {
         if source == Source::Trainer {
             let profile = profile_for(identity);
-            if self.profile != Some(profile.key) {
-                self.profile = Some(profile.key);
+            if self.profile.map(|p| p.key) != Some(profile.key) {
+                self.profile = Some(profile);
                 self.trainer.use_profile(profile);
             }
         }
@@ -261,11 +395,16 @@ impl Session {
     /// Closes every second before `upto`.
     fn close_until(&mut self, upto: u32, out: &mut Tick) {
         while self.next_second < upto {
-            let second = self.merge(self.next_second);
+            let s = self.next_second;
+            self.next_second += 1;
+            if self.is_paused(s) {
+                self.buckets.remove(&s);
+                continue;
+            }
+            let second = self.merge(s);
             self.journal(&Entry::Second(second), &mut out.warnings);
             self.seconds.push(second);
             out.seconds.push(second);
-            self.next_second += 1;
         }
     }
 
@@ -318,10 +457,10 @@ impl Session {
     }
 
     /// A new lap from the second `now` falls in (the press, not the last
-    /// tick: seconds are indexes, one per second from the origin).
+    /// tick).
     pub fn lap(&mut self, now: Duration) -> Vec<String> {
         let mut warnings = Vec::new();
-        let at = now.saturating_sub(self.origin).as_secs() as usize;
+        let Some(at) = self.second_of(now).filter(|_| !self.ended).map(|s| s as usize) else { return warnings };
         if at > 0 && self.lap_starts.last() != Some(&at) {
             self.lap_starts.push(at);
             self.journal(&Entry::Lap { at }, &mut warnings);
@@ -329,27 +468,44 @@ impl Session {
         warnings
     }
 
+    /// Laps so far (1 before the first press).
+    pub fn laps(&self) -> usize {
+        self.lap_starts.len() + 1
+    }
+
     /// The ride so far, for the FIT encoder.
     pub fn ride(&self) -> Ride {
+        let samples: Vec<Sample> = self.seconds.iter().map(|s| s.sample).collect();
         Ride {
             start_unix: self.start_unix,
             sub_sport: self.sub_sport,
-            samples: self.seconds.iter().map(|s| s.sample).collect(),
-            lap_starts: self.lap_starts.clone(),
+            lap_starts: lap_indexes(&samples, &self.lap_starts),
+            samples,
             devices: ROLES.iter().filter_map(|&r| self.devices[role_index(r)].clone()).collect(),
+            pauses: self.pauses.clone(),
         }
     }
 
     /// Ends the ride at `now`: the seconds still open are closed (the last,
-    /// partial one too), the links dropped. Returns the ride and the
-    /// journal's path, to remove once the ride is imported.
-    pub fn finish(mut self, now: Duration) -> (Ride, Option<PathBuf>, Vec<String>) {
+    /// partial one too) and nothing is recorded after. The links stay, so
+    /// the trainer can be let go (`control`, `tick`) before the session is
+    /// dropped. Returns the ride and the journal's path, to remove once the
+    /// ride is imported. Before `begin` the ride is empty.
+    pub fn end(&mut self, now: Duration) -> (Ride, Option<PathBuf>, Vec<String>) {
         let mut out = self.poll(now);
-        let elapsed = now.saturating_sub(self.origin);
-        let partial = elapsed.subsec_nanos() > 0;
-        self.close_until(elapsed.as_secs() as u32 + u32::from(partial), &mut out);
+        if let (true, Some(origin)) = (self.riding(), self.origin) {
+            let elapsed = now.saturating_sub(origin);
+            let partial = elapsed.subsec_nanos() > 0;
+            self.close_until(elapsed.as_secs() as u32 + u32::from(partial), &mut out);
+        }
+        self.ended = true;
         let ride = self.ride();
-        (ride, self.journal.map(|j| j.path().to_path_buf()), out.warnings)
+        (ride, self.journal.take().map(|j| j.path().to_path_buf()), out.warnings)
+    }
+
+    /// `end`, dropping the links with the session.
+    pub fn finish(mut self, now: Duration) -> (Ride, Option<PathBuf>, Vec<String>) {
+        self.end(now)
     }
 }
 
@@ -359,9 +515,10 @@ mod tests {
     use crate::test_support::ScratchDir;
     use crate::trainer::fake::{FakeConfig, FakeTrainer};
     use crate::trainer::journal::{self, fixed, KeyFn};
-    use crate::trainer::link::{Control, ControlId};
-    use crate::trainer::profile::TrainerProfile;
     use std::sync::{Arc, Mutex};
+
+    /// 2026-11-11 18:00:00 UTC.
+    const START: i64 = 1_794_420_000;
 
     fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
@@ -768,6 +925,39 @@ mod tests {
     }
 
     #[test]
+    fn controllers_hear_nothing_from_pairing_or_a_pause() {
+        struct PerCall(Arc<Mutex<Vec<usize>>>);
+        impl Controller for PerCall {
+            fn tick(&mut self, _: Duration, _: &Second, events: &[LinkEvent], _: &mut dyn TrainerLink) {
+                self.0.lock().unwrap().push(events.len());
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut s = Session::pairing(avanti(), None, None);
+        s.add_controller(Box::new(PerCall(seen.clone())));
+        let at = |s: &mut Session, from: u64, to: u64| {
+            for q in from..=to {
+                s.tick(ms(q * 250));
+            }
+        };
+        at(&mut s, 1, 40); // 10 s of pairing
+        s.begin(secs(10), START, SubSport::IndoorCycling, None);
+        at(&mut s, 41, 80);
+        s.pause(ms(20_100));
+        at(&mut s, 81, 160);
+        s.resume(ms(40_000));
+        at(&mut s, 161, 200);
+        let per_call = seen.lock().unwrap().clone();
+        assert!(!per_call.is_empty());
+        assert!(per_call.iter().all(|&n| n <= 6), "a second's worth each, never a backlog: {per_call:?}");
+        // Ended: nothing more for them, and a resume does nothing.
+        s.pause(ms(50_100));
+        s.end(ms(50_200));
+        assert!(s.resume(secs(60)).is_empty());
+        assert!(!s.riding());
+    }
+
+    #[test]
     fn controllers_get_the_latest_second_closed() {
         struct Last(Arc<Mutex<Vec<u32>>>);
         impl Controller for Last {
@@ -846,6 +1036,110 @@ mod tests {
         ride(&mut s, 120);
         assert!(s.seconds()[10..20].iter().all(|x| x.sample.heart_rate.is_none()), "no hold once lost");
         assert!(s.seconds()[22..].iter().all(|x| x.sample.heart_rate == Some(140)), "held again after Back");
+    }
+
+    #[test]
+    fn pairing_records_nothing_and_the_ride_begins_with_what_was_paired() {
+        let vault = ScratchDir::new("session_pairing");
+        let mut s = Session::pairing(avanti(), Some(pedals()), Some(strap()));
+        assert!(s.lap(secs(5)).is_empty() && s.pause(secs(5)).is_empty() && s.resume(secs(6)).is_empty());
+        let mut readings = 0;
+        for t in 1..=20 {
+            readings += s.tick(secs(t)).events.iter().filter(|(_, e)| matches!(e, LinkEvent::Reading(_))).count();
+        }
+        assert!(readings > 60, "readings are seen while pairing: {readings}");
+        assert!(!s.riding() && !s.paused() && s.seconds().is_empty() && s.laps() == 1);
+        assert_eq!(s.profile().key, "elite-avanti", "the profile is picked while pairing");
+
+        let journal = Journal::create(&vault, START, SubSport::VirtualActivity, fixed(None)).unwrap();
+        let path = journal.path().to_path_buf();
+        assert!(s.begin(secs(20), START, SubSport::VirtualActivity, Some(journal)).is_empty());
+        assert!(s.begin(secs(25), START + 5, SubSport::IndoorCycling, None).is_empty(), "a second begin changes nothing");
+        assert!(s.riding());
+        for t in 21..=30 {
+            s.tick(secs(t));
+        }
+        assert_eq!(s.seconds().len(), 10);
+        // The pedals' 20.0 s message went with the last pairing tick: their
+        // first recorded one is 21.0 s, second 1.
+        assert_eq!(s.seconds()[0].power_from, Some(Source::Trainer));
+        assert_eq!((s.seconds()[1].sample.watts, s.seconds()[1].sample.t), (Some(200), 1));
+        let recovered = journal::read(&path, None).unwrap();
+        assert_eq!(recovered.devices.len(), 3, "devices identified while pairing are journaled at the start");
+        assert_eq!((recovered.seconds.len(), recovered.sub_sport), (10, SubSport::VirtualActivity));
+        assert_eq!(s.ride().sub_sport, SubSport::VirtualActivity);
+    }
+
+    #[test]
+    fn a_pause_records_nothing_and_its_span_stops_the_timer() {
+        let vault = ScratchDir::new("session_pause");
+        let journal = Journal::create(&vault, START, SubSport::IndoorCycling, fixed(None)).unwrap();
+        let path = journal.path().to_path_buf();
+        let mut s = Session::new(Duration::ZERO, START, SubSport::IndoorCycling, avanti(), None, None, Some(journal));
+        ride(&mut s, 10);
+        s.pause(ms(10_400)); // second 10 is ridden to its end
+        assert!(s.paused());
+        s.pause(ms(12_000)); // twice: the first stands
+        for t in 11..=40 {
+            s.tick(secs(t));
+        }
+        s.resume(ms(40_200));
+        assert!(!s.paused());
+        for t in 41..=60 {
+            s.tick(secs(t));
+        }
+        let ts: Vec<u32> = s.seconds().iter().map(|x| x.sample.t).collect();
+        assert_eq!(ts, (0..=10).chain(40..60).collect::<Vec<u32>>());
+        let ride = s.ride();
+        assert_eq!(ride.pauses, vec![(11, 40)]);
+        let gap = s.seconds()[11].sample.distance_m.unwrap() - s.seconds()[10].sample.distance_m.unwrap();
+        assert!((gap - 8.0).abs() < 0.5, "no distance while paused: {gap}");
+        assert!(s.resume(secs(61)).is_empty(), "not paused: nothing to resume");
+
+        // Paused and resumed within one second: no pause at all.
+        s.pause(ms(70_200));
+        s.resume(ms(70_800));
+        for t in 61..=80 {
+            s.tick(secs(t));
+        }
+        assert_eq!(s.ride().pauses, vec![(11, 40)]);
+        assert_eq!(s.seconds().len(), 31 + 20);
+        assert_eq!(journal::read(&path, None).unwrap().ride(), s.ride(), "the journal keeps the pauses");
+    }
+
+    #[test]
+    fn a_ride_ended_keeps_its_links_to_let_the_trainer_go() {
+        let mut s = session(avanti(), None, None);
+        ride(&mut s, 30);
+        let (ride, journal, _) = s.end(ms(30_500));
+        assert_eq!((ride.samples.len(), journal), (31, None), "the partial last second is in");
+        assert!(!s.riding());
+        assert!(s.lap(secs(31)).is_empty() && s.pause(secs(31)).is_empty());
+        assert_eq!(s.profile().key, "elite-avanti");
+        let release = s.control(Control::Release);
+        let mut outcome = None;
+        for t in 31..=40 {
+            for (_, e) in s.tick(secs(t)).events {
+                if let LinkEvent::Control { id, outcome: o, .. } = e {
+                    if id == release {
+                        outcome = Some(o);
+                    }
+                }
+            }
+        }
+        assert!(outcome.is_some(), "the trainer answered the release");
+        assert_eq!(s.seconds().len(), 31, "nothing recorded after the end");
+        assert_eq!(s.ride().samples.len(), 31);
+    }
+
+    #[test]
+    fn a_session_never_begun_ends_empty() {
+        let mut s = Session::pairing(avanti(), None, None);
+        assert_eq!(s.profile().key, GENERIC.key, "nothing heard yet: generic");
+        ride(&mut s, 5);
+        let (ride, journal, _) = s.end(secs(5));
+        assert!(ride.samples.is_empty() && journal.is_none());
+        assert!(!s.riding());
     }
 
     #[test]

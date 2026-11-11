@@ -10,6 +10,7 @@ pub mod recovery;
 pub mod segments;
 pub mod settings;
 pub mod tiles;
+pub mod training;
 
 use crate::error::CommandError;
 

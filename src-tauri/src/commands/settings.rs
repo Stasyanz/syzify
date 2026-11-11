@@ -734,6 +734,8 @@ fn enable_encryption_core(
     // backup walking those same directories (or a restore/relocation moving
     // them). Claimed before anything is written, so a refusal changes nothing.
     let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    // A left-over ride's journal would stay plain in an encrypted vault.
+    crate::commands::training::ensure_no_left_over_rides(state)?;
 
     if crypto::read_vault_lock(&state.vault_path)?.is_some() {
         return Err(CommandError::coded("encryption.alreadyEnabled", "Encryption is already enabled"));
@@ -944,6 +946,9 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Comma
     // back while a concurrent backup/restore/relocation would be walking or
     // moving those same directories.
     let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    // A left-over ride's journal sealed under the key that is about to go
+    // would never open again.
+    crate::commands::training::ensure_no_left_over_rides(state)?;
 
     let mut lock = crypto::read_vault_lock(&state.vault_path)?
         .ok_or_else(|| CommandError::coded("encryption.notEnabled", "Encryption is not enabled"))?;

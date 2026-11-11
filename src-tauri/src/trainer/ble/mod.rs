@@ -1,5 +1,6 @@
 //! Trainers, power pedals and heart rate straps over Bluetooth LE.
 //!
+//! - [`discover`] — what an advertisement offers to the device picker.
 //! - [`gatt`] — the profiles' bytes: FTMS, Cycling Power, Heart Rate,
 //!   Device Information.
 //! - [`machine`] — one device link as a state machine without I/O: every
@@ -12,6 +13,7 @@
 //!   as a [`TrainerLink`](crate::trainer::link::TrainerLink). The feature
 //!   is macOS only, and so is the dependency.
 
+pub mod discover;
 pub mod gatt;
 pub mod inbox;
 pub mod machine;

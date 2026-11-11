@@ -15,6 +15,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { api } from "../lib/tauri";
+import { PendingRidesLink } from "../components/training/PendingRidesLink";
 import { confirmDialog } from "../stores/confirmStore";
 import { invalidateActivityData } from "../lib/activityInvalidation";
 import { useToastStore } from "../stores/toastStore";
@@ -201,6 +202,8 @@ export function SettingsPage() {
   const [showDecryptDialog, setShowDecryptDialog] = useState(false);
   const [decPassword, setDecPassword] = useState("");
   const [decError, setDecError] = useState<string | null>(null);
+  // Unfinished indoor rides hold up the change: offer the way to them.
+  const [ridesLeft, setRidesLeft] = useState(false);
   // What a vault encrypted before #209 left out; changing scopes in place is
   // a separate op, so the row can only say how to cover the rest.
   const leftReadable = encryptionStatus?.enabled ? unencryptedParts(encryptionStatus.scopes, t) : [];
@@ -369,6 +372,7 @@ export function SettingsPage() {
       setEncPassword("");
       setEncConfirm("");
     } catch (e) {
+      setRidesLeft(errorCode(e) === "training.pendingRides");
       setEncError(t("settings.vault.encryptFailedInline", { error: errorText(e) }));
       if (encryptionDialogGone()) addToast("error", t("settings.vault.encryptFailed", { error: errorText(e) }));
     } finally {
@@ -390,6 +394,7 @@ export function SettingsPage() {
       setShowDecryptDialog(false);
       setDecPassword("");
     } catch (e) {
+      setRidesLeft(errorCode(e) === "training.pendingRides");
       // A wrong password says so alone — not "Wrong password or error: Wrong password".
       setDecError(
         errorCode(e) === "vault.wrongPassword"
@@ -650,6 +655,7 @@ export function SettingsPage() {
                   className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
                 />
                 {encError && <p className="text-xs text-red-500">{encError}</p>}
+                {encError && ridesLeft && <PendingRidesLink />}
                 <div className="flex gap-2">
                   <button
                     onClick={handleEnableEncryption}
@@ -686,6 +692,7 @@ export function SettingsPage() {
                   className="w-full text-sm bg-card border border-border-2 rounded-[9px] px-3 py-2 outline-none focus:border-accent"
                 />
                 {decError && <p className="text-xs text-red-500">{decError}</p>}
+                {decError && ridesLeft && <PendingRidesLink />}
                 <div className="flex gap-2">
                   <button
                     onClick={handleDisableEncryption}

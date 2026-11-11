@@ -132,7 +132,7 @@ export function hrZoneRanges(zones: TimeInZone[]): ZoneRange[] {
  * (Z1 recovery <55% … Z7 neuromuscular >150%). Used when the device wrote
  * time-in-power-zone without the boundary array (Edge units do exactly
  * that for power while still writing HR boundaries). */
-const COGGAN_FTP_FACTORS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
+export const COGGAN_FTP_FACTORS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
 
 /** Coggan's Z7 is open-ended, which painted a 500 W surge and a 1000 W
  * max sprint the same purple — an extra FTP-relative band separates all-out

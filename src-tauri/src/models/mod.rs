@@ -15,4 +15,5 @@ pub mod segment;
 pub mod swim_length;
 pub mod time_in_zone;
 pub mod trackpoint;
+pub mod training;
 pub mod update;

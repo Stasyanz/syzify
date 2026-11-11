@@ -18,4 +18,5 @@ pub mod journal;
 pub mod link;
 pub mod profile;
 pub mod ride;
+pub mod runner;
 pub mod session;

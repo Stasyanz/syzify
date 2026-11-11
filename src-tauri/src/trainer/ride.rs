@@ -41,7 +41,12 @@ impl std::fmt::Display for FinishError {
 
 /// The FIT file's name in the import: what `raw_file.original_path` keeps.
 pub fn file_name(ride: &Ride) -> String {
-    format!("syzify-ride-{}.fit", ride.start_unix)
+    file_name_at(ride.start_unix)
+}
+
+/// The FIT file's name of the ride that started at `start_unix`.
+pub fn file_name_at(start_unix: i64) -> String {
+    format!("syzify-ride-{start_unix}.fit")
 }
 
 fn has_values(ride: &Ride) -> bool {
@@ -178,6 +183,29 @@ mod tests {
     }
 
     #[test]
+    fn a_paused_ride_imports_its_riding_time() {
+        let vault = ScratchDir::new("ride_paused");
+        let conn = crate::db::test_db();
+        let trainer = Box::new(FakeTrainer::new(FakeConfig::elite_avanti(85)));
+        let mut s = Session::new(Duration::ZERO, START, SubSport::IndoorCycling, trainer, None, None, None);
+        for t in 1..=600 {
+            match t {
+                200 => drop(s.pause(Duration::from_millis(199_500))),
+                320 => drop(s.resume(Duration::from_millis(320_100))),
+                _ => {}
+            }
+            s.tick(Duration::from_secs(t));
+        }
+        let (ride, _, _) = s.finish(Duration::from_secs(600));
+        assert_eq!(ride.pauses, vec![(200, 320)]);
+        import_ride(&conn, &vault, &ride, None).unwrap();
+        let duration: Option<f64> = conn.query_row("SELECT duration_s FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(duration, Some(480.0), "10 min less the 2 min paused");
+        let points: i64 = conn.query_row("SELECT COUNT(*) FROM trackpoint", [], |r| r.get(0)).unwrap();
+        assert_eq!(points, 480);
+    }
+
+    #[test]
     fn a_virtual_ride_imports_as_one() {
         let vault = ScratchDir::new("ride_virtual");
         let conn = crate::db::test_db();
@@ -228,6 +256,7 @@ mod tests {
             samples: (0..600).map(|t| fit::Sample { t, distance_m: Some(0.0), ..fit::Sample::default() }).collect(),
             lap_starts: vec![],
             devices: vec![],
+            pauses: vec![],
         };
         assert!(matches!(import_ride(&conn, &vault, &silent, None).unwrap(), Finished::Empty));
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0)).unwrap();
@@ -242,6 +271,7 @@ mod tests {
             samples: vec![fit::Sample::default(), sample],
             lap_starts: vec![],
             devices: vec![],
+            pauses: vec![],
         };
         let one = |f: fn(&mut fit::Sample)| {
             let mut s = fit::Sample { t: 1, ..fit::Sample::default() };

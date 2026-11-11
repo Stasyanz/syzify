@@ -43,6 +43,10 @@ import type {
   MonitoringSummary,
   RecoveryNight,
   MonitoringDeleted,
+  FoundDevice,
+  TrainingFinish,
+  TrainingLive,
+  PendingRide,
 } from "./types";
 
 /**
@@ -332,4 +336,25 @@ export const api = {
 
   renderPluginView: (pluginId: string, point: string, context: string) =>
     invoke<ViewSpec>("render_plugin_view", { pluginId, point, context }),
+
+  // ── Indoor training (#273): the ride runs in the backend; live values
+  // come as `training:live` events (see useTrainingLive). ──
+  trainingScan: (seconds?: number) =>
+    invoke<FoundDevice[]>("training_scan", { seconds: seconds ?? null }),
+  trainingConnect: (trainer: string, pedals: string | null, strap: string | null) =>
+    invoke<void>("training_connect", { trainer, pedals, strap }),
+  trainingBegin: () => invoke<void>("training_begin"),
+  trainingLap: () => invoke<void>("training_lap"),
+  trainingPause: () => invoke<void>("training_pause"),
+  trainingResume: () => invoke<void>("training_resume"),
+  trainingFinish: () => invoke<TrainingFinish>("training_finish"),
+  trainingDiscard: () => invoke<void>("training_discard"),
+  trainingLeave: () => invoke<void>("training_leave"),
+  trainingLive: () => invoke<TrainingLive | null>("training_live"),
+  trainingFtp: () => invoke<number | null>("training_ftp"),
+  trainingPending: () => invoke<PendingRide[]>("training_pending"),
+  trainingFinishPending: (startUnix: number) =>
+    invoke<TrainingFinish>("training_finish_pending", { startUnix }),
+  trainingDiscardPending: (startUnix: number) =>
+    invoke<void>("training_discard_pending", { startUnix }),
 };
