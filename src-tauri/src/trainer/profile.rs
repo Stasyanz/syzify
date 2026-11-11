@@ -215,15 +215,31 @@ mod tests {
             PROFILES.iter().flat_map(|p| p.matches.iter().map(move |m| (p.key, *m))).collect();
         for (i, (ka, a)) in all_matches.iter().enumerate() {
             for (kb, b) in &all_matches[i + 1..] {
-                let clash = match (a, b) {
-                    (Match::BleNamePrefix(x), Match::BleNamePrefix(y)) => {
-                        let (x, y) = (x.to_ascii_lowercase(), y.to_ascii_lowercase());
-                        x.starts_with(&y) || y.starts_with(&x)
-                    }
-                    _ => a == b,
-                };
-                assert!(!clash, "{ka} and {kb} both claim {a:?} / {b:?}");
+                assert!(!overlap(a, b), "{ka} and {kb} both claim {a:?} / {b:?}");
             }
         }
+    }
+
+    /// Whether two matches could pick the same device: equal ids, or BLE
+    /// prefixes one of which starts the other.
+    fn overlap(a: &Match, b: &Match) -> bool {
+        match (a, b) {
+            (Match::BleNamePrefix(x), Match::BleNamePrefix(y)) => {
+                let (x, y) = (x.to_ascii_lowercase(), y.to_ascii_lowercase());
+                x.starts_with(&y) || y.starts_with(&x)
+            }
+            _ => a == b,
+        }
+    }
+
+    #[test]
+    fn overlapping_matches_are_told_apart_from_distinct_ones() {
+        use Match::{Ant, BleNamePrefix};
+        assert!(overlap(&BleNamePrefix("AVANTI"), &BleNamePrefix("avanti pro")), "a prefix of the other");
+        assert!(overlap(&BleNamePrefix("Avanti Pro"), &BleNamePrefix("AVANTI")), "either way round");
+        assert!(!overlap(&BleNamePrefix("AVANTI"), &BleNamePrefix("KICKR")));
+        assert!(overlap(&Ant { manufacturer: 86, model: 45 }, &Ant { manufacturer: 86, model: 45 }));
+        assert!(!overlap(&Ant { manufacturer: 86, model: 45 }, &Ant { manufacturer: 86, model: 46 }));
+        assert!(!overlap(&Ant { manufacturer: 86, model: 45 }, &BleNamePrefix("AVANTI")), "different radios");
     }
 }

@@ -819,6 +819,20 @@ mod tests {
     }
 
     #[test]
+    fn a_control_still_queued_when_the_link_fails_is_refused() {
+        let mut cfg = FakeConfig::steady(80);
+        cfg.fail_at = Some((secs(10.0), LinkFailure::RadioOff));
+        let mut fake = FakeTrainer::new(cfg);
+        fake.poll(secs(9.75));
+        let queued = fake.send(Control::Release); // would go out in the 10.0 slot
+        let events = fake.poll(secs(11.0));
+        let failed = events.iter().position(|e| matches!(e, LinkEvent::Failed { .. }));
+        let refused = events.iter().position(|e| matches!(e, LinkEvent::Control { id, .. } if *id == queued));
+        assert!(failed.is_some() && failed < refused, "settled after Failed");
+        assert_eq!(controls(&events), vec![(queued, secs(10.0), ControlOutcome::Refused)]);
+    }
+
+    #[test]
     fn release_and_resistance_set_the_brake_from_the_rider() {
         let mut fake = FakeTrainer::new(FakeConfig::steady(80));
         fake.send(Control::TargetPower(300));
