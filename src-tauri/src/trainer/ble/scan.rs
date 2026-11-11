@@ -72,7 +72,8 @@ mod tests {
 
     #[test]
     fn links_share_one_scan_for_the_union_of_their_services() {
-        let mut scans = Scans::default();
+        // `new` is what the driver's static uses.
+        let mut scans = Scans::new();
         assert_eq!(scans.start(1, FTMS), ScanOrder::Scan(vec![FTMS]));
         assert_eq!(scans.start(2, CPS), ScanOrder::Scan(vec![CPS, FTMS]), "pedals add to the trainer's scan");
         assert_eq!(scans.start(3, CPS), ScanOrder::Keep, "the other pedal wants the same");

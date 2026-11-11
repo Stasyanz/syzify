@@ -492,15 +492,15 @@ impl Machine {
                 actions.push(Action::Read { characteristic: c });
             }
         }
-        match self.lost_at.take() {
-            Some(lost) => self.events.push(LinkEvent::Back { at, outage: at.saturating_sub(lost) }),
-            None if !self.connected_once => {
-                self.connected_once = true;
-                self.events.push(LinkEvent::Connected { at });
-                self.identified = true;
-                self.events.push(LinkEvent::Identified { at, identity: self.identity.clone() });
-            }
-            None => {}
+        // After the first connection every loss went through `lose`, which
+        // set `lost_at`: a connect without it is the first.
+        if let Some(lost) = self.lost_at.take() {
+            self.events.push(LinkEvent::Back { at, outage: at.saturating_sub(lost) });
+        } else if !self.connected_once {
+            self.connected_once = true;
+            self.events.push(LinkEvent::Connected { at });
+            self.identified = true;
+            self.events.push(LinkEvent::Identified { at, identity: self.identity.clone() });
         }
         if self.has_control_point {
             self.handshake = VecDeque::from([gatt::OP_REQUEST_CONTROL, gatt::OP_START]);
@@ -833,6 +833,11 @@ mod tests {
         assert_eq!(events.len(), 1, "one update, no repeats, nothing for blanks or strangers: {events:?}");
         assert_eq!(m.identity().and_then(|i| i.manufacturer.as_deref()), Some("Elite"));
         assert_eq!(m.identity().and_then(|i| i.model.as_deref()), None);
+        m.handle(s(3.4), Input::Read { conn: c, characteristic: gatt::MODEL_NUMBER, value: b"Avanti".to_vec() });
+        m.handle(s(3.5), Input::Read { conn: c, characteristic: gatt::FIRMWARE_REVISION, value: b"37".to_vec() });
+        let id = m.identity().cloned().unwrap_or_else(|| Identity::new(Transport::Ble));
+        assert_eq!((id.model.as_deref(), id.firmware.as_deref()), (Some("Avanti"), Some("37")));
+        assert_eq!(m.take_events().len(), 2, "each field announced");
     }
 
     #[test]
@@ -1154,14 +1159,12 @@ mod tests {
         data(m, gatt::CYCLING_POWER_MEASUREMENT, &[0x23, 0x00, 0xFA, 0x00, 0x68, r0, r1, t0, t1])
     }
 
+    fn readings(events: Vec<LinkEvent>) -> Vec<Reading> {
+        events.into_iter().filter_map(|e| if let LinkEvent::Reading(r) = e { Some(r) } else { None }).collect()
+    }
+
     fn pedal_readings(events: Vec<LinkEvent>) -> Vec<(Option<u16>, Option<u8>, Option<u8>)> {
-        events
-            .into_iter()
-            .filter_map(|e| match e {
-                LinkEvent::Reading(r) => Some((r.watts, r.cadence_rpm, r.balance_right)),
-                _ => None,
-            })
-            .collect()
+        readings(events).into_iter().map(|r| (r.watts, r.cadence_rpm, r.balance_right)).collect()
     }
 
     #[test]
@@ -1210,14 +1213,7 @@ mod tests {
         strap.handle(s(1.0), data(&strap, gatt::HEART_RATE_MEASUREMENT, &[0x00, 72]));
         strap.handle(s(2.0), data(&strap, gatt::HEART_RATE_MEASUREMENT, &[0b100, 72])); // no skin contact
         strap.handle(s(3.0), data(&strap, gatt::HEART_RATE_MEASUREMENT, &[0x01, 0x2C, 0x01])); // 300 in u16
-        let bpm: Vec<Option<u8>> = strap
-            .take_events()
-            .into_iter()
-            .filter_map(|e| match e {
-                LinkEvent::Reading(r) => Some(r.heart_rate),
-                _ => None,
-            })
-            .collect();
+        let bpm: Vec<Option<u8>> = readings(strap.take_events()).into_iter().map(|r| r.heart_rate).collect();
         assert_eq!(bpm, vec![Some(72), Some(255)], "300 does not wrap to 44");
     }
 
@@ -1473,14 +1469,7 @@ mod tests {
         m.take_events();
         m.handle(s(3.0), data(&m, gatt::INDOOR_BIKE_DATA, &[0x05, 0x00, 0xF4, 0x01])); // 500 half-rpm
         m.handle(s(3.1), data(&m, gatt::INDOOR_BIKE_DATA, &[0x05, 0x00, 0xF6, 0x01])); // 251
-        let rpm: Vec<Option<u8>> = m
-            .take_events()
-            .into_iter()
-            .filter_map(|e| match e {
-                LinkEvent::Reading(r) => Some(r.cadence_rpm),
-                _ => None,
-            })
-            .collect();
+        let rpm: Vec<Option<u8>> = readings(m.take_events()).into_iter().map(|r| r.cadence_rpm).collect();
         assert_eq!(rpm, vec![Some(250), None]);
     }
 
@@ -1536,11 +1525,7 @@ mod tests {
                 m.handle(s(t + 0.1), not_permitted(&m, gatt::OP_REQUEST_CONTROL));
             }
             for tick in 1..4 {
-                for a in m.handle(s(t + 0.5 * tick as f32), Input::Tick) {
-                    assert_eq!(a, write(&[gatt::OP_REQUEST_CONTROL]));
-                    writes += 1;
-                    m.handle(s(t + 0.5 * tick as f32 + 0.1), not_permitted(&m, gatt::OP_REQUEST_CONTROL));
-                }
+                assert!(m.handle(s(t + 0.5 * tick as f32), Input::Tick).is_empty(), "time alone asks nothing");
             }
         }
         assert!(writes <= 31, "at most one request per erg_resend, not a storm: {writes}");

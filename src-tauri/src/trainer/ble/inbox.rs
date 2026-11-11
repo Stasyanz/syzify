@@ -74,11 +74,9 @@ impl Inbox {
     }
 }
 
+/// The time of a late refusal (the only kind `late` holds).
 fn event_at(e: &LinkEvent) -> Option<Duration> {
-    match e {
-        LinkEvent::Control { at, .. } => Some(*at),
-        _ => None,
-    }
+    if let LinkEvent::Control { at, .. } = e { Some(*at) } else { None }
 }
 
 /// Hands the machine's events to the session; false once the link is over
