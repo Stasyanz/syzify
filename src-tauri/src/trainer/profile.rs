@@ -44,7 +44,9 @@ impl Match {
     }
 }
 
-/// Whether FTMS `start` must succeed after a reconnect.
+/// Whether FTMS `start` must succeed. Named for where the Avanti showed it
+/// (after a reconnect); a trainer cannot be told a reconnect from a new
+/// session or a restarted app, so it holds for every connect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartAfterReconnect {
     /// A failed start means control was not regained.
@@ -96,8 +98,8 @@ pub static GENERIC: TrainerProfile = TrainerProfile {
 };
 
 /// Elite Avanti (COG), firmware 3.7, characterised 2026-10-20 … 11-11 with
-/// the ftms-spike tool. Its values equal [`GENERIC`]'s: the generic profile
-/// was written from what this trainer taught.
+/// the ftms-spike tool. The generic profile was written from what this
+/// trainer taught; only its answer timeout is longer.
 pub static ELITE_AVANTI: TrainerProfile = TrainerProfile {
     key: "elite-avanti",
     name: "Elite Avanti",
@@ -110,9 +112,10 @@ pub static ELITE_AVANTI: TrainerProfile = TrainerProfile {
     trust_target_flags: false,
     // FTMS start failed after every reconnect; set target power worked.
     ftms_start_after_reconnect: StartAfterReconnect::MayFail,
-    // FE-C acks came in 0.25–2 s. FTMS answers after a reconnect often took
-    // longer than 3 s: rather than wait for them, time out and resend.
-    control_answer_timeout: Duration::from_secs(3),
+    // FE-C acks came in 0.25–2 s; FTMS answers in 0.1 s on a fresh
+    // connection but often after more than 3 s after a reconnect, and the
+    // control point takes nothing new while an answer is pending.
+    control_answer_timeout: Duration::from_secs(5),
     // BLE dropped every 2–5 min, ANT+ searched for 4–8 s now and then.
     link_drops_routine: true,
     // The 0 % release needed a second try; three tries once failed.
@@ -178,7 +181,7 @@ mod tests {
         assert_eq!(p.erg_resend, Duration::from_secs(2));
         assert!(!p.trust_target_flags, "its flags lie");
         assert_eq!(p.ftms_start_after_reconnect, StartAfterReconnect::MayFail);
-        assert_eq!(p.control_answer_timeout, Duration::from_secs(3));
+        assert_eq!(p.control_answer_timeout, Duration::from_secs(5));
         assert!(p.link_drops_routine);
         assert_eq!(p.release_budget, Duration::from_secs(15));
     }

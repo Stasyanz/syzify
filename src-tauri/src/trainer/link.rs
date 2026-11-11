@@ -116,7 +116,9 @@ pub enum Control {
     /// Basic resistance, percent of the trainer's range (above 100 counts
     /// as 100).
     Resistance(u8),
-    /// Let go: the trainer stops fighting the rider (0 % resistance).
+    /// Let go: the trainer stops fighting the rider. ANT+ FE-C sends 0 %
+    /// resistance; BLE FTMS sends Reset, which also hands control back, so
+    /// the link takes control again before the next control.
     Release,
 }
 

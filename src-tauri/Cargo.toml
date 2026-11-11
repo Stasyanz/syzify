@@ -53,7 +53,7 @@ zip = "2"
 flate2 = "1"
 
 # Async
-tokio = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["fs", "sync", "time", "macros"] }
 
 # Encryption
 aes-gcm = "0.10"
@@ -66,6 +66,15 @@ base64 = "0.22"
 kamadak-exif = "0.6"
 extism = "1"
 ed25519-dalek = "2"
+
+# Smart trainers, power pedals and heart rate straps over Bluetooth LE
+# (indoor training, #269). The feature is macOS only, and so are these:
+# Linux would need D-Bus and Windows its own WinRT stack for nothing.
+[target.'cfg(target_os = "macos")'.dependencies]
+# Pinned: the driver steers around this version's traps (see
+# trainer/ble/machine.rs); a new one must be checked against them.
+btleplug = "=0.11.8"
+futures = "0.3"
 
 # The SHA256 core stays optimized even in dev builds — password checks run
 # PBKDF2 with 600k iterations: ~4.3s/check without this, ~1.7s with it
