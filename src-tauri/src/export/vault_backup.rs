@@ -344,9 +344,11 @@ fn validate_backup_with_limits(
 /// state. `vault.lock` moves WITH the ciphertext it unlocks (INV-1: the lock is
 /// the only copy of the salt; separating them makes `.enc` files permanently
 /// undecryptable). `.backup-snapshot` is a crashed backup's plaintext DB copy —
-/// it belongs to the OLD vault, so it must not stay behind either. `tiles/`
-/// (re-downloadable cache) stays put.
-const QUARANTINE_ENTRIES: [&str; 9] = [
+/// it belongs to the OLD vault, so it must not stay behind either. `rides/`
+/// holds unfinished indoor rides, sealed under the OLD lock when encrypted:
+/// it goes with it (and is not in backups: a ride in progress is not a
+/// vault's content yet). `tiles/` (re-downloadable cache) stays put.
+const QUARANTINE_ENTRIES: [&str; 10] = [
     "vault.db",
     "vault.db-wal",
     "vault.db-shm",
@@ -356,6 +358,7 @@ const QUARANTINE_ENTRIES: [&str; 9] = [
     "raw",
     "photos",
     "plugins",
+    crate::trainer::journal::DIR,
 ];
 
 /// Move the current vault's data aside into a fresh `pre-restore-<timestamp>/`
@@ -623,6 +626,9 @@ mod tests {
         // A crashed backup's plaintext DB copy belongs to the OLD vault too.
         fs::create_dir_all(vault.join(".backup-snapshot")).unwrap();
         fs::write(vault.join(".backup-snapshot/vault.db"), b"plaintext copy").unwrap();
+        // An unfinished indoor ride, sealed under the old lock.
+        fs::create_dir_all(vault.join("rides")).unwrap();
+        fs::write(vault.join("rides/1794420000.journal"), b"s:sealed").unwrap();
 
         let quarantine = quarantine_current_vault(&vault).unwrap().expect("dir");
         restore_backup(&vault, &backup_file).unwrap();
@@ -650,7 +656,8 @@ mod tests {
             "a stale snapshot must not stay behind in the restored vault"
         );
         assert!(!vault.join(".backup-snapshot").exists());
-
+        assert!(quarantine.join("rides/1794420000.journal").exists(), "the ride goes with its lock");
+        assert!(!vault.join("rides").exists());
     }
 
     /// Symlinks in the vault are skipped, not followed: a link cycle used to
