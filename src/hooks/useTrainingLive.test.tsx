@@ -91,6 +91,30 @@ describe("useTrainingLive", () => {
     await waitFor(() => expect(result.current?.ride_s).toBe(10));
   });
 
+  it("lets nothing in after the unmount, nor before it subscribed", async () => {
+    // Gone before the event bus was even loaded: it never subscribes.
+    mocked.trainingLive.mockResolvedValue(null);
+    const early = renderHook(() => useTrainingLive());
+    early.unmount();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(listeners.has(TRAINING_LIVE_EVENT)).toBe(false);
+    expect(mocked.trainingLive).not.toHaveBeenCalled();
+
+    // Gone after: a late event and a late answer change nothing.
+    let fail: (e: unknown) => void = () => {};
+    mocked.trainingLive.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    const { result, unmount } = renderHook(() => useTrainingLive());
+    await waitFor(() => expect(listeners.has(TRAINING_LIVE_EVENT)).toBe(true));
+    act(() => listeners.get(TRAINING_LIVE_EVENT)!({ payload: live({ ride_s: 7 }) }));
+    await act(async () => fail(new Error("late")));
+    // The event stands: a failed answer after it is not a null session.
+    expect(result.current?.ride_s).toBe(7);
+    unmount();
+    act(() => listeners.get(TRAINING_LIVE_EVENT)!({ payload: live({ ride_s: 8 }) }));
+    expect(result.current?.ride_s).toBe(7);
+  });
+
   it("reads a failed first answer as no session", async () => {
     mocked.trainingLive.mockRejectedValue(new Error("no backend"));
     const { result } = renderHook(() => useTrainingLive());

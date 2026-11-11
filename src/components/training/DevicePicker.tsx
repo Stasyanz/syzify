@@ -28,8 +28,9 @@ export function DevicePicker() {
     },
   });
   const connect = useMutation({
-    mutationFn: () => api.trainingConnect(picks.trainer ?? "", picks.pedals, picks.strap),
+    mutationFn: (trainer: string) => api.trainingConnect(trainer, picks.pedals, picks.strap),
   });
+  const trainer = picks.trainer;
 
   const roleLabel = { trainer: t("training.role.trainer"), pedals: t("training.role.pedals"), strap: t("training.role.strap") };
   const error = scan.error ?? connect.error;
@@ -88,8 +89,9 @@ export function DevicePicker() {
           <div>
             <button
               className="px-4 py-1.5 rounded-field bg-accent text-accent-ink text-sm font-medium hover:bg-accent-2 disabled:opacity-50"
-              disabled={!picks.trainer || connect.isPending}
-              onClick={() => connect.mutate()}
+              disabled={trainer == null || connect.isPending}
+              // No trainer picked, nothing to connect: the button is off.
+              onClick={trainer == null ? undefined : () => connect.mutate(trainer)}
             >
               {t("training.setup.connect")}
             </button>

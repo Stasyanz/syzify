@@ -172,6 +172,13 @@ describe("Training before a session", () => {
     await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", "P1", null));
   });
 
+  it("says it is searching while it searches", async () => {
+    mocked.trainingScan.mockReturnValue(new Promise(() => {}));
+    renderPage();
+    fireEvent.click(screen.getByText("Search for devices"));
+    expect(await screen.findByText("Searching…")).toBeTruthy();
+  });
+
   it("lets pedals and a strap be left out again", async () => {
     mocked.trainingScan.mockResolvedValue([
       { role: "trainer", address: "T1", name: "AVANTI COG" },
@@ -349,6 +356,29 @@ describe("Training during the ride", () => {
     renderPage();
     fireEvent.click(screen.getByText("Discard"));
     await waitFor(() => expect(toasts()).toContain("No trainer is connected"));
+  });
+
+  it("shows dashes for what is not heard, and keeps a ride whose discard is called off", async () => {
+    mocked.trainingFtp.mockResolvedValue(244);
+    confirmMock.mockResolvedValue(false);
+    hook.live = live({
+      watts: null,
+      power_from: null,
+      trainer_watts: null,
+      cadence_rpm: null,
+      heart_rate: null,
+      speed_kmh: null,
+      links: [link({ state: "failed", problem: "other", detail: null })],
+    });
+    renderPage();
+    for (const label of ["Power", "Cadence", "Heart rate", "Speed"]) {
+      expect(screen.getByRole("group", { name: label }).textContent).toContain("--");
+    }
+    expect(screen.getByText("not available:")).toBeTruthy();
+    expect(screen.queryByText(/Trainer:/)).toBeNull();
+    fireEvent.click(screen.getByText("Discard"));
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled());
+    expect(mocked.trainingDiscard).not.toHaveBeenCalled();
   });
 
   it("holds every order while the ride is being saved", () => {

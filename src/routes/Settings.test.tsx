@@ -911,6 +911,13 @@ describe("SettingsPage tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disable Encryption" }));
     await waitFor(() => expect(screen.getByText("Wrong password")).toBeTruthy());
     expect(screen.queryByText(/Wrong password or error/)).toBeNull();
+    expect(screen.queryByText("Open the unfinished rides")).toBeNull();
+    // Unfinished indoor rides hold it up: the way to them is offered (#273).
+    vi.mocked(api.disableEncryption).mockRejectedValue(
+      commandError("training.pendingRides", "Finish or discard the unfinished indoor rides first"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Disable Encryption" }));
+    expect(await screen.findByText("Open the unfinished rides")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Current password")).toBeNull();
   });
