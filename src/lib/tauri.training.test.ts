@@ -29,6 +29,10 @@ describe("training api wrappers (#273)", () => {
     expect(mocked).toHaveBeenLastCalledWith("training_finish_pending", { startUnix: 1_794_420_000 });
     await api.trainingDiscardPending(1_794_420_000);
     expect(mocked).toHaveBeenLastCalledWith("training_discard_pending", { startUnix: 1_794_420_000 });
+    await api.trainingSetWorkoutsDir("/w");
+    expect(mocked).toHaveBeenLastCalledWith("training_set_workouts_dir", { dir: "/w" });
+    await api.trainingStartWorkout("user/ss.zwo");
+    expect(mocked).toHaveBeenLastCalledWith("training_start_workout", { path: "user/ss.zwo" });
 
     const bare = [
       [api.trainingBegin, "training_begin"],
@@ -41,6 +45,7 @@ describe("training api wrappers (#273)", () => {
       [api.trainingLive, "training_live"],
       [api.trainingFtp, "training_ftp"],
       [api.trainingPending, "training_pending"],
+      [api.trainingWorkouts, "training_workouts"],
     ] as const;
     for (const [call, command] of bare) {
       await call();

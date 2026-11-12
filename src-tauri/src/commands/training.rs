@@ -399,12 +399,8 @@ fn workouts_dir(state: &AppState) -> Result<Option<String>, CommandError> {
 pub async fn training_workouts<R: Runtime>(app: AppHandle<R>) -> Result<WorkoutList, CommandError> {
     let dir = workouts_dir(&app.state::<AppState>())?;
     let Some(folder) = dir.clone() else { return Ok(WorkoutList { dir, missing: false, workouts: Vec::new() }) };
-    let (missing, workouts) = tauri::async_runtime::spawn_blocking(move || {
-        let folder = Path::new(&folder);
-        (!folder.is_dir(), workouts::list(folder))
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let read = move || (!Path::new(&folder).is_dir(), workouts::list(Path::new(&folder)));
+    let (missing, workouts) = tauri::async_runtime::spawn_blocking(read).await.map_err(|e| e.to_string())?;
     Ok(WorkoutList { dir, missing, workouts })
 }
 
@@ -838,6 +834,40 @@ mod tests {
         assert_eq!(pairing.workout.map(|w| (w.name, w.total_s)), Some(("Steady".to_string(), 600)));
         clock.stop_at.store(u64::MAX, Ordering::SeqCst);
         block_on(training_leave(handle)).unwrap();
+    }
+
+    /// The async workout commands, called the way the screen calls them.
+    #[test]
+    fn the_workout_commands_answer_over_ipc() {
+        use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+        let vault = ScratchDir::new("training_ipc");
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![training_workouts, training_start_workout])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let mut state = crate::test_support::app_state_on(crate::db::test_db());
+        state.vault_path = vault.to_path_buf();
+        app.manage(state);
+        app.manage(TrainingState::default());
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        let call = |cmd: &str, body: serde_json::Value| {
+            get_ipc_response(
+                &webview,
+                tauri::webview::InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "http://tauri.localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(body),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.to_string(),
+                },
+            )
+        };
+        let list = call("training_workouts", serde_json::json!({})).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(list, serde_json::json!({ "dir": null, "missing": false, "workouts": [] }));
+        let refused = call("training_start_workout", serde_json::json!({ "path": "a.zwo" })).unwrap_err();
+        assert!(refused.to_string().contains("training.noWorkoutsDir"), "{refused}");
     }
 
     #[test]

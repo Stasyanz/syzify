@@ -135,6 +135,18 @@ mod tests {
         assert!(super::list(&dir.path().join("missing")).is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_opened_says_why() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ScratchDir::new("workouts_closed");
+        write(dir.path(), "closed.zwo", STEADY);
+        fs::set_permissions(dir.path().join("closed.zwo"), fs::Permissions::from_mode(0o000)).unwrap();
+        let listed = list(dir.path());
+        fs::set_permissions(dir.path().join("closed.zwo"), fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(&listed[0].problem, Some(Problem::Unreadable { detail }) if !detail.is_empty()), "{:?}", listed[0].problem);
+    }
+
     #[test]
     fn a_long_workout_is_listed_with_a_profile_to_draw_not_its_intervals() {
         let dir = ScratchDir::new("workouts_profile");
