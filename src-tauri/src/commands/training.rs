@@ -126,6 +126,13 @@ pub(crate) fn finish_before_exit<R: Runtime>(app: &AppHandle<R>, then: impl FnOn
     true
 }
 
+/// The app is asked to exit with `code`: whether to hold the exit for the
+/// ride (`finish_before_exit`). A restart cannot be held — Tauri ignores
+/// `prevent_exit` for it — and `restart_app` refuses under a ride anyway.
+pub(crate) fn hold_exit<R: Runtime>(app: &AppHandle<R>, code: Option<i32>, then: impl FnOnce() + Send + 'static) -> bool {
+    code != Some(tauri::RESTART_EXIT_CODE) && finish_before_exit(app, then)
+}
+
 /// The app's side of a ride.
 struct AppHost<'a, R: Runtime> {
     app: &'a AppHandle<R>,
@@ -728,7 +735,8 @@ mod tests {
         assert_eq!(encrypt.unwrap_err().code, ride, "the vault names the ride that holds it");
 
         clock.stop_at.store(u64::MAX, Ordering::SeqCst);
-        assert!(finish_before_exit(&handle, quitter()), "the quit waits for the ride");
+        assert!(!hold_exit(&handle, Some(tauri::RESTART_EXIT_CODE), quitter()), "a restart cannot be held");
+        assert!(hold_exit(&handle, Some(0), quitter()), "the quit waits for the ride");
         assert!(!finish_before_exit(&handle, quitter()), "asked again: quit at once");
         let deadline = Instant::now() + Duration::from_secs(20);
         while !quit.load(Ordering::SeqCst) {

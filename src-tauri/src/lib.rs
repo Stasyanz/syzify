@@ -485,11 +485,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::app_menu);
     builder
-        .on_menu_event(|app, event| {
-            if menu::is_quit(event.id().as_ref()) {
-                app.exit(0);
-            }
-        })
+        .on_menu_event(menu::on_event)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -755,13 +751,8 @@ pub fn run() {
             // Cmd+Q or the last window closed under an indoor ride: finish
             // the ride first (the trainer let go, the ride saved), then quit.
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-                // A restart cannot be held (Tauri ignores prevent_exit for
-                // it); `restart_app` and `install_update` refuse under a ride.
-                if code == Some(tauri::RESTART_EXIT_CODE) {
-                    return;
-                }
                 let handle = app.clone();
-                if commands::training::finish_before_exit(app, move || handle.exit(0)) {
+                if commands::training::hold_exit(app, code, move || handle.exit(0)) {
                     api.prevent_exit();
                 }
             }

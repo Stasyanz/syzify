@@ -18,6 +18,14 @@ pub fn is_quit(id: &str) -> bool {
     id == QUIT_ID
 }
 
+/// The app's menu events: our Quit asks for the exit (an `ExitRequested`
+/// the ride can hold); the rest are Tauri's own.
+pub fn on_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::menu::MenuEvent) {
+    if is_quit(event.id().as_ref()) {
+        app.exit(0);
+    }
+}
+
 /// The default menu with the app submenu's Quit replaced by ours.
 #[cfg(target_os = "macos")]
 pub fn app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
@@ -62,6 +70,10 @@ mod tests {
     fn our_quit_is_known_by_its_id() {
         assert!(is_quit(QUIT_ID));
         assert!(!is_quit("quit"));
+        // Another item's event does nothing here (the mock app could not
+        // exit: it would panic).
+        let app = tauri::test::mock_builder().build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        on_event(app.handle(), tauri::menu::MenuEvent { id: tauri::menu::MenuId::new("about") });
     }
     // `app_menu` is checked by hand: AppKit builds menus on the main thread
     // only, and tests run on others.
