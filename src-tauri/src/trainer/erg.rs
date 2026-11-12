@@ -191,10 +191,10 @@ impl ErgHandle {
     }
 
     fn show(&self, view: Option<ErgLive>, matching: Option<MatchLive>) {
-        if let Ok(mut s) = self.0.lock() {
-            s.view = view;
-            s.matching = matching;
-        }
+        // A panic elsewhere while holding it leaves plain data: write on.
+        let mut s = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        s.view = view;
+        s.matching = matching;
     }
 }
 
@@ -720,6 +720,7 @@ mod tests {
         fn muted(cfg: FakeConfig, drops: Vec<(Duration, Duration)>, mutes: Vec<(Duration, Duration)>, target: Option<u16>) -> Ride {
             let mut trainer = FakeTrainer::new(cfg);
             let pedals = trainer.pedals(drops, mutes);
+            assert!(pedals.identity().is_none(), "nobody in particular");
             Ride::with_pedals(trainer, Some(Box::new(pedals)), target)
         }
 
@@ -1145,12 +1146,9 @@ mod tests {
     /// How far the Avanti reads below the pedals, by cadence (the spike:
     /// −4 W at ≤ 66 rpm, +6…+24 W at 79–85, +6…+13 above).
     fn avanti_gap(rpm: u8) -> f32 {
-        match rpm {
-            0..=66 => -4.0,
-            67..=78 => 6.0,
-            79..=86 => 18.0,
-            _ => 10.0,
-        }
+        // Up to each cadence, this gap.
+        const GAP: [(u8, f32); 4] = [(66, -4.0), (78, 6.0), (86, 18.0), (u8::MAX, 10.0)];
+        GAP.iter().find(|&&(upto, _)| rpm <= upto).map_or(10.0, |&(_, gap)| gap)
     }
 
     fn avanti_reading_low(cadence: u8) -> FakeConfig {
@@ -1284,7 +1282,9 @@ mod tests {
     /// Where the trainer's own watts sit on a confirmed `target`, with the
     /// pedals 18 W above them: what is the trainer sent after two minutes?
     fn matched_on(target: u16, trainer: fn(Duration) -> (u8, Option<u16>), pedals: u16) -> u16 {
-        let mut r = Ride::with_pedals(Stub::new(trainer, ack), Some(Box::new(Steady(pedals))), Some(target));
+        let pedals = Steady(pedals);
+        assert!(pedals.identity().is_none());
+        let mut r = Ride::with_pedals(Stub::new(trainer, ack), Some(Box::new(pedals)), Some(target));
         r.to(secs(120));
         assert_eq!(r.erg.view().map(|v| v.state), Some(ErgState::Holding), "on target for ERG");
         r.erg.matching().expect("matching").trainer_target_w

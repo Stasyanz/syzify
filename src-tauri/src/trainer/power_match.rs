@@ -147,10 +147,9 @@ impl PowerMatch {
         let (lo, share) = place(cadence);
         let read = self.gap_at(cadence);
         let err = gap - read;
+        // A cadence is at most 255 rpm: `lo + 1` is at most band 51, the last.
         for (i, weight) in [(lo, 1.0 - share), (lo + 1, share)] {
-            if let Some(band) = self.bands.get_mut(i) {
-                *band = Some(band.unwrap_or(read) + ALPHA * weight * err);
-            }
+            self.bands[i] = Some(self.bands[i].unwrap_or(read) + ALPHA * weight * err);
         }
         self.latest = Some(self.gap_at(cadence));
     }

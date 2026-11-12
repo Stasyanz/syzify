@@ -306,12 +306,10 @@ impl FakeTrainer {
         self.report_owed(|due| due <= t, events);
 
         let legs = (self.torque * cadence).max(0.0);
-        if self.pedals.is_some() {
+        if let Some(tap) = self.pedals.clone() {
             let read = legs + self.cfg.pedal_noise * self.noise();
             let watts = Some(read.max(0.0).round().min(u16::MAX as f32) as u16);
-            if let Some(tap) = &self.pedals {
-                tap.lock().unwrap().push(Reading { at: t, watts, cadence_rpm: Some(rpm), ..Reading::default() });
-            }
+            tap.lock().unwrap().push(Reading { at: t, watts, cadence_rpm: Some(rpm), ..Reading::default() });
         }
         if heard {
             let watts = (legs - low).max(0.0).round().min(u16::MAX as f32) as u16;
