@@ -29,9 +29,11 @@ pub enum Side {
     Right,
 }
 
-/// A pedal's side and the pair's name, from its own: `ASSIOMA55430L` is
-/// the left of `ASSIOMA55430`. The name before the letter must end in a
-/// digit (a serial), so a `KICKR` is not the right of a `KICK`.
+/// A pedal's side and its name without it, from its own: `ASSIOMA55430L`
+/// is a left, `ASSIOMA55430`. The name before the letter must end in a
+/// digit (a serial), so a `KICKR` is not the right of a `KICK`. Each pedal
+/// has its own serial (`ASSIOMA55430L` pairs with `ASSIOMA61026R`): the
+/// pair is told by [`model_of`].
 pub fn side_of(name: &str) -> Option<(&str, Side)> {
     let name = name.trim();
     let last = name.chars().next_back()?;
@@ -44,6 +46,13 @@ pub fn side_of(name: &str) -> Option<(&str, Side)> {
         'R' | 'r' => Some((base, Side::Right)),
         _ => None,
     }
+}
+
+/// A side's model: its name without the side and the serial
+/// (`ASSIOMA55430L` → `ASSIOMA`); None when nothing is left.
+pub fn model_of(name: &str) -> Option<&str> {
+    let (base, _) = side_of(name)?;
+    Some(base.trim_end_matches(|c: char| c.is_ascii_digit())).filter(|m| !m.is_empty())
 }
 
 pub struct PedalPair {
@@ -277,11 +286,15 @@ mod tests {
         assert_eq!(side_of("ASSIOMA55430"), None);
         assert_eq!(side_of(""), None);
         assert_eq!(side_of("12Ä"), None, "a letter that is not one byte is no panic");
+        assert_eq!(model_of("ASSIOMA55430L"), Some("ASSIOMA"));
+        assert_eq!(model_of("ASSIOMA61026R"), Some("ASSIOMA"), "the other pedal's serial: one model");
+        assert_eq!(model_of("12345L"), None, "a serial alone is no model");
+        assert_eq!(model_of("KICKR"), None);
     }
 
     #[test]
     fn the_pair_is_one_device_with_both_legs_power() {
-        let mut p = pair(leg("ASSIOMA55430L", "AL", 110, 0), leg("ASSIOMA55430R", "AR", 90, 500));
+        let mut p = pair(leg("ASSIOMA55430L", "AL", 110, 0), leg("ASSIOMA61026R", "AR", 90, 500));
         assert!(p.identity().is_none());
         let events = ride(&mut p, 0, 10);
         let connected = events.iter().filter(|e| matches!(e, LinkEvent::Connected { .. })).count();
@@ -301,7 +314,7 @@ mod tests {
 
     #[test]
     fn a_lost_side_gives_no_power_and_the_pair_is_back_with_both() {
-        let mut right = leg("ASSIOMA55430R", "AR", 90, 500);
+        let mut right = leg("ASSIOMA61026R", "AR", 90, 500);
         right.quiet = Some((secs(10), secs(20)));
         right.script = vec![LinkEvent::Lost { at: secs(10) }, LinkEvent::Back { at: secs(20), outage: secs(10) }];
         let mut left = leg("ASSIOMA55430L", "AL", 110, 0);
@@ -326,7 +339,7 @@ mod tests {
 
     #[test]
     fn a_side_gone_quiet_without_a_word_counts_no_more() {
-        let mut right = leg("ASSIOMA55430R", "AR", 90, 500);
+        let mut right = leg("ASSIOMA61026R", "AR", 90, 500);
         right.quiet = Some((secs(5), secs(60)));
         let mut p = pair(leg("ASSIOMA55430L", "AL", 110, 0), right);
         let events = ride(&mut p, 0, 15);
@@ -338,7 +351,7 @@ mod tests {
     fn a_side_that_fails_ends_the_pair() {
         let mut left = leg("ASSIOMA55430L", "AL", 110, 0);
         left.script = vec![LinkEvent::Failed { at: secs(3), reason: LinkFailure::PermissionDenied }];
-        let mut p = pair(left, leg("ASSIOMA55430R", "AR", 90, 500));
+        let mut p = pair(left, leg("ASSIOMA61026R", "AR", 90, 500));
         let events = ride(&mut p, 0, 3);
         assert!(matches!(events.last(), Some(LinkEvent::Failed { .. })));
         assert!(ride(&mut p, 4, 10).is_empty(), "nothing after Failed");
@@ -349,7 +362,7 @@ mod tests {
             // A late reading of its own (as a radio may bring one).
             LinkEvent::Reading(Reading { at: ms(1200), watts: Some(120), ..Reading::default() }),
         ];
-        let mut p = pair(stray, leg("ASSIOMA55430R", "AR", 90, 500));
+        let mut p = pair(stray, leg("ASSIOMA61026R", "AR", 90, 500));
         let events = ride(&mut p, 0, 2);
         assert!(!events.iter().any(|e| matches!(e, LinkEvent::Control { .. })));
         assert!(events.iter().any(|e| matches!(e, LinkEvent::Reading(r) if r.at == ms(1200) && r.watts == Some(210))));
@@ -363,7 +376,7 @@ mod tests {
         use crate::trainer::fit::SubSport;
         use crate::trainer::journal::Source;
         use crate::trainer::session::Session;
-        let mut right = leg("ASSIOMA55430R", "AR", 90, 500);
+        let mut right = leg("ASSIOMA61026R", "AR", 90, 500);
         right.quiet = Some((secs(30), secs(40)));
         right.script = vec![LinkEvent::Lost { at: secs(30) }, LinkEvent::Back { at: secs(40), outage: secs(10) }];
         let pedals = Box::new(pair(leg("ASSIOMA55430L", "AL", 110, 0), right));
@@ -383,7 +396,7 @@ mod tests {
 
     #[test]
     fn coasting_is_zero_watts_with_no_balance() {
-        let mut p = pair(leg("ASSIOMA55430L", "AL", 0, 0), leg("ASSIOMA55430R", "AR", 0, 500));
+        let mut p = pair(leg("ASSIOMA55430L", "AL", 0, 0), leg("ASSIOMA61026R", "AR", 0, 500));
         let events = ride(&mut p, 0, 5);
         let readings: Vec<&Reading> = events.iter().filter_map(|e| if let LinkEvent::Reading(r) = e { Some(r) } else { None }).collect();
         let last = readings.last().unwrap();
@@ -392,7 +405,7 @@ mod tests {
 
     #[test]
     fn each_side_gives_the_balance_and_the_cadence_the_other_lacks() {
-        let mut right = leg("ASSIOMA55430R", "AR", 90, 500);
+        let mut right = leg("ASSIOMA61026R", "AR", 90, 500);
         right.cadence = None;
         let mut p = pair(leg("ASSIOMA55430L", "AL", 110, 0), right);
         let events = ride(&mut p, 0, 6);
@@ -412,7 +425,7 @@ mod tests {
         let mut left = leg("ASSIOMA55430L", "AL", 110, 0);
         left.quiet = Some((secs(2), secs(8)));
         left.script = vec![LinkEvent::Lost { at: secs(2) }, LinkEvent::Back { at: secs(8), outage: secs(6) }];
-        let mut right = leg("ASSIOMA55430R", "AR", 90, 500);
+        let mut right = leg("ASSIOMA61026R", "AR", 90, 500);
         right.hello = true; // says hello later, by script
         right.script = vec![
             LinkEvent::Connected { at: secs(5) },
@@ -439,7 +452,7 @@ mod tests {
     fn a_nameless_side_is_named_as_it_is() {
         let mut left = leg("x", "AL", 100, 0);
         left.identity.name = None;
-        let mut p = pair(left, leg("ASSIOMA55430R", "AR", 100, 500));
+        let mut p = pair(left, leg("ASSIOMA61026R", "AR", 100, 500));
         ride(&mut p, 0, 2);
         assert_eq!(p.identity().and_then(|i| i.ble_address.as_deref()), Some("AL"));
         assert_eq!(p.identity().and_then(|i| i.name.as_deref()), None);

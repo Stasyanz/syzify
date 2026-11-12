@@ -189,15 +189,15 @@ describe("Training before a session", () => {
   it("offers a pedal pair as one and links both its sides (#284)", async () => {
     mocked.trainingScan.mockResolvedValue([
       { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
-      { role: "pedals", address: "PL", name: "ASSIOMA55430", other_side: "PR", lone_side: false },
+      { role: "pedals", address: "PL", name: "ASSIOMA55430L + ASSIOMA61026R", other_side: "PR", lone_side: false },
       { role: "pedals", address: "QR", name: "ASSIOMA77001R", other_side: null, lone_side: true },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
-    expect(await screen.findByText("ASSIOMA55430")).toBeTruthy();
+    expect(await screen.findByText("ASSIOMA55430L + ASSIOMA61026R")).toBeTruthy();
     expect(screen.getByText("both pedals")).toBeTruthy();
     expect(screen.getByText(/one pedal of a pair/)).toBeTruthy();
-    fireEvent.click(screen.getByText("ASSIOMA55430"));
+    fireEvent.click(screen.getByText("ASSIOMA55430L + ASSIOMA61026R"));
     fireEvent.click(screen.getByText("Connect"));
     await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", ["PL", "PR"], null));
   });

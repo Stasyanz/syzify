@@ -7,7 +7,7 @@ use super::gatt;
 use super::machine::Advert;
 pub use crate::models::training::FoundDevice as Found;
 use crate::models::training::SensorRole as Source;
-use crate::trainer::pedals::{side_of, Side};
+use crate::trainer::pedals::{model_of, side_of, Side};
 
 /// The roles an advertisement offers: a trainer (FTMS), pedals (Cycling
 /// Power from something that is not a trainer — trainers advertise it too)
@@ -73,36 +73,41 @@ impl Discovery {
     }
 }
 
-/// The two sides of one pedal pair (`…L`, `…R`) become one choice, named
-/// for both, the left's address first; a side seen alone is marked.
+/// The two sides of one pedal pair become one choice, named for both, the
+/// left's address first. Each pedal has its own serial (`ASSIOMA55430L`,
+/// `ASSIOMA61026R`), so a pair is one left and one right of a model; with
+/// more than one of a side about (a group ride) which goes with which is
+/// not known, and each stays apart. A side not paired is marked.
 fn pair_pedals(found: Vec<Found>) -> Vec<Found> {
     fn side(f: &Found) -> Option<(&str, Side)> {
         if f.role != Source::Pedals {
             return None;
         }
-        f.name.as_deref().and_then(side_of)
+        let name = f.name.as_deref()?;
+        Some((model_of(name)?, side_of(name)?.1))
     }
+    let count = |found: &[Found], model: &str, which: Side| {
+        found.iter().filter(|f| side(f).is_some_and(|(m, s)| m == model && s == which)).count()
+    };
     let mut out: Vec<Found> = Vec::new();
-    let mut rights: Vec<Found> = Vec::new();
-    for f in found {
-        match side(&f) {
-            Some((_, Side::Right)) => rights.push(f),
-            _ => out.push(f),
+    for f in &found {
+        let Some((model, which)) = side(f) else {
+            out.push(f.clone());
+            continue;
+        };
+        let paired = count(&found, model, Side::Left) == 1 && count(&found, model, Side::Right) == 1;
+        let right = found.iter().find(|r| side(r) == Some((model, Side::Right)));
+        match (paired, which, right) {
+            (true, Side::Left, Some(right)) => out.push(Found {
+                name: Some(format!("{} + {}", f.name.as_deref().unwrap_or_default(), right.name.as_deref().unwrap_or_default())),
+                other_side: Some(right.address.clone()),
+                ..f.clone()
+            }),
+            // The right goes with its left.
+            (true, Side::Right, _) => {}
+            _ => out.push(Found { lone_side: true, ..f.clone() }),
         }
     }
-    for f in out.iter_mut() {
-        let Some((base, Side::Left)) = side(f) else { continue };
-        let base = base.to_string();
-        match rights.iter().position(|r| side(r).is_some_and(|(b, _)| b == base)) {
-            Some(i) => {
-                let right = rights.remove(i);
-                f.name = Some(base);
-                f.other_side = Some(right.address);
-            }
-            None => f.lone_side = true,
-        }
-    }
-    out.extend(rights.into_iter().map(|r| Found { lone_side: true, ..r }));
     out
 }
 
@@ -151,27 +156,74 @@ mod tests {
 
     #[test]
     fn the_two_pedals_of_a_pair_are_one_choice() {
+        // Each pedal its own serial: the user's, as they advertise.
         let mut d = Discovery::default();
-        d.saw(&ad("PR", Some("ASSIOMA55430R"), &[gatt::CYCLING_POWER]));
+        d.saw(&ad("PR", Some("ASSIOMA61026R"), &[gatt::CYCLING_POWER]));
         d.saw(&ad("PL", Some("ASSIOMA55430L"), &[gatt::CYCLING_POWER]));
-        d.saw(&ad("QR", Some("ASSIOMA77001R"), &[gatt::CYCLING_POWER])); // its left asleep
+        d.saw(&ad("FR", Some("FAVERO1R"), &[gatt::CYCLING_POWER])); // another model, its left asleep
         d.saw(&ad("K", Some("KICKR"), &[gatt::CYCLING_POWER])); // ends in R, no serial: not a side
         d.saw(&ad("H", Some("HRM1R"), &[gatt::HEART_RATE])); // a strap is never a side
         let found = d.into_found();
         let strap = found.iter().find(|f| f.address == "H").unwrap();
         assert!(!strap.lone_side && strap.other_side.is_none() && strap.name.as_deref() == Some("HRM1R"));
-        let found: Vec<Found> = found.into_iter().filter(|f| f.role == Source::Pedals).collect();
-        let seen: Vec<(&str, Option<&str>, Option<&str>, bool)> = found
-            .iter()
-            .map(|f| (f.address.as_str(), f.name.as_deref(), f.other_side.as_deref(), f.lone_side))
-            .collect();
         assert_eq!(
-            seen,
+            pedals(found),
             vec![
-                ("PL", Some("ASSIOMA55430"), Some("PR"), false),
-                ("QR", Some("ASSIOMA77001R"), None, true),
-                ("K", Some("KICKR"), None, false),
+                row("PL", Some("ASSIOMA55430L + ASSIOMA61026R"), Some("PR"), false),
+                row("FR", Some("FAVERO1R"), None, true),
+                row("K", Some("KICKR"), None, false),
             ]
         );
+    }
+
+    /// A pedal choice: address, name, the other side, alone.
+    type Row = (String, Option<String>, Option<String>, bool);
+
+    fn row(address: &str, name: Option<&str>, other: Option<&str>, lone: bool) -> Row {
+        (address.into(), name.map(Into::into), other.map(Into::into), lone)
+    }
+
+    fn pedals(found: Vec<Found>) -> Vec<Row> {
+        found.into_iter().filter(|f| f.role == Source::Pedals).map(|f| (f.address, f.name, f.other_side, f.lone_side)).collect()
+    }
+
+    /// Two riders' pedals about: which left goes with which right is not
+    /// known, so none is paired and each is marked.
+    #[test]
+    fn pedals_of_two_pairs_stay_apart() {
+        let mut d = Discovery::default();
+        for (address, name) in [("A", "ASSIOMA1L"), ("B", "ASSIOMA2R"), ("C", "ASSIOMA3L"), ("D", "ASSIOMA4R")] {
+            d.saw(&ad(address, Some(name), &[gatt::CYCLING_POWER]));
+        }
+        let seen = pedals(d.into_found());
+        assert_eq!(seen.len(), 4);
+        assert!(seen.iter().all(|(_, _, other, lone)| other.is_none() && *lone), "{seen:?}");
+    }
+
+    /// One more pedal of a side about (a second bike, a studio): which goes
+    /// with which is not known — never another rider's leg in the sum.
+    #[test]
+    fn an_extra_pedal_of_a_side_pairs_nothing() {
+        for names in [["ASSIOMA1L", "ASSIOMA2R", "ASSIOMA3R"], ["ASSIOMA1L", "ASSIOMA3L", "ASSIOMA2R"]] {
+            let mut d = Discovery::default();
+            for (i, name) in names.iter().enumerate() {
+                d.saw(&ad(&format!("A{i}"), Some(name), &[gatt::CYCLING_POWER]));
+            }
+            let seen = pedals(d.into_found());
+            assert_eq!(seen.len(), 3, "{names:?}");
+            assert!(seen.iter().all(|(_, _, other, lone)| other.is_none() && *lone), "{names:?}: {seen:?}");
+        }
+    }
+
+    /// A right of another model, seen first, is not the left's other side.
+    #[test]
+    fn a_left_pairs_with_the_right_of_its_own_model() {
+        let mut d = Discovery::default();
+        d.saw(&ad("FR", Some("FAVERO1R"), &[gatt::CYCLING_POWER]));
+        d.saw(&ad("PL", Some("ASSIOMA55430L"), &[gatt::CYCLING_POWER]));
+        d.saw(&ad("PR", Some("ASSIOMA61026R"), &[gatt::CYCLING_POWER]));
+        let seen = pedals(d.into_found());
+        assert!(seen.contains(&row("PL", Some("ASSIOMA55430L + ASSIOMA61026R"), Some("PR"), false)), "{seen:?}");
+        assert!(seen.contains(&row("FR", Some("FAVERO1R"), None, true)));
     }
 }
