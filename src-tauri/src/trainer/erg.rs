@@ -120,8 +120,12 @@ pub struct ErgHandle(Arc<Mutex<Shared>>);
 impl ErgHandle {
     /// Hold `watts` (capped at `MAX_TARGET`); None rides free.
     pub fn set_target(&self, watts: Option<u16>) {
+        let source = match watts {
+            Some(w) => Source::Manual(w.min(MAX_TARGET)),
+            None => Source::Free,
+        };
         if let Ok(mut s) = self.0.lock() {
-            s.source = watts.map_or(Source::Free, |w| Source::Manual(w.min(MAX_TARGET)));
+            s.source = source;
         }
     }
 
