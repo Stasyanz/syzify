@@ -115,6 +115,106 @@ pub enum MatchState {
     NoPedals,
 }
 
+/// A workout interval, power as a share of FTP.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct WorkoutSegment {
+    pub secs: u32,
+    pub from: f32,
+    pub to: f32,
+    /// No target: ridden free.
+    pub free: bool,
+    pub cadence: Option<u8>,
+}
+
+/// What was left out of a workout file, or ridden otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkoutNote {
+    /// An element this app does not know, without a duration: skipped.
+    Unknown { element: String },
+    /// An element this app does not know, with a duration (`MaxEffort`,
+    /// …): ridden free for as long.
+    RiddenFree { element: String },
+    /// A value missing or out of range: the interval skipped.
+    BadValue { element: String },
+    /// A message placed by distance, not time.
+    DistanceCue,
+    /// A message past the end of its interval.
+    CueOutside,
+}
+
+/// Why a workout file cannot be ridden.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkoutProblem {
+    /// Not XML, or broken.
+    Unreadable { detail: String },
+    /// XML, but no `<workout_file>` with a `<workout>`.
+    NotAWorkout,
+    /// A running workout (paces, not powers).
+    Run,
+    /// Intervals in metres, not seconds.
+    Distance,
+    /// Nothing that can be ridden in it.
+    Empty,
+    /// Longer than a day, or more intervals than a workout has.
+    TooLong,
+    TooBig,
+}
+
+/// A workout file in the workouts folder.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WorkoutFile {
+    /// Within the folder, `/`-separated: how it is started.
+    pub path: String,
+    pub name: String,
+    pub duration_s: u32,
+    /// Its power over time, a few dozen points at most (to draw).
+    pub profile: Vec<WorkoutSegment>,
+    /// What was left out of it.
+    pub notes: Vec<WorkoutNote>,
+    /// Why it cannot be ridden.
+    pub problem: Option<WorkoutProblem>,
+}
+
+/// The workouts folder and what is in it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WorkoutList {
+    pub dir: Option<String>,
+    /// The folder picked is gone.
+    pub missing: bool,
+    pub workouts: Vec<WorkoutFile>,
+}
+
+/// The workout under way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkoutLive {
+    pub name: String,
+    pub elapsed_s: u32,
+    pub total_s: u32,
+    /// The step under way, from 0; `steps` once it is over.
+    pub step: u32,
+    pub steps: u32,
+    /// Seconds left in the step.
+    pub step_left_s: u32,
+    /// The step has no target: ridden free.
+    pub free: bool,
+    /// The cadence the step suggests.
+    pub cadence: Option<u8>,
+    pub next: Option<NextStep>,
+    /// A line the workout shows now.
+    pub cue: Option<String>,
+    pub done: bool,
+}
+
+/// The step after this one (0 W both ways: ridden free).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct NextStep {
+    pub secs: u32,
+    pub from_w: u16,
+    pub to_w: u16,
+}
+
 /// Power match while ERG holds a target on a ride with pedals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MatchLive {
@@ -153,6 +253,8 @@ pub struct TrainingLive {
     pub erg: Option<ErgLive>,
     /// Power match, while ERG holds a target on a ride with pedals.
     pub power_match: Option<MatchLive>,
+    /// The workout ERG follows, if one.
+    pub workout: Option<WorkoutLive>,
     /// Finishing: the trainer refused letting go (another app may control
     /// it); still asked for a few seconds.
     pub release_unconfirmed: bool,

@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::erg::{Erg, ErgHandle};
+use super::erg::{Erg, ErgHandle, Workout};
 use super::fit::{Ride, SubSport};
 use super::journal::{Journal, Source};
 use super::link::{Control, ControlId, ControlOutcome, LinkEvent, LinkFailure};
@@ -77,6 +77,9 @@ pub enum Order {
     Resume,
     /// ERG: hold these watts; None rides free.
     SetTarget(Option<u16>),
+    /// ERG: follow this workout from the next second (from the start of
+    /// the ride, set before it).
+    SetWorkout(Workout),
     /// End the ride, let the trainer go, import it.
     Finish(Reply<TrainingFinish>),
     /// End the ride, let the trainer go, throw it away.
@@ -286,6 +289,10 @@ impl View {
             },
             // ERG says nothing before the ride; the end is the runner's.
             power_match: self.erg.matching().filter(|_| phase != TrainingPhase::Finishing),
+            workout: match phase {
+                TrainingPhase::Finishing => None,
+                _ => self.erg.workout_at(session.seconds().len() as u32),
+            },
         }
     }
 }
@@ -377,6 +384,7 @@ pub fn run(mut session: Session, orders: Receiver<Order>, clock: &dyn Clock, hos
                 }
                 Order::Lap => view.warn(session.lap(now)),
                 Order::SetTarget(watts) => erg.set_target(watts),
+                Order::SetWorkout(plan) => erg.set_workout(plan),
                 Order::Pause => view.warn(session.pause(now)),
                 Order::Resume => view.warn(session.resume(now)),
                 Order::Leave(reply) => {
@@ -765,11 +773,18 @@ mod tests {
         assert_eq!(r.last().erg, None, "riding free");
         r.tell(Order::SetTarget(Some(200)));
         r.run_to(55_000);
+        assert_eq!(r.last().workout, None);
+        let steps = vec![crate::trainer::erg::Step { secs: 600, from: 180, to: 180, cadence: None }];
+        r.tell(Order::SetWorkout(Workout { name: "Steady".into(), steps, cues: Vec::new() }));
+        r.run_to(60_000);
+        let following = r.last();
+        assert_eq!(following.erg.map(|e| e.target_w), Some(180));
+        assert_eq!(following.workout.map(|w| (w.name, w.step, w.done)), Some(("Steady".to_string(), 0, false)));
         r.free();
         r.ask(Order::Finish).unwrap();
         let seen = r.join();
         let last = seen.last.expect("shown");
-        assert_eq!((last.erg, last.power_match), (None, None), "letting go at the end is not ERG's");
+        assert_eq!((last.erg, last.power_match, last.workout), (None, None, None), "letting go at the end is not ERG's");
     }
 
     #[test]

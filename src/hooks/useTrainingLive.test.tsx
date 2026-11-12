@@ -45,6 +45,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     erg: null,
     release_unconfirmed: false,
     power_match: null,
+    workout: null,
     ...over,
   };
 }

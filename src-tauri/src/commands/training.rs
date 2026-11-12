@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use super::import::ensure_vault_unlocked;
 use super::vault_busy_in;
 use crate::error::CommandError;
-use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive, TrainingPhase};
+use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive, TrainingPhase, WorkoutList};
 use crate::state::{AppState, SingleFlightGuard};
 use crate::trainer::awake::KeepAwake;
 use crate::trainer::erg::MAX_TARGET;
@@ -28,6 +28,7 @@ use crate::trainer::library::{self, ride_key};
 use crate::trainer::link::LinkFailure;
 use crate::trainer::runner::{self, Clock, Host, Order, Reply};
 use crate::trainer::session::Session;
+use crate::trainer::workouts;
 
 /// The live values, a few times a second; null when the session is over.
 pub const LIVE_EVENT: &str = "training:live";
@@ -385,6 +386,53 @@ pub fn training_ftp(state: State<'_, AppState>) -> Result<Option<f64>, CommandEr
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let rides = crate::models::activity::SportType::family("ride");
     Ok(crate::db::activities::latest_ftp(&conn, rides).map_err(|e| e.to_string())?)
+}
+
+fn workouts_dir(state: &AppState) -> Result<Option<String>, CommandError> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    Ok(crate::db::settings::get_setting(&conn, workouts::DIR_SETTING).map_err(|e| e.to_string())?)
+}
+
+/// The workouts folder and its workouts, each file read: off the main
+/// thread.
+#[tauri::command]
+pub async fn training_workouts<R: Runtime>(app: AppHandle<R>) -> Result<WorkoutList, CommandError> {
+    let dir = workouts_dir(&app.state::<AppState>())?;
+    let Some(folder) = dir.clone() else { return Ok(WorkoutList { dir, missing: false, workouts: Vec::new() }) };
+    let (missing, workouts) = tauri::async_runtime::spawn_blocking(move || {
+        let folder = Path::new(&folder);
+        (!folder.is_dir(), workouts::list(folder))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(WorkoutList { dir, missing, workouts })
+}
+
+#[tauri::command]
+pub fn training_set_workouts_dir(dir: String, state: State<'_, AppState>) -> Result<(), CommandError> {
+    // Absolute: a relative one would mean wherever the app was started.
+    if !Path::new(&dir).is_absolute() || !Path::new(&dir).is_dir() {
+        return Err(CommandError::coded("training.notAFolder", format!("{dir} is not a folder")).param("path", dir));
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    Ok(crate::db::settings::set_setting(&conn, workouts::DIR_SETTING, &dir).map_err(|e| e.to_string())?)
+}
+
+/// ERG follows the workout at `path` in the workouts folder, in watts
+/// from the FTP of the latest ride.
+#[tauri::command]
+pub async fn training_start_workout<R: Runtime>(path: String, app: AppHandle<R>) -> Result<(), CommandError> {
+    let ftp = training_ftp(app.state())?;
+    start_workout(&app, path, ftp).await
+}
+
+async fn start_workout<R: Runtime>(app: &AppHandle<R>, path: String, ftp: Option<f64>) -> Result<(), CommandError> {
+    let dir = workouts_dir(&app.state::<AppState>())?
+        .ok_or_else(|| CommandError::coded("training.noWorkoutsDir", "Pick a folder of workouts first"))?;
+    let ftp = ftp.map(|f| f.round().clamp(1.0, f64::from(MAX_TARGET)) as u16);
+    let ftp = ftp.ok_or_else(|| CommandError::coded("training.noFtpForWorkout", "A workout needs an FTP, and none was found in your rides"))?;
+    let (plan, name) = tauri::async_runtime::spawn_blocking(move || workouts::load(Path::new(&dir), &path)).await.map_err(|e| e.to_string())??;
+    tell(app, Order::SetWorkout(plan.workout(&name, ftp)))
 }
 
 /// Rides a crash or a closed app left unfinished. Each journal is read
@@ -746,6 +794,53 @@ mod tests {
     }
 
     #[test]
+    fn a_workout_from_the_folder_is_handed_to_the_ride() {
+        let vault = ScratchDir::new("training_workouts");
+        let app = app_at(&vault);
+        let handle = app.handle().clone();
+        let folder = vault.path().join("workouts");
+        std::fs::create_dir_all(&folder).unwrap();
+        let steady = r#"<workout_file><name>Steady</name><workout><SteadyState Duration="600" Power="0.8"/></workout></workout_file>"#;
+        std::fs::write(folder.join("steady.zwo"), steady).unwrap();
+
+        let none = block_on(training_workouts(handle.clone())).unwrap();
+        assert_eq!(none, WorkoutList { dir: None, missing: false, workouts: Vec::new() });
+        let start = |path: &str, ftp| block_on(start_workout(&handle, path.into(), ftp));
+        assert_eq!(start("steady.zwo", Some(250.0)).unwrap_err().code, Some("training.noWorkoutsDir"));
+        let missing = vault.path().join("missing").to_string_lossy().into_owned();
+        let not_a_folder = training_set_workouts_dir(missing.clone(), app.state()).unwrap_err();
+        assert_eq!(not_a_folder, CommandError::coded("training.notAFolder", format!("{missing} is not a folder")).param("path", missing));
+        assert_eq!(training_set_workouts_dir(".".into(), app.state()).unwrap_err().code, Some("training.notAFolder"), "relative");
+
+        // Picked, then gone.
+        let gone = vault.path().join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        training_set_workouts_dir(gone.to_string_lossy().into_owned(), app.state()).unwrap();
+        std::fs::remove_dir(&gone).unwrap();
+        assert!(block_on(training_workouts(handle.clone())).unwrap().missing);
+
+        training_set_workouts_dir(folder.to_string_lossy().into_owned(), app.state()).unwrap();
+        let listed = block_on(training_workouts(handle.clone())).unwrap();
+        assert_eq!(listed.dir.as_deref(), Some(folder.to_string_lossy().as_ref()));
+        assert!(!listed.missing);
+        assert_eq!(listed.workouts.iter().map(|w| (w.name.as_str(), w.duration_s)).collect::<Vec<_>>(), vec![("Steady", 600)]);
+        let no_ftp = block_on(training_start_workout("steady.zwo".into(), handle.clone())).unwrap_err();
+        assert_eq!(no_ftp.code, Some("training.noFtpForWorkout"), "no ride with an FTP yet");
+        assert_eq!(start("steady.zwo", Some(250.0)).unwrap_err().code, Some("training.none"), "no session");
+        assert_eq!(start("../nowhere.zwo", Some(250.0)).unwrap_err().code, Some("training.noSuchWorkout"));
+
+        let clock = StepClock::new();
+        clock.stop_at.store(3_000, Ordering::SeqCst);
+        start_session(&handle, Session::pairing(avanti(), None, None), clock.clone()).unwrap();
+        start("steady.zwo", Some(250.4)).unwrap();
+        let pairing = wait_for(&app, |l| l.workout.is_some());
+        assert_eq!(pairing.erg.map(|e| e.target_w), Some(200), "0.8 × 250 W, ready from the start");
+        assert_eq!(pairing.workout.map(|w| (w.name, w.total_s)), Some(("Steady".to_string(), 600)));
+        clock.stop_at.store(u64::MAX, Ordering::SeqCst);
+        block_on(training_leave(handle)).unwrap();
+    }
+
+    #[test]
     fn a_trainer_must_be_named_and_blank_sensors_are_none() {
         let no_trainer = targets("  ".into(), vec!["P".into()], None).unwrap_err();
         assert_eq!(no_trainer, CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
@@ -843,6 +938,7 @@ mod tests {
             erg: None,
             release_unconfirmed: false,
             power_match: None,
+            workout: None,
         });
         assert!(!finish_before_exit(app.handle(), || {}));
     }

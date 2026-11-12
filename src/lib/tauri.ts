@@ -46,6 +46,7 @@ import type {
   FoundDevice,
   TrainingFinish,
   TrainingLive,
+  WorkoutList,
   PendingRide,
 } from "./types";
 
@@ -355,6 +356,9 @@ export const api = {
   trainingLeave: () => invoke<void>("training_leave"),
   trainingLive: () => invoke<TrainingLive | null>("training_live"),
   trainingFtp: () => invoke<number | null>("training_ftp"),
+  trainingWorkouts: () => invoke<WorkoutList>("training_workouts"),
+  trainingSetWorkoutsDir: (dir: string) => invoke<void>("training_set_workouts_dir", { dir }),
+  trainingStartWorkout: (path: string) => invoke<void>("training_start_workout", { path }),
   trainingPending: () => invoke<PendingRide[]>("training_pending"),
   trainingFinishPending: (startUnix: number) =>
     invoke<TrainingFinish>("training_finish_pending", { startUnix }),

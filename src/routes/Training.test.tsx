@@ -4,7 +4,7 @@ import { render, cleanup, fireEvent, screen, waitFor, act } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
-import type { LinkStatus, PendingRide, TrainingLive } from "../lib/types";
+import type { LinkStatus, PendingRide, TrainingLive, WorkoutFile, WorkoutLive } from "../lib/types";
 import { useLanguageStore } from "../lib/i18n";
 import { useToastStore } from "../stores/toastStore";
 import { commandError } from "../test/commandError";
@@ -28,8 +28,14 @@ vi.mock("../lib/tauri", () => ({
     trainingPending: vi.fn(),
     trainingFinishPending: vi.fn(),
     trainingDiscardPending: vi.fn(),
+    trainingWorkouts: vi.fn(),
+    trainingSetWorkoutsDir: vi.fn(),
+    trainingStartWorkout: vi.fn(),
   },
 }));
+
+const dialog = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 
 const confirmMock = vi.fn<(opts: unknown) => Promise<boolean>>();
 vi.mock("../stores/confirmStore", () => ({ confirmDialog: (opts: unknown) => confirmMock(opts) }));
@@ -63,6 +69,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     erg: null,
     release_unconfirmed: false,
     power_match: null,
+    workout: null,
     ...over,
   };
 }
@@ -93,9 +100,12 @@ beforeEach(() => {
     mocked.trainingDiscard,
     mocked.trainingLeave,
     mocked.trainingDiscardPending,
+    mocked.trainingSetWorkoutsDir,
+    mocked.trainingStartWorkout,
   ]) {
     ok.mockResolvedValue(undefined);
   }
+  mocked.trainingWorkouts.mockResolvedValue({ dir: null, missing: false, workouts: [] });
   mocked.trainingFinish.mockResolvedValue({ kind: "imported", activity_id: "new-ride" });
   mocked.trainingFinishPending.mockResolvedValue({ kind: "imported", activity_id: "old-ride" });
   confirmMock.mockResolvedValue(true);
@@ -513,5 +523,167 @@ describe("ERG on the ride (#274)", () => {
     page.again();
     fireEvent.click(screen.getByLabelText("10 W more"));
     await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(170));
+  });
+});
+
+function workoutFile(over: Partial<WorkoutFile> = {}): WorkoutFile {
+  return {
+    path: "ss.zwo",
+    name: "Sweet spot",
+    duration_s: 3600,
+    profile: [
+      { secs: 600, from: 0.4, to: 0.75, free: false, cadence: null },
+      { secs: 2400, from: 0.9, to: 0.9, free: false, cadence: 90 },
+      { secs: 600, from: 0, to: 0, free: true, cadence: null },
+    ],
+    notes: [],
+    problem: null,
+    ...over,
+  };
+}
+
+function workoutLive(over: Partial<WorkoutLive> = {}): WorkoutLive {
+  return {
+    name: "Sweet spot",
+    elapsed_s: 900,
+    total_s: 3600,
+    step: 1,
+    steps: 5,
+    step_left_s: 60,
+    free: false,
+    cadence: 90,
+    next: { secs: 300, from_w: 150, to_w: 150 },
+    cue: null,
+    done: false,
+    ...over,
+  };
+}
+
+describe("Workouts (#276)", () => {
+  it("picks a folder, lists what is in it, and starts one", async () => {
+    hook.live = live({ phase: "pairing" });
+    renderPage();
+    expect(await screen.findByText(/Zwift keeps its own in/)).toBeTruthy();
+    // Called off: nothing changes.
+    dialog.open.mockResolvedValue(null);
+    fireEvent.click(screen.getByText("Choose a workouts folder"));
+    await waitFor(() => expect(dialog.open).toHaveBeenCalledWith({ directory: true, multiple: false, title: "Folder with .zwo workouts" }));
+    expect(mocked.trainingSetWorkoutsDir).not.toHaveBeenCalled();
+
+    mocked.trainingWorkouts.mockResolvedValue({
+      dir: "/Users/me/Workouts",
+      missing: false,
+      workouts: [
+        workoutFile({
+          notes: [
+            { kind: "unknown", element: "Mystery" },
+            { kind: "ridden_free", element: "MaxEffort" },
+            { kind: "bad_value", element: "Ramp" },
+            { kind: "distance_cue" },
+            { kind: "cue_outside" },
+          ],
+        }),
+        workoutFile({ path: "run.zwo", name: "Tempo run", problem: { kind: "run" }, profile: [] }),
+      ],
+    });
+    dialog.open.mockResolvedValue("/Users/me/Workouts");
+    fireEvent.click(screen.getByText("Choose a workouts folder"));
+    await waitFor(() => expect(mocked.trainingSetWorkoutsDir).toHaveBeenCalledWith("/Users/me/Workouts"));
+    const list = await screen.findByRole("region", { name: "Workouts" });
+    expect(list.textContent).toContain("/Users/me/Workouts");
+    expect(screen.getByText("Change folder")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1:00:00 · Mystery skipped · MaxEffort ridden free · a Ramp with a wrong value skipped · messages placed by distance skipped · messages past the end of their interval skipped",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("A running workout: only rides are supported")).toBeTruthy();
+    expect(list.querySelectorAll("polygon")).toHaveLength(3);
+    expect(screen.getAllByText("Ride it")).toHaveLength(1);
+    fireEvent.click(screen.getByText("Ride it"));
+    await waitFor(() => expect(mocked.trainingStartWorkout).toHaveBeenCalledWith("ss.zwo"));
+    // Refused: said under the list.
+    mocked.trainingStartWorkout.mockRejectedValue(commandError("training.noSuchWorkout", "That workout is not in the folder"));
+    fireEvent.click(screen.getByText("Ride it"));
+    expect(await screen.findByText("That workout is not in the folder")).toBeTruthy();
+  });
+
+  it("says why a file cannot be ridden, an empty folder, and no FTP", async () => {
+    const problems = [
+      [{ kind: "unreadable", detail: "<workout> is never closed" }, "Cannot be read: <workout> is never closed"],
+      [{ kind: "not_a_workout" }, "Not a workout file"],
+      [{ kind: "empty" }, "Nothing in it can be ridden"],
+      [{ kind: "too_big" }, "Too large for a workout file"],
+      [{ kind: "distance" }, "Its intervals are in metres: only workouts by time are supported"],
+      [{ kind: "too_long" }, "Longer than a day, or more intervals than a workout has"],
+    ] as const;
+    mocked.trainingWorkouts.mockResolvedValue({
+      dir: "/w",
+      missing: false,
+      workouts: problems.map(([problem], i) => workoutFile({ path: `${i}.zwo`, problem, profile: [] })),
+    });
+    hook.live = live();
+    renderPage();
+    for (const [, text] of problems) {
+      expect(await screen.findByText(text)).toBeTruthy();
+    }
+    expect(screen.queryByText("Ride it")).toBeNull();
+
+    cleanup();
+    mocked.trainingWorkouts.mockResolvedValue({ dir: "/w", missing: false, workouts: [] });
+    renderPage();
+    expect(await screen.findByText("No .zwo workouts in this folder.")).toBeTruthy();
+
+    cleanup();
+    mocked.trainingWorkouts.mockResolvedValue({ dir: "/w", missing: true, workouts: [] });
+    renderPage();
+    expect(await screen.findByText("The folder is gone: choose it again, or another.")).toBeTruthy();
+    expect(screen.queryByText("No .zwo workouts in this folder.")).toBeNull();
+
+    cleanup();
+    mocked.trainingFtp.mockResolvedValue(null);
+    mocked.trainingWorkouts.mockResolvedValue({ dir: "/w", missing: false, workouts: [workoutFile()] });
+    renderPage();
+    expect(await screen.findByText(/none was found in your rides yet/)).toBeTruthy();
+    expect((screen.getByText("Ride it") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows where the workout is, what comes next, and stops it", async () => {
+    mocked.trainingWorkouts.mockResolvedValue({ dir: "/w", missing: false, workouts: [workoutFile()] });
+    hook.live = live({ erg: { target_w: 220, state: "holding" }, workout: workoutLive({ cue: "Settle in" }) });
+    const page = renderPage();
+    const erg = screen.getByRole("region", { name: "ERG mode" });
+    expect(screen.getByLabelText("Target power").textContent).toContain("220 W");
+    expect(erg.textContent).toContain("Sweet spot");
+    expect(erg.textContent).toContain("15:00 of 1:00:00");
+    expect(erg.textContent).toContain("Interval 2 of 5 · 1:00 left · cadence 90 rpm");
+    expect(erg.textContent).toContain("Next: 150 W for 5:00");
+    expect(screen.getByText("Settle in")).toBeTruthy();
+    expect(screen.queryByLabelText("10 W more")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Workouts" })).toBeNull();
+    fireEvent.click(screen.getByText("Stop the workout"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenCalledWith(null));
+
+    const next = [
+      [{ secs: 120, from_w: 150, to_w: 250 }, "Next: 150 W to 250 W over 2:00"],
+      [{ secs: 300, from_w: 0, to_w: 0 }, "Next: ride free for 5:00"],
+      [null, "The last interval."],
+    ] as const;
+    for (const [step, text] of next) {
+      hook.live = live({ erg: { target_w: 220, state: "holding" }, workout: workoutLive({ next: step, cadence: null }) });
+      page.again();
+      expect(screen.getByText(text)).toBeTruthy();
+    }
+    // A free stretch: no target, the workout goes on.
+    hook.live = live({ erg: null, workout: workoutLive({ free: true }) });
+    page.again();
+    expect(screen.getByLabelText("Target power").textContent).toBe("Free ride");
+    expect(screen.queryByText("Hold a power")).toBeNull();
+    // Over: riding free, the list again.
+    hook.live = live({ erg: null, workout: workoutLive({ done: true, step: 5 }) });
+    page.again();
+    expect(screen.getByText("Sweet spot is over: riding free.")).toBeTruthy();
+    expect(screen.getByText("Hold a power")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Workouts" })).toBeTruthy();
   });
 });

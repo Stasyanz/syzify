@@ -20,6 +20,8 @@ pub mod library;
 pub mod pedals;
 pub mod link;
 pub mod power_match;
+pub mod workouts;
+pub mod zwo;
 pub mod profile;
 pub mod ride;
 pub mod runner;

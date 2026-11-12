@@ -1027,6 +1027,75 @@ export interface ErgLive {
   state: ErgState;
 }
 
+/** A workout interval, power as a share of FTP. */
+export interface WorkoutSegment {
+  secs: number;
+  from: number;
+  to: number;
+  /** No target: ridden free. */
+  free: boolean;
+  cadence: number | null;
+}
+
+/** What was left out of a workout file, or ridden otherwise. */
+export type WorkoutNote =
+  | { kind: "unknown"; element: string }
+  | { kind: "ridden_free"; element: string }
+  | { kind: "bad_value"; element: string }
+  | { kind: "distance_cue" }
+  | { kind: "cue_outside" };
+
+/** Why a workout file cannot be ridden. */
+export type WorkoutProblem =
+  | { kind: "unreadable"; detail: string }
+  | { kind: "not_a_workout" }
+  | { kind: "run" }
+  | { kind: "distance" }
+  | { kind: "empty" }
+  | { kind: "too_long" }
+  | { kind: "too_big" };
+
+export interface WorkoutFile {
+  /** Within the folder: how it is started. */
+  path: string;
+  name: string;
+  duration_s: number;
+  /** Its power over time, a few dozen points at most. */
+  profile: WorkoutSegment[];
+  notes: WorkoutNote[];
+  problem: WorkoutProblem | null;
+}
+
+export interface WorkoutList {
+  dir: string | null;
+  /** The folder picked is gone. */
+  missing: boolean;
+  workouts: WorkoutFile[];
+}
+
+/** The step after this one (0 W both ways: ridden free). */
+export interface NextStep {
+  secs: number;
+  from_w: number;
+  to_w: number;
+}
+
+/** The workout under way. */
+export interface WorkoutLive {
+  name: string;
+  elapsed_s: number;
+  total_s: number;
+  /** From 0; `steps` once it is over. */
+  step: number;
+  steps: number;
+  step_left_s: number;
+  free: boolean;
+  cadence: number | null;
+  next: NextStep | null;
+  cue: string | null;
+  done: boolean;
+}
+
 /** Power match: ERG held by the pedals' watts (`matching`), or by the
  * trainer's while the pedals are not heard (`no_pedals`). */
 export interface MatchLive {
@@ -1061,6 +1130,8 @@ export interface TrainingLive {
   erg: ErgLive | null;
   /** Power match, while ERG holds a target on a ride with pedals. */
   power_match: MatchLive | null;
+  /** The workout ERG follows, if one. */
+  workout: WorkoutLive | null;
   /** Finishing: the trainer refused letting go (another app may control
    * it); still asked for a few seconds. */
   release_unconfirmed: boolean;

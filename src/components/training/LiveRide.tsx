@@ -10,6 +10,7 @@ import { confirmDialog } from "../../stores/confirmStore";
 import type { LinkStatus, TrainingLive } from "../../lib/types";
 import { useFinished } from "./useFinished";
 import { ErgPanel } from "./ErgPanel";
+import { WorkoutPicker } from "./WorkoutPicker";
 
 function linkText(link: LinkStatus, t: Translator): string {
   switch (link.state) {
@@ -141,6 +142,7 @@ export function LiveRide({ live }: { live: TrainingLive }) {
       {error != null && <p className="text-sm text-danger">{errorText(error)}</p>}
 
       {!ending && <ErgPanel live={live} ftp={ftp ?? null} />}
+      {!ending && (live.workout == null || live.workout.done) && <WorkoutPicker ftp={ftp ?? null} />}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Tile label={t("training.metric.power")} value={formatPower(live.watts)} note={powerNote ?? trainerNote} />

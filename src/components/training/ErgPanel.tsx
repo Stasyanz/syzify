@@ -2,10 +2,10 @@ import { useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
-import { formatPower } from "../../lib/format";
+import { formatDuration, formatPower } from "../../lib/format";
 import { useT, type Translator } from "../../lib/i18n";
 import { firstTarget, stepTarget } from "../../lib/training";
-import type { ErgState, TrainingLive } from "../../lib/types";
+import type { ErgState, NextStep, TrainingLive, WorkoutLive } from "../../lib/types";
 
 function stateText(state: ErgState, t: Translator): string {
   switch (state) {
@@ -28,8 +28,44 @@ function stateText(state: ErgState, t: Translator): string {
   }
 }
 
+function nextText(next: NextStep, t: Translator): string {
+  const duration = formatDuration(next.secs);
+  if (next.from_w === 0 && next.to_w === 0) return t("training.workout.nextFree", { duration });
+  if (next.from_w === next.to_w) return t("training.workout.next", { power: formatPower(next.from_w), duration });
+  return t("training.workout.nextRamp", { from: formatPower(next.from_w), to: formatPower(next.to_w), duration });
+}
+
+/** The workout under way: where it is, the countdown, what comes next. */
+function WorkoutProgress({ workout }: { workout: WorkoutLive }) {
+  const t = useT();
+  if (workout.done) {
+    return <p className="text-sm">{t("training.workout.done", { name: workout.name })}</p>;
+  }
+  return (
+    <div className="flex flex-col gap-1" aria-label={t("training.workout.title")} role="group">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm font-medium" translate="no">
+          {workout.name}
+        </span>
+        <span className="text-xs text-muted tabular-nums">
+          {t("training.workout.elapsed", { elapsed: formatDuration(workout.elapsed_s), total: formatDuration(workout.total_s) })}
+        </span>
+      </div>
+      <p className="text-sm tabular-nums">
+        {t("training.workout.interval", { step: workout.step + 1, steps: workout.steps })}
+        {" · "}
+        <span className="font-bold">{t("training.workout.left", { duration: formatDuration(workout.step_left_s) })}</span>
+        {workout.cadence != null && ` · ${t("training.workout.cadence", { rpm: workout.cadence })}`}
+      </p>
+      <p className="text-sm text-muted">{workout.next ? nextText(workout.next, t) : t("training.workout.last")}</p>
+      {workout.cue && <p className="text-sm px-3 py-2 rounded-field bg-accent-soft">{workout.cue}</p>}
+    </div>
+  );
+}
+
 /** ERG: hold a power whatever the cadence — on, the target up and down,
- * off. What the trainer confirmed is said under the target. */
+ * off — or follow a workout. What the trainer confirmed is said under the
+ * target. */
 export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null }) {
   const t = useT();
   // The target asked for and not yet shown back: two quick +10s are +20.
@@ -53,11 +89,26 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
   };
   const button =
     "px-3 py-1.5 rounded-field border border-border-2 text-sm font-medium hover:bg-card-2 disabled:opacity-50";
+  const off = () => {
+    asked.current = null;
+    set.mutate(null);
+  };
+  // A workout sets the target: no steps of one's own, a way out.
+  const following = live.workout != null && !live.workout.done;
   return (
     <section className="dash-card flex flex-col gap-2" aria-label={t("training.erg.title")}>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs uppercase tracking-wide text-faint">{t("training.erg.title")}</span>
-        {erg == null ? (
+        {following ? (
+          <>
+            <span className="text-2xl font-bold tabular-nums" aria-label={t("training.erg.target")}>
+              {erg ? formatPower(erg.target_w) : t("training.workout.free")}
+            </span>
+            <button className={button} disabled={set.isPending} onClick={off}>
+              {t("training.workout.stop")}
+            </button>
+          </>
+        ) : erg == null ? (
           <button className={button} disabled={set.isPending} onClick={() => set.mutate(firstTarget(ftp))}>
             {t("training.erg.on")}
           </button>
@@ -72,18 +123,13 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
             <button className={button} aria-label={t("training.erg.up")} onClick={() => step(erg.target_w, 10)}>
               +10
             </button>
-            <button
-              className={button}
-              onClick={() => {
-                asked.current = null;
-                set.mutate(null);
-              }}
-            >
+            <button className={button} onClick={off}>
               {t("training.erg.off")}
             </button>
           </>
         )}
       </div>
+      {live.workout && <WorkoutProgress workout={live.workout} />}
       {live.erg && (
         <p
           className={`text-sm ${live.erg.state === "holding" || live.erg.state === "ready" ? "text-muted" : ""}`}

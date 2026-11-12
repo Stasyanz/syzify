@@ -42,7 +42,7 @@ use super::journal::{Second, Source as Role};
 use super::link::{Control, ControlId, ControlOutcome, LinkEvent, TrainerLink};
 use super::power_match::{Heard, PowerMatch};
 use super::session::{Controller, Moment};
-use crate::models::training::{ErgLive, ErgState, MatchLive, MatchState};
+use crate::models::training::{ErgLive, ErgState, MatchLive, MatchState, NextStep, WorkoutLive};
 
 /// Below this cadence for `LOW_FOR` seconds the brake is let go.
 pub const LOW_CADENCE: u8 = 40;
@@ -81,20 +81,82 @@ fn backoff(fails: u32, cap: Duration) -> Duration {
 }
 
 /// A workout step: `secs` long, the target going from `from` to `to` watts
-/// (steady when they are equal).
+/// (steady when they are equal; 0 W both: ridden free), at a cadence the
+/// workout suggests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Step {
     pub secs: u32,
     pub from: u16,
     pub to: u16,
+    pub cadence: Option<u8>,
 }
+
+impl Step {
+    pub fn free(&self) -> bool {
+        self.from == 0 && self.to == 0
+    }
+}
+
+/// A line the workout shows `at` seconds into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cue {
+    pub at: u32,
+    /// Seconds it stays on the screen.
+    pub secs: u32,
+    pub text: String,
+}
+
+/// A cue stays on the screen this long, unless it says.
+pub const CUE_FOR: u32 = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workout {
+    pub name: String,
     pub steps: Vec<Step>,
+    /// In time order.
+    pub cues: Vec<Cue>,
 }
 
 impl Workout {
+    /// Where the workout is `t` seconds into it.
+    pub fn live_at(&self, t: u32) -> WorkoutLive {
+        let total_s = self.steps.iter().fold(0u32, |sum, s| sum.saturating_add(s.secs));
+        // The latest begun (cues overlap: the newer one is shown).
+        let cue = self.cues.iter().rev().find(|c| c.at <= t && t < c.at.saturating_add(c.secs)).map(|c| c.text.clone());
+        let mut live = WorkoutLive {
+            name: self.name.clone(),
+            elapsed_s: t.min(total_s),
+            total_s,
+            step: self.steps.len() as u32,
+            steps: self.steps.len() as u32,
+            step_left_s: 0,
+            free: false,
+            cadence: None,
+            next: None,
+            cue,
+            done: true,
+        };
+        let mut start: u32 = 0;
+        for (i, s) in self.steps.iter().enumerate() {
+            let end = start.saturating_add(s.secs);
+            if t < end {
+                let next = self.steps.get(i + 1).map(|n| NextStep { secs: n.secs, from_w: n.from, to_w: n.to });
+                return WorkoutLive {
+                    step: i as u32,
+                    step_left_s: end - t,
+                    free: s.free(),
+                    cadence: s.cadence,
+                    next,
+                    done: false,
+                    ..live
+                };
+            }
+            start = end;
+        }
+        live.cue = None;
+        live
+    }
+
     /// The target `t` seconds into the workout; None once it is over (and
     /// for a 0 W stretch: nothing to hold).
     pub fn target_at(&self, t: u32) -> Option<u16> {
@@ -175,6 +237,14 @@ impl ErgHandle {
             Source::Workout { plan, .. } => plan.target_at(0),
         }?;
         Some(ErgLive { target_w, state: ErgState::Ready })
+    }
+
+    /// The workout followed, where it is at ride second `ride_s` (before
+    /// its first second: at its start).
+    pub fn workout_at(&self, ride_s: u32) -> Option<WorkoutLive> {
+        let s = self.0.lock().ok()?;
+        let Source::Workout { plan, from } = &s.source else { return None };
+        Some(plan.live_at(ride_s.saturating_sub(from.unwrap_or(ride_s))))
     }
 
     /// The target at ride second `ride_s` (a workout starts here).
@@ -750,6 +820,12 @@ mod tests {
         }
     }
 
+    /// A workout of `(secs, from, to)` steps, no cadence, no cues.
+    pub(super) fn plan(steps: &[(u32, u16, u16)]) -> Workout {
+        let steps = steps.iter().map(|&(secs, from, to)| Step { secs, from, to, cadence: None }).collect();
+        Workout { name: "Test".into(), steps, cues: Vec::new() }
+    }
+
     fn within(watts: &[u16], target: u16) -> bool {
         !watts.is_empty() && watts.iter().all(|w| w.abs_diff(target) <= tolerance(target))
     }
@@ -822,7 +898,7 @@ mod tests {
     #[test]
     fn a_ramp_on_a_deaf_trainer_is_off_target_too() {
         let mut r = Ride::on(Stub::new(|at| (85, (!at.as_secs().is_multiple_of(3)).then_some(400)), ack), None);
-        r.erg.set_workout(Workout { steps: vec![Step { secs: 120, from: 100, to: 220 }] });
+        r.erg.set_workout(plan(&[(120, 100, 220)]));
         r.to(secs(40));
         assert!(r.states_between(secs(0), secs(40)).contains(&Some(ErgState::OffTarget)));
     }
@@ -982,13 +1058,13 @@ mod tests {
 
     #[test]
     fn a_workout_drives_the_target_and_ends_free() {
-        let plan = Workout { steps: vec![Step { secs: 30, from: 100, to: 100 }, Step { secs: 30, from: 100, to: 200 }] };
+        let plan = plan(&[(30, 100, 100), (30, 100, 200)]);
         assert_eq!(plan.target_at(0), Some(100));
         assert_eq!(plan.target_at(29), Some(100));
         assert_eq!(plan.target_at(45), Some(150), "half way up the ramp");
         assert_eq!(plan.target_at(59), Some(197));
         assert_eq!(plan.target_at(60), None, "over");
-        let odd = Workout { steps: vec![Step { secs: 10, from: 0, to: 0 }, Step { secs: u32::MAX, from: 3000, to: 3000 }] };
+        let odd = super::tests::plan(&[(10, 0, 0), (u32::MAX, 3000, 3000)]);
         assert_eq!(odd.target_at(5), None, "0 W: nothing to hold");
         assert_eq!(odd.target_at(20), Some(MAX_TARGET), "capped, and no overflow");
         let mut r = Ride::fake(FakeConfig::elite_avanti(85), None);
@@ -1009,6 +1085,41 @@ mod tests {
     fn blind_ride(at: Duration) -> (u8, Option<u16>) {
         let still = at < secs(10) || (secs(30)..secs(40)).contains(&at);
         (0, Some(if still { 0 } else { 150 }))
+    }
+
+    #[test]
+    fn a_workout_says_where_it_is() {
+        let mut w = plan(&[(60, 100, 100), (30, 0, 0), (60, 150, 250)]);
+        w.steps[0].cadence = Some(90);
+        let cue = |at, secs, text: &str| Cue { at, secs, text: text.into() };
+        w.cues = vec![cue(5, CUE_FOR, "Easy"), cue(8, 3, "Over it"), cue(95, CUE_FOR, "Ramp"), cue(146, CUE_FOR, "End")];
+        let at = |t| w.live_at(t);
+        let start = at(0);
+        assert_eq!((start.step, start.steps, start.step_left_s, start.cadence, start.done), (0, 3, 60, Some(90), false));
+        assert_eq!((start.elapsed_s, start.total_s, start.cue.as_deref()), (0, 150, None));
+        assert_eq!(start.next, Some(NextStep { secs: 30, from_w: 0, to_w: 0 }), "next: a free ride");
+        assert_eq!(at(5).cue.as_deref(), Some("Easy"));
+        assert_eq!(at(8).cue.as_deref(), Some("Over it"), "overlapping: the newer");
+        assert_eq!(at(11).cue.as_deref(), Some("Easy"), "its own 3 s over, the older shows again");
+        assert_eq!(at(14).cue.as_deref(), Some("Easy"));
+        assert_eq!(at(15).cue, None, "shown CUE_FOR seconds");
+        let free = at(70);
+        assert_eq!((free.step, free.step_left_s, free.free, free.cadence), (1, 20, true, None));
+        assert_eq!(free.next, Some(NextStep { secs: 60, from_w: 150, to_w: 250 }));
+        assert_eq!(at(100).cue.as_deref(), Some("Ramp"));
+        let last = at(149);
+        assert_eq!((last.step, last.step_left_s, last.next, last.cue.as_deref()), (2, 1, None, Some("End")));
+        assert_eq!(at(151).cue, None, "over: a cue still due is not shown");
+        let over = at(200);
+        assert_eq!((over.step, over.elapsed_s, over.done, over.next, over.cue), (3, 150, true, None, None));
+
+        // Through the handle: from the ride second the workout began.
+        let handle = ErgHandle::default();
+        assert_eq!(handle.workout_at(10), None, "no workout");
+        handle.set_workout(w.clone());
+        assert_eq!(handle.workout_at(40).map(|l| l.elapsed_s), Some(0), "not begun: at its start");
+        assert_eq!(handle.target(40), Some(100));
+        assert_eq!(handle.workout_at(100).map(|l| (l.elapsed_s, l.step)), Some((60, 1)));
     }
 
     /// A trainer that sends watts and no cadence: held on its watts (rather
