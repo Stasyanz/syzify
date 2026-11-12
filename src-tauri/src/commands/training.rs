@@ -21,6 +21,7 @@ use crate::error::CommandError;
 use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive, TrainingPhase};
 use crate::state::{AppState, SingleFlightGuard};
 use crate::trainer::awake::KeepAwake;
+use crate::trainer::erg::MAX_TARGET;
 use crate::trainer::fit::{Ride, SubSport};
 use crate::trainer::journal::{self, Journal, KeyFn};
 use crate::trainer::library::{self, ride_key};
@@ -320,6 +321,19 @@ pub fn training_pause<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError>
 #[tauri::command]
 pub fn training_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
     tell(&app, Order::Resume)
+}
+
+/// ERG: hold `watts` (1 to 2000); None rides free.
+#[tauri::command]
+pub fn training_set_target<R: Runtime>(watts: Option<u32>, app: AppHandle<R>) -> Result<(), CommandError> {
+    let target = match watts {
+        None => None,
+        Some(w) if (1..=u32::from(MAX_TARGET)).contains(&w) => Some(w as u16),
+        Some(w) => {
+            return Err(CommandError::coded("training.badTarget", format!("A target of {w} W is out of range")).param("watts", w));
+        }
+    };
+    tell(&app, Order::SetTarget(target))
 }
 
 /// Ends the ride: lets the trainer go, imports the ride.
@@ -690,6 +704,29 @@ mod tests {
     }
 
     #[test]
+    fn an_erg_target_is_checked_and_handed_to_the_ride() {
+        let vault = ScratchDir::new("training_target");
+        let app = app_at(&vault);
+        let handle = app.handle().clone();
+        let out_of_range = |w: u32| CommandError::coded("training.badTarget", format!("A target of {w} W is out of range")).param("watts", w);
+        assert_eq!(training_set_target(Some(0), handle.clone()).unwrap_err(), out_of_range(0));
+        assert_eq!(training_set_target(Some(2001), handle.clone()).unwrap_err(), out_of_range(2001));
+        assert_eq!(training_set_target(Some(150), handle.clone()).unwrap_err().code, Some("training.none"));
+
+        let clock = StepClock::new();
+        clock.stop_at.store(3_000, Ordering::SeqCst);
+        start_session(&handle, Session::pairing(avanti(), None, None), clock.clone()).unwrap();
+        block_on(training_begin(handle.clone())).unwrap();
+        training_set_target(Some(2000), handle.clone()).unwrap();
+        clock.stop_at.store(6_000, Ordering::SeqCst);
+        wait_for(&app, |l| l.erg.is_some_and(|e| e.target_w == 2000));
+        training_set_target(None, handle.clone()).unwrap();
+        wait_for(&app, |l| l.erg.is_none());
+        clock.stop_at.store(u64::MAX, Ordering::SeqCst);
+        block_on(training_discard(handle)).unwrap();
+    }
+
+    #[test]
     fn a_trainer_must_be_named_and_blank_sensors_are_none() {
         let no_trainer = targets("  ".into(), Some("P".into()), None).unwrap_err();
         assert_eq!(no_trainer, CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
@@ -776,6 +813,7 @@ mod tests {
             links: vec![],
             warnings: vec![],
             slept_s: 0,
+            erg: None,
         });
         assert!(!finish_before_exit(app.handle(), || {}));
     }

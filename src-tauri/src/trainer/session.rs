@@ -40,12 +40,28 @@ use super::profile::{profile_for, TrainerProfile, GENERIC};
 /// their last message, unless they are lost.
 pub const PEDALS_HOLD: u32 = 3;
 
-/// Something that acts on the trainer as seconds close (ERG, power match).
+/// The ride as a controller sees it on a tick.
+#[derive(Debug, Clone, Copy)]
+pub struct Moment<'a> {
+    /// Session time.
+    pub now: Duration,
+    /// The seconds this tick closed, in order (often none: ticks come
+    /// faster than seconds).
+    pub closed: &'a [Second],
+    /// Seconds recorded so far (the timer).
+    pub ride_s: u32,
+    pub paused: bool,
+    /// The trainer's profile (generic until it said who it is).
+    pub profile: &'static TrainerProfile,
+}
+
+/// Something that acts on the trainer during the ride (ERG, power match).
+/// Called on every tick from the ride's start to its end, paused or not —
+/// never while pairing nor after the end.
 pub trait Controller: Send {
-    /// `second` is the latest second closed, `events` everything the
-    /// trainer reported since the controllers' last call (readings,
-    /// control outcomes, Lost/Back).
-    fn tick(&mut self, now: Duration, second: &Second, events: &[LinkEvent], trainer: &mut dyn TrainerLink);
+    /// `events` is everything the trainer reported since the last call
+    /// (readings, control outcomes, Lost/Back).
+    fn tick(&mut self, moment: &Moment, events: &[LinkEvent], trainer: &mut dyn TrainerLink);
 }
 
 /// What a tick produced.
@@ -315,11 +331,16 @@ impl Session {
         let mut out = self.poll(now);
         if let (true, Some(s)) = (self.riding(), self.second_of(now)) {
             self.close_until(s, &mut out);
-        }
-        if let Some(last) = out.seconds.last().copied() {
             let events = std::mem::take(&mut self.for_controllers);
+            let moment = Moment {
+                now,
+                closed: &out.seconds,
+                ride_s: self.seconds.len() as u32,
+                paused: self.paused(),
+                profile: self.profile(),
+            };
             for c in self.controllers.iter_mut() {
-                c.tick(now, &last, &events, self.trainer.as_mut());
+                c.tick(&moment, &events, self.trainer.as_mut());
             }
         }
         out
@@ -327,10 +348,10 @@ impl Session {
 
     fn poll(&mut self, now: Duration) -> Tick {
         let mut out = Tick::default();
-        // Controllers act on the ride: what the trainer said while pairing,
-        // paused or after the end is not theirs (a stale outcome would be
-        // read as fresh on the first second after).
-        let for_controllers = self.riding() && !self.paused();
+        // Controllers act on the ride: what the trainer said while pairing or
+        // after the end is not theirs (a stale outcome would be read as
+        // fresh). During the ride they hear everything on the next tick.
+        let for_controllers = self.riding();
         for event in self.trainer.poll(now) {
             if for_controllers {
                 self.for_controllers.push(event.clone());
@@ -666,9 +687,9 @@ mod tests {
     fn controllers_hear_every_event_whatever_the_tick_rate() {
         struct Count(Arc<Mutex<(usize, usize)>>);
         impl Controller for Count {
-            fn tick(&mut self, _: Duration, _: &Second, events: &[LinkEvent], _: &mut dyn TrainerLink) {
+            fn tick(&mut self, moment: &Moment, events: &[LinkEvent], _: &mut dyn TrainerLink) {
                 let mut c = self.0.lock().unwrap();
-                c.0 += 1;
+                c.0 += moment.closed.len();
                 c.1 += events.iter().filter(|e| matches!(e, LinkEvent::Reading(_))).count();
             }
         }
@@ -678,8 +699,8 @@ mod tests {
         for q in 1..=240u64 {
             s.tick(ms(q * 250)); // 4 Hz
         }
-        let (calls, readings) = *seen.lock().unwrap();
-        assert_eq!(calls, 60, "once per second closed");
+        let (closed, readings) = *seen.lock().unwrap();
+        assert_eq!(closed, 60, "every second closed is seen once");
         assert_eq!(readings, 241, "the trainer's 4 a second for 0–60 s, each once");
     }
 
@@ -781,8 +802,10 @@ mod tests {
     fn controllers_act_and_hold_erg() {
         struct Erg;
         impl Controller for Erg {
-            fn tick(&mut self, _: Duration, _: &Second, _: &[LinkEvent], trainer: &mut dyn TrainerLink) {
-                trainer.send(Control::TargetPower(150));
+            fn tick(&mut self, moment: &Moment, _: &[LinkEvent], trainer: &mut dyn TrainerLink) {
+                if !moment.closed.is_empty() {
+                    trainer.send(Control::TargetPower(150));
+                }
             }
         }
         let mut s = session(Box::new(FakeTrainer::new(FakeConfig::steady(80))), None, None);
@@ -833,8 +856,8 @@ mod tests {
         let key: KeyFn = Box::new(move || if *f.lock().unwrap() { Err("disk full".into()) } else { Ok(None) });
         struct Erg(Arc<Mutex<u32>>);
         impl Controller for Erg {
-            fn tick(&mut self, _: Duration, _: &Second, _: &[LinkEvent], trainer: &mut dyn TrainerLink) {
-                *self.0.lock().unwrap() += 1;
+            fn tick(&mut self, moment: &Moment, _: &[LinkEvent], trainer: &mut dyn TrainerLink) {
+                *self.0.lock().unwrap() += moment.closed.len() as u32;
                 trainer.send(Control::TargetPower(150));
             }
         }
@@ -925,11 +948,11 @@ mod tests {
     }
 
     #[test]
-    fn controllers_hear_nothing_from_pairing_or_a_pause() {
-        struct PerCall(Arc<Mutex<Vec<usize>>>);
+    fn controllers_hear_nothing_from_pairing_and_every_tick_of_a_pause() {
+        struct PerCall(Arc<Mutex<Vec<(usize, bool)>>>);
         impl Controller for PerCall {
-            fn tick(&mut self, _: Duration, _: &Second, events: &[LinkEvent], _: &mut dyn TrainerLink) {
-                self.0.lock().unwrap().push(events.len());
+            fn tick(&mut self, moment: &Moment, events: &[LinkEvent], _: &mut dyn TrainerLink) {
+                self.0.lock().unwrap().push((events.len(), moment.paused));
             }
         }
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -948,21 +971,24 @@ mod tests {
         s.resume(ms(40_000));
         at(&mut s, 161, 200);
         let per_call = seen.lock().unwrap().clone();
-        assert!(!per_call.is_empty());
-        assert!(per_call.iter().all(|&n| n <= 6), "a second's worth each, never a backlog: {per_call:?}");
+        assert_eq!(per_call.len(), 160, "every tick from the start: none while pairing");
+        assert!(per_call.iter().all(|&(n, _)| n <= 3), "a tick's worth each, never a backlog: {per_call:?}");
+        assert_eq!(per_call.iter().filter(|&&(_, paused)| paused).count(), 80, "called through the pause");
         // Ended: nothing more for them, and a resume does nothing.
         s.pause(ms(50_100));
         s.end(ms(50_200));
         assert!(s.resume(secs(60)).is_empty());
         assert!(!s.riding());
+        at(&mut s, 202, 210);
+        assert_eq!(seen.lock().unwrap().len(), 160, "not after the end");
     }
 
     #[test]
     fn controllers_get_the_latest_second_closed() {
         struct Last(Arc<Mutex<Vec<u32>>>);
         impl Controller for Last {
-            fn tick(&mut self, _: Duration, second: &Second, _: &[LinkEvent], _: &mut dyn TrainerLink) {
-                self.0.lock().unwrap().push(second.sample.t);
+            fn tick(&mut self, moment: &Moment, _: &[LinkEvent], _: &mut dyn TrainerLink) {
+                self.0.lock().unwrap().extend(moment.closed.last().map(|s| s.sample.t));
             }
         }
         let seen = Arc::new(Mutex::new(Vec::new()));

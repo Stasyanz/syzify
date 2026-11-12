@@ -11,6 +11,7 @@
 
 pub mod awake;
 pub mod ble;
+pub mod erg;
 #[cfg(test)]
 pub mod fake;
 pub mod fit;

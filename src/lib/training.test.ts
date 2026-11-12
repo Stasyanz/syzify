@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { canBegin, devicesFor, powerZone, trainingSupported } from "./training";
+import { canBegin, devicesFor, firstTarget, MAX_TARGET, powerZone, stepTarget, trainingSupported } from "./training";
+
+describe("ERG targets", () => {
+  it("start at an easy effort and step within the range", () => {
+    expect(firstTarget(244)).toBe(160);
+    expect(firstTarget(null)).toBe(150);
+    expect(firstTarget(0)).toBe(150);
+    expect(stepTarget(150, 10)).toBe(160);
+    expect(stepTarget(15, -10)).toBe(10);
+    expect(stepTarget(MAX_TARGET - 5, 10)).toBe(MAX_TARGET);
+  });
+});
 import type { FoundDevice, TrainingLive } from "./types";
 
 describe("powerZone", () => {

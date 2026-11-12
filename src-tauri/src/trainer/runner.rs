@@ -16,9 +16,10 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use super::erg::{Erg, ErgHandle};
 use super::fit::{Ride, SubSport};
 use super::journal::{Journal, Source};
-use super::link::{Control, ControlOutcome, LinkEvent, LinkFailure};
+use super::link::{Control, ControlId, ControlOutcome, LinkEvent, LinkFailure};
 use super::session::{Session, Tick, PEDALS_HOLD};
 use crate::error::CommandError;
 use crate::models::training::{LinkProblem, LinkState, LinkStatus, TrainingFinish, TrainingLive, TrainingPhase};
@@ -74,6 +75,8 @@ pub enum Order {
     Lap,
     Pause,
     Resume,
+    /// ERG: hold these watts; None rides free.
+    SetTarget(Option<u16>),
     /// End the ride, let the trainer go, import it.
     Finish(Reply<TrainingFinish>),
     /// End the ride, let the trainer go, throw it away.
@@ -130,6 +133,7 @@ struct View {
     watts_sum: u64,
     watts_n: u64,
     counted: usize,
+    erg: ErgHandle,
 }
 
 fn slot(role: Source) -> usize {
@@ -150,8 +154,9 @@ fn problem_of(reason: &LinkFailure) -> (LinkProblem, Option<String>) {
 }
 
 impl View {
-    fn new(roles: &[Source]) -> View {
+    fn new(roles: &[Source], erg: ErgHandle) -> View {
         View {
+            erg,
             links: roles
                 .iter()
                 .map(|&role| LinkStatus { role, state: LinkState::Searching, name: None, problem: None, detail: None })
@@ -218,7 +223,11 @@ impl View {
     }
 
     fn connected(&self, role: Source) -> bool {
-        self.links.iter().any(|l| l.role == role && l.state == LinkState::Connected)
+        self.state_of(role) == Some(LinkState::Connected)
+    }
+
+    fn state_of(&self, role: Source) -> Option<LinkState> {
+        self.links.iter().find(|l| l.role == role).map(|l| l.state)
     }
 
     /// A value from `role` if it is fresh and its device connected.
@@ -265,6 +274,12 @@ impl View {
             links: self.links.clone(),
             warnings: self.warnings.clone(),
             slept_s: if slept > SLEEP_SLACK { slept as u32 } else { 0 },
+            erg: match phase {
+                TrainingPhase::Pairing => self.erg.ready(),
+                // Letting go at the end is the runner's, not ERG's.
+                TrainingPhase::Finishing => None,
+                _ => self.erg.view(),
+            },
         }
     }
 }
@@ -277,24 +292,34 @@ fn phase_of(session: &Session) -> TrainingPhase {
     }
 }
 
-/// Lets the trainer go before its link is dropped: only a connected
-/// trainer is asked, and asked again while it answers without confirming.
+/// Lets the trainer go before its link is dropped, within the profile's
+/// release budget: asked until it confirms, again after an answer without
+/// confirmation, and — a trainer lost for a moment keeps its brake — at
+/// once when it is back. A trainer never heard, or gone for good, is not
+/// waited for.
 fn let_go(session: &mut Session, view: &mut View, clock: &dyn Clock, host: &mut dyn Host) {
-    if !view.connected(Source::Trainer) {
+    if matches!(view.state_of(Source::Trainer), None | Some(LinkState::Searching | LinkState::Failed)) {
         return;
     }
     let until = clock.now() + session.profile().release_budget;
-    let mut id = session.control(Control::Release);
-    let mut again_at = None;
+    let mut asked: Option<ControlId> = None;
+    let mut again_at = clock.now();
     while clock.now() < until {
+        if asked.is_none() && clock.now() >= again_at && view.connected(Source::Trainer) {
+            asked = Some(session.control(Control::Release));
+        }
         let tick = session.tick(clock.now());
         let mut over = false;
         for (role, event) in &tick.events {
             match event {
-                LinkEvent::Control { id: answered, outcome, .. } if *answered == id => match outcome {
-                    ControlOutcome::Acknowledged | ControlOutcome::Refused => over = true,
-                    ControlOutcome::NotAcknowledged | ControlOutcome::TimedOut => again_at = Some(clock.now() + RELEASE_RETRY),
-                },
+                LinkEvent::Control { id, outcome, .. } if Some(*id) == asked => {
+                    asked = None;
+                    match outcome {
+                        ControlOutcome::Acknowledged => over = true,
+                        _ => again_at = clock.now() + RELEASE_RETRY,
+                    }
+                }
+                LinkEvent::Back { .. } if *role == Source::Trainer => again_at = clock.now(),
                 LinkEvent::Failed { .. } if *role == Source::Trainer => over = true,
                 _ => {}
             }
@@ -305,10 +330,6 @@ fn let_go(session: &mut Session, view: &mut View, clock: &dyn Clock, host: &mut 
         if over {
             return;
         }
-        if again_at.is_some_and(|at| clock.now() >= at) {
-            again_at = None;
-            id = session.control(Control::Release);
-        }
         clock.sleep(TICK);
     }
 }
@@ -316,7 +337,9 @@ fn let_go(session: &mut Session, view: &mut View, clock: &dyn Clock, host: &mut 
 /// Runs the session until it is finished, discarded or left, or the app
 /// lets go of its orders (it quit: a ride's journal stays for next time).
 pub fn run(mut session: Session, orders: Receiver<Order>, clock: &dyn Clock, host: &mut dyn Host) {
-    let mut view = View::new(&session.roles());
+    let erg = ErgHandle::default();
+    session.add_controller(Box::new(Erg::new(erg.clone())));
+    let mut view = View::new(&session.roles(), erg.clone());
     loop {
         loop {
             let order = match orders.try_recv() {
@@ -343,6 +366,7 @@ pub fn run(mut session: Session, orders: Receiver<Order>, clock: &dyn Clock, hos
                     let _ = reply.send(result);
                 }
                 Order::Lap => view.warn(session.lap(now)),
+                Order::SetTarget(watts) => erg.set_target(watts),
                 Order::Pause => view.warn(session.pause(now)),
                 Order::Resume => view.warn(session.resume(now)),
                 Order::Leave(reply) => {
@@ -704,6 +728,35 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_sets_the_erg_target_and_sees_what_erg_does() {
+        use crate::models::training::{ErgLive, ErgState};
+        let vault = ScratchDir::new("runner_erg");
+        let r = Running::start(Session::pairing(avanti(), None, None), &vault, false);
+        r.run_to(3_000);
+        r.tell(Order::SetTarget(Some(160))); // set while pairing: held from the start
+        r.run_to(4_000);
+        assert_eq!(r.last().erg, Some(ErgLive { target_w: 160, state: ErgState::Ready }), "held from the start of the ride");
+        r.ask(Order::Begin).unwrap();
+        r.run_to(40_000);
+        let riding = r.last();
+        assert_eq!(riding.erg, Some(ErgLive { target_w: 160, state: ErgState::Holding }));
+        assert!(riding.trainer_watts.is_some_and(|w| w.abs_diff(160) <= 16), "{riding:?}");
+        r.tell(Order::Pause);
+        r.run_to(45_000);
+        assert_eq!(r.last().erg.map(|e| e.state), Some(ErgState::Paused));
+        r.tell(Order::Resume);
+        r.tell(Order::SetTarget(None));
+        r.run_to(50_000);
+        assert_eq!(r.last().erg, None, "riding free");
+        r.tell(Order::SetTarget(Some(200)));
+        r.run_to(55_000);
+        r.free();
+        r.ask(Order::Finish).unwrap();
+        let seen = r.join();
+        assert_eq!(seen.last.and_then(|l| l.erg), None, "letting go at the end is not ERG's");
+    }
+
+    #[test]
     fn a_discarded_ride_lets_the_trainer_go_and_leaves_no_journal() {
         let vault = ScratchDir::new("runner_discard");
         let r = Running::start(Session::pairing(avanti(), None, None), &vault, false);
@@ -790,11 +843,33 @@ mod tests {
     #[test]
     fn the_release_is_asked_again_until_the_trainer_confirms_or_goes() {
         assert_eq!(released(Some(ControlOutcome::Acknowledged)), 2, "unconfirmed, then confirmed");
-        assert_eq!(released(Some(ControlOutcome::Refused)), 2, "the link went: nothing more to ask");
+        // Refused (out of reach for a moment): asked again within the budget.
+        assert!(released(Some(ControlOutcome::Refused)) >= 10);
         assert_eq!(released(None), 2, "the link failed while letting go");
         // Never confirmed: asked once a second until the budget is spent.
         let generic = crate::trainer::profile::GENERIC.release_budget.as_secs() as u32;
         assert!(released(Some(ControlOutcome::NotAcknowledged)) >= generic / 2);
+    }
+
+    /// Finished during a drop: the trainer keeps its brake through a short
+    /// one, so the release waits for it to come back.
+    #[test]
+    fn a_ride_finished_in_a_drop_lets_go_once_the_trainer_is_back() {
+        let vault = ScratchDir::new("runner_drop_finish");
+        let trainer = FakeTrainer::new(FakeConfig::elite_avanti(85).with_drop(Duration::from_secs(19), Duration::from_secs(6)));
+        let r = Running::start(Session::pairing(Box::new(trainer), None, None), &vault, false);
+        r.run_to(3_000);
+        r.ask(Order::Begin).unwrap();
+        r.run_to(20_500);
+        assert_eq!(r.last().links[0].state, LinkState::Lost);
+        r.free();
+        let clock = r.clock.clone();
+        assert_eq!(r.ask(Order::Finish).unwrap().kind, FinishKind::Imported);
+        let seen = r.join();
+        let last = seen.last.expect("shown");
+        assert_eq!(last.links[0].state, LinkState::Connected, "it waited for the trainer to come back");
+        let ended = clock.ms.load(Ordering::SeqCst);
+        assert!((25_000..36_000).contains(&ended), "back at 25 s, let go then, not the whole budget: {ended}");
     }
 
     /// A trainer never heard is not asked to let go.
@@ -884,7 +959,7 @@ mod tests {
 
     #[test]
     fn warnings_are_kept_once_and_the_newest_few() {
-        let mut v = View::new(&[Source::Trainer]);
+        let mut v = View::new(&[Source::Trainer], ErgHandle::default());
         v.warn(vec!["disk full".into(), "disk full".into()]);
         v.warn(vec!["a".into(), "b".into(), "c".into()]);
         assert_eq!(v.warnings, vec!["a", "b", "c"]);

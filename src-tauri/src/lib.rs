@@ -736,6 +736,7 @@ pub fn run() {
             commands::training::training_lap,
             commands::training::training_pause,
             commands::training::training_resume,
+            commands::training::training_set_target,
             commands::training::training_finish,
             commands::training::training_discard,
             commands::training::training_leave,

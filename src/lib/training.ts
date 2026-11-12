@@ -15,6 +15,20 @@ export function trainingSupported(userAgent: string = navigator.userAgent): bool
   return userAgent.includes("Mac");
 }
 
+/** The highest ERG target (the backend's `MAX_TARGET`). */
+export const MAX_TARGET = 2000;
+
+/** The ERG target `step` watts away from `target`, kept within 10–MAX. */
+export function stepTarget(target: number, step: number): number {
+  return Math.min(MAX_TARGET, Math.max(10, target + step));
+}
+
+/** Where ERG starts when switched on: an easy endurance effort (65 % of
+ * FTP, Z2), rounded to 5 W; 150 W without an FTP. */
+export function firstTarget(ftp: number | null): number {
+  return ftp && ftp > 0 ? Math.round((ftp * 0.65) / 5) * 5 : 150;
+}
+
 /** The roles in the order the screen lists them. */
 export const ROLES: readonly SensorRole[] = ["trainer", "pedals", "strap"];
 

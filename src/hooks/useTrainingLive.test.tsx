@@ -42,6 +42,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     links: [],
     warnings: [],
     slept_s: 0,
+    erg: null,
     ...over,
   };
 }

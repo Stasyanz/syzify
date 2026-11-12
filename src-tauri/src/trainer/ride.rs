@@ -92,9 +92,9 @@ mod tests {
     use crate::test_support::ScratchDir;
     use crate::trainer::fake::{FakeConfig, FakeTrainer};
     use crate::trainer::fit::SubSport;
-    use crate::trainer::journal::{fixed, Journal, Second};
+    use crate::trainer::journal::{fixed, Journal};
     use crate::trainer::link::{Control, Identity, LinkEvent, Reading, SensorLink, TrainerLink, Transport};
-    use crate::trainer::session::{Controller, Session};
+    use crate::trainer::session::{Controller, Moment, Session};
     use std::time::Duration;
 
     /// 2026-11-11 18:00:00 UTC.
@@ -102,7 +102,7 @@ mod tests {
 
     struct Hold(u16);
     impl Controller for Hold {
-        fn tick(&mut self, _: Duration, _: &Second, _: &[LinkEvent], t: &mut dyn TrainerLink) {
+        fn tick(&mut self, _: &Moment, _: &[LinkEvent], t: &mut dyn TrainerLink) {
             t.send(Control::TargetPower(self.0));
         }
     }

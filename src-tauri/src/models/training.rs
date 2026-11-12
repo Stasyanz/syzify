@@ -67,6 +67,31 @@ pub struct LinkStatus {
     pub detail: Option<String>,
 }
 
+/// What ERG is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErgState {
+    /// Before the ride: the target it will start with.
+    Ready,
+    /// Sent, not confirmed yet (or the trainer is out of reach).
+    Waiting,
+    /// The trainer holds the target (or settles on it).
+    Holding,
+    /// The watts stayed away from the target: the target goes again.
+    OffTarget,
+    /// The cadence is too low (or the ride just began): the brake is let go
+    /// until the legs turn.
+    LowCadence,
+    /// The ride is paused: the brake is let go.
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ErgLive {
+    pub target_w: u16,
+    pub state: ErgState,
+}
+
 /// The ride as it is now, a few times a second.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrainingLive {
@@ -93,6 +118,8 @@ pub struct TrainingLive {
     pub warnings: Vec<String>,
     /// Seconds the Mac slept during the ride: they are not in it.
     pub slept_s: u32,
+    /// ERG, while a target is set; None riding free.
+    pub erg: Option<ErgLive>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

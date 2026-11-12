@@ -20,6 +20,7 @@ vi.mock("../lib/tauri", () => ({
     trainingLap: vi.fn(),
     trainingPause: vi.fn(),
     trainingResume: vi.fn(),
+    trainingSetTarget: vi.fn(),
     trainingFinish: vi.fn(),
     trainingDiscard: vi.fn(),
     trainingLeave: vi.fn(),
@@ -59,6 +60,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     links: [link({ name: "AVANTI COG" }), link({ role: "pedals", name: "ASSIOMA" }), link({ role: "strap", state: "lost" })],
     warnings: [],
     slept_s: 0,
+    erg: null,
     ...over,
   };
 }
@@ -85,6 +87,7 @@ beforeEach(() => {
     mocked.trainingLap,
     mocked.trainingPause,
     mocked.trainingResume,
+    mocked.trainingSetTarget,
     mocked.trainingDiscard,
     mocked.trainingLeave,
     mocked.trainingDiscardPending,
@@ -405,5 +408,62 @@ describe("Training during the ride", () => {
     for (const label of ["Lap", "Pause", "Finish", "Discard"]) {
       expect((screen.getByText(label) as HTMLButtonElement).disabled).toBe(true);
     }
+    expect(screen.queryByRole("region", { name: "ERG mode" })).toBeNull();
+  });
+});
+
+describe("ERG on the ride (#274)", () => {
+  it("is switched on at an easy effort from the FTP", async () => {
+    hook.live = live({ phase: "pairing" });
+    renderPage();
+    await screen.findByText(/of FTP/); // the FTP is known
+    fireEvent.click(screen.getByText("Hold a power"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenCalledWith(160));
+  });
+
+  it("steps the target, rides free, and says what the trainer does", async () => {
+    hook.live = live({ erg: { target_w: 150, state: "holding" } });
+    renderPage();
+    expect(screen.getByLabelText("Target power").textContent).toContain("150 W");
+    expect(screen.getByText("The trainer holds the target.")).toBeTruthy();
+    // Two quick clicks before the screen shows the first back: +20.
+    fireEvent.click(screen.getByLabelText("10 W more"));
+    fireEvent.click(screen.getByLabelText("10 W more"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(170));
+    fireEvent.click(screen.getByLabelText("10 W less"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(160));
+    fireEvent.click(screen.getByText("Ride free"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(null));
+
+    const says = {
+      ready: /Held from the start/,
+      waiting: /Waiting for the trainer/,
+      off_target: /Off the target/,
+      low_cadence: /Cadence too low/,
+      paused: /the brake is off\.$/,
+    } as const;
+    for (const [state, text] of Object.entries(says)) {
+      cleanup();
+      hook.live = live({ erg: { target_w: 150, state: state as keyof typeof says } });
+      renderPage();
+      expect(screen.getByText(text)).toBeTruthy();
+    }
+  });
+
+  it("says why a target was refused, and follows the screen once it shows the target back", async () => {
+    hook.live = live({ erg: { target_w: 150, state: "holding" } });
+    mocked.trainingSetTarget.mockRejectedValue(commandError("training.none", "No trainer is connected"));
+    const page = renderPage();
+    fireEvent.click(screen.getByLabelText("10 W more"));
+    expect(await screen.findByText("No trainer is connected")).toBeTruthy();
+    // Refused: the next step starts from what the screen shows (150).
+    mocked.trainingSetTarget.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByLabelText("10 W more"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(160));
+    // Shown back: the next step starts there.
+    hook.live = live({ erg: { target_w: 160, state: "holding" } });
+    page.again();
+    fireEvent.click(screen.getByLabelText("10 W more"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(170));
   });
 });

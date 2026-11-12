@@ -1006,6 +1006,14 @@ export interface LinkStatus {
   detail: string | null;
 }
 
+/** What ERG is doing. */
+export type ErgState = "ready" | "waiting" | "holding" | "off_target" | "low_cadence" | "paused";
+
+export interface ErgLive {
+  target_w: number;
+  state: ErgState;
+}
+
 /** The ride as it is now (`training:live`, a few times a second). */
 export interface TrainingLive {
   phase: TrainingPhase;
@@ -1028,6 +1036,8 @@ export interface TrainingLive {
   warnings: string[];
   /** Seconds the Mac slept during the ride: not in it. */
   slept_s: number;
+  /** ERG while a target is set; null riding free. */
+  erg: ErgLive | null;
 }
 
 export interface TrainingFinish {

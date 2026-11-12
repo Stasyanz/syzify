@@ -347,6 +347,8 @@ export const api = {
   trainingLap: () => invoke<void>("training_lap"),
   trainingPause: () => invoke<void>("training_pause"),
   trainingResume: () => invoke<void>("training_resume"),
+  /** ERG: hold `watts` (1–2000); null rides free. */
+  trainingSetTarget: (watts: number | null) => invoke<void>("training_set_target", { watts }),
   trainingFinish: () => invoke<TrainingFinish>("training_finish"),
   trainingDiscard: () => invoke<void>("training_discard"),
   trainingLeave: () => invoke<void>("training_leave"),
