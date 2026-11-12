@@ -344,10 +344,15 @@ mod tests {
         assert!(ride(&mut p, 4, 10).is_empty(), "nothing after Failed");
         // A control outcome (none should come) is ignored.
         let mut stray = leg("ASSIOMA55430L", "AL", 110, 0);
-        stray.script =
-            vec![LinkEvent::Control { id: ControlId(1), at: secs(1), control: Control::Release, outcome: ControlOutcome::Refused }];
+        stray.script = vec![
+            LinkEvent::Control { id: ControlId(1), at: secs(1), control: Control::Release, outcome: ControlOutcome::Refused },
+            // A late reading of its own (as a radio may bring one).
+            LinkEvent::Reading(Reading { at: ms(1200), watts: Some(120), ..Reading::default() }),
+        ];
         let mut p = pair(stray, leg("ASSIOMA55430R", "AR", 90, 500));
-        assert!(!ride(&mut p, 0, 2).iter().any(|e| matches!(e, LinkEvent::Control { .. })));
+        let events = ride(&mut p, 0, 2);
+        assert!(!events.iter().any(|e| matches!(e, LinkEvent::Control { .. })));
+        assert!(events.iter().any(|e| matches!(e, LinkEvent::Reading(r) if r.at == ms(1200) && r.watts == Some(210))));
     }
 
     /// In a ride: both legs' power is the second's, and with one side lost

@@ -50,6 +50,7 @@ describe("devices and the start", () => {
     expect(pedalAddresses(pair, "PL")).toEqual(["PL", "PR"]);
     expect(pedalAddresses(found, "P")).toEqual(["P"]);
     expect(pedalAddresses(found, null)).toEqual([]);
+    expect(pedalAddresses(null, "P")).toEqual([]); // nothing searched yet
     expect(pedalAddresses(found, "T")).toEqual([]); // a trainer is no pedal
   });
 

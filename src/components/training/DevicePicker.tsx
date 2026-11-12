@@ -28,7 +28,7 @@ export function DevicePicker() {
     },
   });
   const connect = useMutation({
-    mutationFn: (trainer: string) => api.trainingConnect(trainer, pedalAddresses(found ?? [], picks.pedals), picks.strap),
+    mutationFn: (trainer: string) => api.trainingConnect(trainer, pedalAddresses(found, picks.pedals), picks.strap),
   });
   const trainer = picks.trainer;
 
