@@ -1012,7 +1012,15 @@ export interface LinkStatus {
 }
 
 /** What ERG is doing. */
-export type ErgState = "ready" | "waiting" | "holding" | "off_target" | "low_cadence" | "paused";
+export type ErgState =
+  | "ready"
+  | "waiting"
+  | "holding"
+  | "off_target"
+  | "low_cadence"
+  | "paused"
+  | "no_cadence"
+  | "releasing";
 
 export interface ErgLive {
   target_w: number;
@@ -1041,8 +1049,11 @@ export interface TrainingLive {
   warnings: string[];
   /** Seconds the Mac slept during the ride: not in it. */
   slept_s: number;
-  /** ERG while a target is set; null riding free. */
+  /** ERG while a target is set (or the brake is being let go); null riding free. */
   erg: ErgLive | null;
+  /** Finishing: the trainer has not confirmed letting go (another app may
+   * control it); still asked for a few seconds. */
+  release_unconfirmed: boolean;
 }
 
 export interface TrainingFinish {

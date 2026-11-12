@@ -43,6 +43,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     warnings: [],
     slept_s: 0,
     erg: null,
+    release_unconfirmed: false,
     ...over,
   };
 }

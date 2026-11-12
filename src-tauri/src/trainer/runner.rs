@@ -134,6 +134,8 @@ struct View {
     watts_n: u64,
     counted: usize,
     erg: ErgHandle,
+    /// Letting go at the end: the last answer was a refusal.
+    release_unconfirmed: bool,
 }
 
 fn slot(role: Source) -> usize {
@@ -157,6 +159,7 @@ impl View {
     fn new(roles: &[Source], erg: ErgHandle) -> View {
         View {
             erg,
+            release_unconfirmed: false,
             links: roles
                 .iter()
                 .map(|&role| LinkStatus { role, state: LinkState::Searching, name: None, problem: None, detail: None })
@@ -274,6 +277,7 @@ impl View {
             links: self.links.clone(),
             warnings: self.warnings.clone(),
             slept_s: if slept > SLEEP_SLACK { slept as u32 } else { 0 },
+            release_unconfirmed: self.release_unconfirmed,
             erg: match phase {
                 TrainingPhase::Pairing => self.erg.ready(),
                 // Letting go at the end is the runner's, not ERG's.
@@ -314,6 +318,10 @@ fn let_go(session: &mut Session, view: &mut View, clock: &dyn Clock, host: &mut 
             match event {
                 LinkEvent::Control { id, outcome, .. } if Some(*id) == asked => {
                     asked = None;
+                    // Refused while connected: the trainer would not take
+                    // it (BLE "not permitted": another app holds it). Late
+                    // or unconfirmed answers are usual on some trainers.
+                    view.release_unconfirmed = *outcome == ControlOutcome::Refused;
                     match outcome {
                         ControlOutcome::Acknowledged => over = true,
                         _ => again_at = clock.now() + RELEASE_RETRY,
@@ -692,6 +700,7 @@ mod tests {
         assert_eq!(finished, TrainingFinish { kind: FinishKind::Imported, activity_id: Some("new".into()) });
         let seen = r.join();
         assert_eq!(seen.calls, vec!["begin", "finish", "done"]);
+        assert!(seen.last.as_ref().is_some_and(|l| !l.release_unconfirmed), "the Avanti confirmed letting go");
         assert_eq!(
             seen.phases,
             vec![TrainingPhase::Pairing, TrainingPhase::Riding, TrainingPhase::Paused, TrainingPhase::Riding, TrainingPhase::Finishing]
@@ -785,9 +794,11 @@ mod tests {
         assert_eq!(journal::pending(&vault).len(), 1);
     }
 
-    /// A trainer that answers the first release unconfirmed, the second
-    /// as told (`second`), and records how often it was asked.
+    /// A trainer that answers the first release as `first`, the next ones
+    /// as `second` (None: the link fails), and records how often it was
+    /// asked.
     struct Stubborn {
+        first: ControlOutcome,
         second: Option<ControlOutcome>,
         asked: Arc<Mutex<u32>>,
         owed: Vec<ControlId>,
@@ -806,7 +817,7 @@ mod tests {
             for id in self.owed.drain(..) {
                 let n = *self.asked.lock().unwrap();
                 match (n, self.second) {
-                    (1, _) => out.push(LinkEvent::Control { id, at: now, control: Control::Release, outcome: ControlOutcome::TimedOut }),
+                    (1, _) => out.push(LinkEvent::Control { id, at: now, control: Control::Release, outcome: self.first }),
                     (_, Some(outcome)) => out.push(LinkEvent::Control { id, at: now, control: Control::Release, outcome }),
                     (_, None) => out.push(LinkEvent::Failed { at: now, reason: LinkFailure::AdapterGone }),
                 }
@@ -825,30 +836,39 @@ mod tests {
         }
     }
 
-    fn released(second: Option<ControlOutcome>) -> u32 {
+    /// How many releases went out, and whether the screen ended up saying
+    /// the trainer would not take them.
+    fn released(first: ControlOutcome, second: Option<ControlOutcome>) -> (u32, bool) {
         let vault = ScratchDir::new("runner_release");
         let asked = Arc::new(Mutex::new(0));
-        let mut trainer = Stubborn { second, asked: asked.clone(), owed: Vec::new(), connected: false };
+        let mut trainer = Stubborn { first, second, asked: asked.clone(), owed: Vec::new(), connected: false };
         assert!(trainer.identity().is_none());
         trainer.use_profile(&crate::trainer::profile::GENERIC);
         let r = Running::start(Session::pairing(Box::new(trainer), None, None), &vault, false);
         r.run_to(2_000);
         r.free();
         assert_eq!(r.ask(Order::Finish).unwrap().kind, FinishKind::Imported);
-        r.join();
+        let seen = r.join();
+        let refused = seen.last.expect("shown").release_unconfirmed;
         let n = *asked.lock().unwrap();
-        n
+        (n, refused)
     }
 
     #[test]
     fn the_release_is_asked_again_until_the_trainer_confirms_or_goes() {
-        assert_eq!(released(Some(ControlOutcome::Acknowledged)), 2, "unconfirmed, then confirmed");
-        // Refused (out of reach for a moment): asked again within the budget.
-        assert!(released(Some(ControlOutcome::Refused)) >= 10);
-        assert_eq!(released(None), 2, "the link failed while letting go");
+        use ControlOutcome::{Acknowledged, NotAcknowledged, Refused, TimedOut};
+        // A time-out is usual (a slow answer): nothing said.
+        assert_eq!(released(TimedOut, Some(Acknowledged)), (2, false), "timed out, then confirmed");
+        // Refused, then taken: the warning goes with the confirmation.
+        assert_eq!(released(Refused, Some(Acknowledged)), (2, false));
+        // Refused: asked again within the budget, and the screen says why.
+        let (n, refused) = released(TimedOut, Some(Refused));
+        assert!(n >= 10 && refused, "{n} {refused}");
+        assert_eq!(released(TimedOut, None), (2, false), "the link failed while letting go");
         // Never confirmed: asked once a second until the budget is spent.
         let generic = crate::trainer::profile::GENERIC.release_budget.as_secs() as u32;
-        assert!(released(Some(ControlOutcome::NotAcknowledged)) >= generic / 2);
+        let (n, refused) = released(TimedOut, Some(NotAcknowledged));
+        assert!(n >= generic / 2 && !refused, "{n} {refused}");
     }
 
     /// Finished during a drop: the trainer keeps its brake through a short

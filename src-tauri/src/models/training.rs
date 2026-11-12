@@ -77,7 +77,8 @@ pub struct LinkStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErgState {
-    /// Before the ride: the target it will start with.
+    /// The target waits for the legs: before the ride, at its start, after
+    /// a pause.
     Ready,
     /// Sent, not confirmed yet (or the trainer is out of reach).
     Waiting,
@@ -85,11 +86,16 @@ pub enum ErgState {
     Holding,
     /// The watts stayed away from the target: the target goes again.
     OffTarget,
-    /// The cadence is too low (or the ride just began): the brake is let go
-    /// until the legs turn.
+    /// The legs stalled: the brake is let go until they turn.
     LowCadence,
     /// The ride is paused: the brake is let go.
     Paused,
+    /// Nothing sends a cadence: held on the trainer's watts, let go only
+    /// once they stop (slowing down is not seen).
+    NoCadence,
+    /// Riding free: the brake is being let go, not confirmed yet
+    /// (`target_w` is 0).
+    Releasing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -126,6 +132,9 @@ pub struct TrainingLive {
     pub slept_s: u32,
     /// ERG, while a target is set; None riding free.
     pub erg: Option<ErgLive>,
+    /// Finishing: the trainer refused letting go (another app may control
+    /// it); still asked for a few seconds.
+    pub release_unconfirmed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

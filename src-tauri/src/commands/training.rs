@@ -841,6 +841,7 @@ mod tests {
             warnings: vec![],
             slept_s: 0,
             erg: None,
+            release_unconfirmed: false,
         });
         assert!(!finish_before_exit(app.handle(), || {}));
     }

@@ -21,6 +21,10 @@ function stateText(state: ErgState, t: Translator): string {
       return t("training.erg.lowCadence");
     case "paused":
       return t("training.erg.paused");
+    case "no_cadence":
+      return t("training.erg.noCadence");
+    case "releasing":
+      return t("training.erg.releasing");
   }
 }
 
@@ -37,7 +41,8 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
       asked.current = null;
     },
   });
-  const erg = live.erg;
+  // Letting the brake go after riding free is no target: ERG is off.
+  const erg = live.erg?.state === "releasing" ? null : live.erg;
   useEffect(() => {
     if (erg?.target_w === asked.current) asked.current = null;
   }, [erg?.target_w]);
@@ -79,9 +84,12 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
           </>
         )}
       </div>
-      {erg && (
-        <p className={`text-sm ${erg.state === "holding" || erg.state === "ready" ? "text-muted" : ""}`} data-state={erg.state}>
-          {stateText(erg.state, t)}
+      {live.erg && (
+        <p
+          className={`text-sm ${live.erg.state === "holding" || live.erg.state === "ready" ? "text-muted" : ""}`}
+          data-state={live.erg.state}
+        >
+          {stateText(live.erg.state, t)}
         </p>
       )}
       {set.error != null && <p className="text-sm text-danger">{errorText(set.error)}</p>}

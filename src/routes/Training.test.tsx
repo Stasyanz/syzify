@@ -61,6 +61,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     warnings: [],
     slept_s: 0,
     erg: null,
+    release_unconfirmed: false,
     ...over,
   };
 }
@@ -425,6 +426,19 @@ describe("Training during the ride", () => {
       expect((screen.getByText(label) as HTMLButtonElement).disabled).toBe(true);
     }
     expect(screen.queryByRole("region", { name: "ERG mode" })).toBeNull();
+    expect(screen.queryByText(/refused to let go/)).toBeNull();
+    cleanup();
+    hook.live = live({ phase: "finishing", release_unconfirmed: true });
+    renderPage();
+    expect(screen.getByText(/refused to let go: another app may control it/)).toBeTruthy();
+  });
+
+  it("shows the brake being let go after riding free, ERG off", () => {
+    hook.live = live({ erg: { target_w: 0, state: "releasing" } });
+    renderPage();
+    expect(screen.getByText("Letting the brake go…")).toBeTruthy();
+    expect(screen.getByText("Hold a power")).toBeTruthy();
+    expect(screen.queryByLabelText("Target power")).toBeNull();
   });
 });
 
@@ -452,7 +466,8 @@ describe("ERG on the ride (#274)", () => {
     await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(null));
 
     const says = {
-      ready: /Held from the start/,
+      ready: /takes the target once you pedal/,
+      no_cadence: /sends no cadence/,
       waiting: /Waiting for the trainer/,
       off_target: /Off the target/,
       low_cadence: /Cadence too low/,

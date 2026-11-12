@@ -16,10 +16,15 @@
 //! - **Death spiral.** Below a cadence the brake would only grow heavier:
 //!   it is let go, and the target comes back with the cadence. A ride — and
 //!   a ride after a pause — starts that way: the target waits for the legs.
+//! - **No cadence.** A trainer that sends none (and no pedals that do) is
+//!   held on its own watts rather than never: the brake goes once they
+//!   stop, comes back once they turn. Slowing down is not seen — the
+//!   screen says so.
 //! - **Letting go** (a pause, low cadence, the target dropped) is asked
 //!   until the trainer confirms it, through drops, never given up: a brake
-//!   left on is what must not happen. The end of the ride is the runner's
-//!   (`let_go`).
+//!   left on is what must not happen. A confirmed release outlives a short
+//!   drop; after a long one it is asked again. The end of the ride is the
+//!   runner's (`let_go`).
 //! - **The screen says what is confirmed**, not what was wished: until the
 //!   trainer answers, it waits.
 //!
@@ -42,6 +47,15 @@ pub const BACK_CADENCE: u8 = 50;
 pub const BACK_FOR: u32 = 2;
 /// Away from the target this many seconds in a row is not an overshoot.
 pub const OFF_TARGET_FOR: u32 = 8;
+/// Turning this many seconds with no cadence from anything: the trainer
+/// sends none, and ERG holds on its watts instead.
+pub const BLIND_AFTER: u32 = 5;
+/// The same while the ride's pedals were never heard: they wake up with
+/// the pedalling and connect a few seconds later, with the cadence.
+pub const BLIND_AWAITING_PEDALS: u32 = 30;
+/// A drop longer than this may have cost a release too (a trainer left
+/// alone falls back to a resistance of its own): it is asked again.
+const LONG_OUTAGE: Duration = Duration::from_secs(30);
 /// The highest target the screen may ask for.
 pub const MAX_TARGET: u16 = 2000;
 /// The first retry after an unconfirmed control is at once; each next one
@@ -208,8 +222,17 @@ pub struct Erg {
     last_wish: Option<Control>,
     low: u32,
     back: u32,
-    /// The brake is let go for the cadence; also how a ride starts.
+    /// The brake is let go for the legs; also how a ride starts.
     released_low: bool,
+    /// Let go for a stall (not for the start or a pause); read only while
+    /// `released_low`.
+    stalled: bool,
+    /// A cadence was ever heard this ride.
+    cadence_seen: bool,
+    /// Seconds turning with no cadence, before any was heard.
+    no_cadence: u32,
+    /// Nothing sends a cadence: the legs are told by the trainer's watts.
+    blind: bool,
     off: u32,
     off_target: bool,
 }
@@ -229,8 +252,18 @@ impl Erg {
             low: 0,
             back: 0,
             released_low: true,
+            stalled: false,
+            cadence_seen: false,
+            no_cadence: 0,
+            blind: false,
             off: 0,
             off_target: false,
+        }
+    }
+
+    fn forget_target(&mut self) {
+        if self.acked != Some(Control::Release) {
+            self.acked = None;
         }
     }
 
@@ -254,37 +287,73 @@ impl Erg {
                         }
                     }
                 }
+                // A drop may have cost a target (it is sent again), not a
+                // release: a trainer let go stays let go — unless it was
+                // alone long enough to take a resistance of its own.
                 LinkEvent::Back { .. } | LinkEvent::Connected { .. } => {
-                    self.acked = None;
+                    if matches!(event, LinkEvent::Back { outage, .. } if *outage > LONG_OUTAGE) {
+                        self.acked = None;
+                    } else {
+                        self.forget_target();
+                    }
                     self.fails = 0;
                     self.not_before = Duration::ZERO;
                     self.force = true;
                 }
-                LinkEvent::Lost { .. } => self.acked = None,
+                LinkEvent::Lost { .. } => self.forget_target(),
                 _ => {}
             }
         }
     }
 
-    /// One closed second: the cadence for the death-spiral guard, the
-    /// trainer's watts against the target.
-    fn judge(&mut self, s: &Second, target: Option<u16>) {
-        // A second with no cadence heard (a drop) says nothing about the
-        // legs: a stalling rider still sends 0 rpm.
-        if let Some(cadence) = s.sample.cadence_rpm {
-            if self.released_low {
-                self.back = if cadence >= BACK_CADENCE { self.back + 1 } else { 0 };
-                if self.back >= BACK_FOR {
-                    self.released_low = false;
-                    self.low = 0;
+    /// The death-spiral guard, one second of the legs: `turning` brings the
+    /// target back, `stalling` lets the brake go (each so many in a row).
+    fn legs(&mut self, turning: bool, stalling: bool) {
+        if self.released_low {
+            self.back = if turning { self.back + 1 } else { 0 };
+            if self.back >= BACK_FOR {
+                self.released_low = false;
+                self.low = 0;
+            }
+        } else {
+            self.low = if stalling { self.low + 1 } else { 0 };
+            if self.low >= LOW_FOR {
+                self.released_low = true;
+                self.stalled = true;
+                self.back = 0;
+            }
+        }
+    }
+
+    /// One closed second: the legs for the death-spiral guard, the
+    /// trainer's watts against the target. `pedals_awaited`: the ride's
+    /// pedals were never heard yet.
+    fn judge(&mut self, s: &Second, target: Option<u16>, pedals_awaited: bool) {
+        match (s.sample.cadence_rpm, s.trainer_watts) {
+            (Some(cadence), _) => {
+                self.cadence_seen = true;
+                self.blind = false;
+                self.legs(cadence >= BACK_CADENCE, cadence < LOW_CADENCE);
+            }
+            // Never a cadence from anything: the trainer's watts tell the
+            // legs (a coasting flywheel keeps its speed, not its watts).
+            (None, Some(watts)) if !self.cadence_seen => {
+                let blind_after = if pedals_awaited { BLIND_AWAITING_PEDALS } else { BLIND_AFTER };
+                if watts > 0 {
+                    self.no_cadence += 1;
+                    self.blind |= self.no_cadence >= blind_after;
                 }
-            } else {
-                self.low = if cadence < LOW_CADENCE { self.low + 1 } else { 0 };
-                if self.low >= LOW_FOR {
-                    self.released_low = true;
-                    self.back = 0;
+                if self.blind {
+                    self.legs(watts > 0, watts == 0);
                 }
             }
+            // Held on its watts, and none came: a trainer may say nothing
+            // standing still. Taken as stopped — in a drop the release
+            // goes once it is back, the target only with watts again.
+            (None, None) if self.blind => self.legs(false, true),
+            // Otherwise a second with nothing heard (a drop) says nothing
+            // about the legs: a stalling rider still sends 0 rpm.
+            _ => {}
         }
         let confirmed = match self.acked {
             Some(Control::TargetPower(a)) if !self.released_low => Some(a),
@@ -356,8 +425,14 @@ impl Erg {
             ErgState::Waiting
         } else if paused {
             ErgState::Paused
-        } else if self.released_low {
+        } else if self.released_low && self.stalled {
             ErgState::LowCadence
+        } else if self.released_low {
+            // The start, or after a pause: the target waits for the legs.
+            ErgState::Ready
+        } else if self.blind {
+            // Before off target: what the rider must know to stop safely.
+            ErgState::NoCadence
         } else if self.off_target {
             ErgState::OffTarget
         } else {
@@ -373,11 +448,12 @@ impl Controller for Erg {
         if moment.paused {
             // After the pause the target waits for the legs again.
             self.released_low = true;
+            self.stalled = false;
             self.low = 0;
             self.back = 0;
         }
         for s in moment.closed {
-            self.judge(s, target);
+            self.judge(s, target, moment.pedals_awaited);
         }
         let wish = self.wish(moment.paused, target);
         if wish.map(kind) != self.last_wish.map(kind) {
@@ -405,7 +481,15 @@ impl Controller for Erg {
             }
         }
         let state = self.state(moment.paused, wish);
-        self.handle.show(target.map(|target_w| ErgLive { target_w, state }));
+        let view = match target {
+            Some(target_w) => Some(ErgLive { target_w, state }),
+            // Riding free, the brake not confirmed let go yet: say so.
+            None if wish == Some(Control::Release) && self.acked != Some(Control::Release) => {
+                Some(ErgLive { target_w: 0, state: ErgState::Releasing })
+            }
+            None => None,
+        };
+        self.handle.show(view);
     }
 }
 
@@ -489,11 +573,18 @@ mod tests {
         owed: Vec<(ControlId, Control)>,
         next: u64,
         reading: u64,
+        /// Sends a cadence only within this.
+        cadence: std::ops::Range<Duration>,
     }
 
     impl Stub {
         fn new(ride: fn(Duration) -> (u8, Option<u16>), answer: fn(Control) -> Option<ControlOutcome>) -> Stub {
-            Stub { ride, answer, owed: Vec::new(), next: 0, reading: 0 }
+            Stub { ride, answer, owed: Vec::new(), next: 0, reading: 0, cadence: Duration::ZERO..Duration::MAX }
+        }
+
+        /// No cadence at all, its watts from `ride`.
+        fn blind(ride: fn(Duration) -> (u8, Option<u16>)) -> Stub {
+            Stub { cadence: Duration::MAX..Duration::MAX, ..Stub::new(ride, ack) }
         }
     }
 
@@ -511,7 +602,8 @@ mod tests {
             while self.reading * 250 <= now.as_millis() as u64 {
                 let at = ms(self.reading * 250);
                 let (cadence, watts) = (self.ride)(at);
-                out.push(LinkEvent::Reading(Reading { at, watts, cadence_rpm: Some(cadence), ..Reading::default() }));
+                let cadence_rpm = self.cadence.contains(&at).then_some(cadence);
+                out.push(LinkEvent::Reading(Reading { at, watts, cadence_rpm, ..Reading::default() }));
                 self.reading += 1;
             }
             out
@@ -542,11 +634,15 @@ mod tests {
 
     impl Ride {
         fn on(trainer: impl TrainerLink + 'static, target: Option<u16>) -> Ride {
+            Ride::with_pedals(trainer, None, target)
+        }
+
+        fn with_pedals(trainer: impl TrainerLink + 'static, pedals: Option<Box<dyn SensorLink>>, target: Option<u16>) -> Ride {
             let log = Arc::new(Mutex::new(Log::default()));
             let mut spy = Spy { inner: trainer, now: Duration::ZERO, log: log.clone() };
             let _ = spy.identity(); // whatever the trainer is: generic here
             spy.use_profile(&GENERIC);
-            let mut session = Session::new(Duration::ZERO, 0, SubSport::IndoorCycling, Box::new(spy), None, None, None);
+            let mut session = Session::new(Duration::ZERO, 0, SubSport::IndoorCycling, Box::new(spy), pedals, None, None);
             let erg = ErgHandle::default();
             erg.set_target(target);
             session.add_controller(Box::new(Erg::new(erg.clone())));
@@ -624,7 +720,7 @@ mod tests {
         let mut r = Ride::fake(FakeConfig::elite_avanti(0).then_cadence(secs(10), 85), Some(150));
         r.to(secs(20));
         assert!(r.sent_between(secs(0), secs(10)).is_empty(), "standing still: nothing held, nothing to let go");
-        assert!(r.states_between(secs(1), secs(10)).iter().all(|s| *s == Some(ErgState::LowCadence)));
+        assert!(r.states_between(secs(1), secs(10)).iter().all(|s| *s == Some(ErgState::Ready)), "waiting for the legs, not a fault");
         let first = r.log.lock().unwrap().sent.first().copied().expect("sent");
         assert!((secs(11)..secs(13)).contains(&first.0), "after 2 s of pedalling: {first:?}");
         assert_eq!(first.1, Control::TargetPower(150));
@@ -839,6 +935,144 @@ mod tests {
         assert!(targets.iter().any(|&w| w >= 190), "up the ramp: {targets:?}");
         assert_eq!(r.sent_between(secs(70), secs(85)).last(), Some(&Control::Release), "ends free");
         assert_eq!(r.erg.view(), None);
+    }
+
+    /// No cadence: still to 10 s, turning to 30, stopped to 40, turning on.
+    fn blind_ride(at: Duration) -> (u8, Option<u16>) {
+        let still = at < secs(10) || (secs(30)..secs(40)).contains(&at);
+        (0, Some(if still { 0 } else { 150 }))
+    }
+
+    /// A trainer that sends watts and no cadence: held on its watts (rather
+    /// than never), let go once they stop, and the screen says so.
+    #[test]
+    fn a_trainer_without_cadence_is_held_on_its_watts() {
+        let mut r = Ride::on(Stub::blind(blind_ride), Some(150));
+        r.to(secs(30));
+        let first = r.log.lock().unwrap().sent.first().copied().expect("sent");
+        assert_eq!(first.1, Control::TargetPower(150));
+        assert!((secs(16)..secs(17)).contains(&first.0), "5 s turning with no cadence, then 2 s: {first:?}");
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::NoCadence }));
+        // The legs stop: the brake goes, and comes back with the watts.
+        r.to(secs(50));
+        let stop = r.sent_between(secs(30), secs(33));
+        assert!(stop.contains(&Control::Release), "{stop:?}");
+        assert!(!r.sent_between(secs(33), secs(40)).contains(&Control::TargetPower(150)));
+        assert!(r.states_between(secs(34), secs(40)).iter().all(|s| *s == Some(ErgState::LowCadence)));
+        assert!(r.sent_between(secs(40), secs(43)).contains(&Control::TargetPower(150)));
+        // Away from the target too: what the rider cannot see comes first.
+        let mut off = Ride::on(Stub::blind(|_| (0, Some(250))), Some(150));
+        off.to(secs(40));
+        assert_eq!(off.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::NoCadence }));
+    }
+
+    /// Without cadence, a trainer that falls silent standing still is let go.
+    #[test]
+    fn without_cadence_a_silent_trainer_is_taken_as_stopped() {
+        let mut r = Ride::on(Stub::blind(|at| (0, (at < secs(30) || at >= secs(45)).then_some(150))), Some(150));
+        r.to(secs(50));
+        let stop = r.sent_between(secs(30), secs(34));
+        assert!(stop.contains(&Control::Release), "{stop:?}");
+        assert!(!r.sent_between(secs(34), secs(45)).contains(&Control::TargetPower(150)));
+        assert!(r.sent_between(secs(45), secs(48)).contains(&Control::TargetPower(150)), "back with the watts");
+    }
+
+    #[test]
+    fn without_cadence_a_resumed_ride_waits_for_the_watts() {
+        let mut r = Ride::on(Stub::blind(|at| (0, Some(if (secs(25)..secs(40)).contains(&at) { 0 } else { 150 }))), Some(150));
+        r.to(secs(22));
+        r.session.pause(r.now());
+        r.to(secs(30));
+        r.session.resume(r.now());
+        r.to(secs(45));
+        assert!(!r.sent_between(secs(30), secs(40)).contains(&Control::TargetPower(150)), "resumed with the legs still");
+        assert!(r.states_between(secs(31), secs(40)).iter().all(|s| *s == Some(ErgState::Ready)));
+        assert!(r.sent_between(secs(40), secs(43)).contains(&Control::TargetPower(150)));
+    }
+
+    /// A cadence heard once is the guard's: a trainer that sends one late
+    /// is no longer blind, one that stops sending it does not become so.
+    #[test]
+    fn a_cadence_heard_late_brings_the_guard_back() {
+        let late = Stub { cadence: secs(20)..Duration::MAX, ..Stub::new(|_| (85, Some(150)), ack) };
+        let mut r = Ride::on(late, Some(150));
+        r.to(secs(18));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::NoCadence }));
+        r.to(secs(30));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::Holding }));
+        let gone = Stub { cadence: Duration::ZERO..secs(10), ..Stub::new(|_| (85, Some(150)), ack) };
+        let mut r = Ride::on(gone, Some(150));
+        r.to(secs(30));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::Holding }));
+    }
+
+    /// Pedals that never answer.
+    struct Silent;
+
+    impl SensorLink for Silent {
+        fn identity(&self) -> Option<&Identity> {
+            None
+        }
+        fn poll(&mut self, _: Duration) -> Vec<LinkEvent> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn pedals_not_heard_yet_are_waited_for_before_holding_without_cadence() {
+        let mut r = Ride::with_pedals(Stub::blind(|_| (0, Some(150))), Some(Box::new(Silent)), Some(150));
+        r.to(secs(25));
+        assert!(r.sent_between(secs(0), secs(25)).is_empty(), "the pedals may bring the cadence");
+        r.to(secs(40));
+        assert!(r.sent_between(secs(25), secs(40)).contains(&Control::TargetPower(150)), "they never did");
+    }
+
+    #[test]
+    fn after_a_stall_and_a_pause_the_target_waits_for_the_legs_not_a_fault() {
+        let mut r = Ride::fake(FakeConfig::elite_avanti(85).then_cadence(secs(20), 20), Some(150));
+        r.to(secs(30));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::LowCadence }));
+        r.session.pause(r.now());
+        r.to(secs(35));
+        r.session.resume(r.now());
+        r.to(secs(40));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 150, state: ErgState::Ready }));
+    }
+
+    /// Let go and riding free: a long drop may have cost the release (the
+    /// trainer takes a resistance of its own), so it goes again once.
+    #[test]
+    fn a_long_drop_asks_for_the_release_again() {
+        let mut r = Ride::fake(FakeConfig::elite_avanti(85).with_drop(secs(30), secs(40)), Some(150));
+        r.to(secs(20));
+        r.erg.set_target(None);
+        r.to(secs(100));
+        assert_eq!(r.sent_between(secs(20) + ms(1), secs(100)), vec![Control::Release, Control::Release]);
+    }
+
+    #[test]
+    fn riding_free_shows_the_brake_being_let_go_until_it_is() {
+        let mut r = Ride::on(Stub::new(|_| (85, Some(150)), no_release), Some(150));
+        r.to(secs(10));
+        r.erg.set_target(None);
+        r.to(secs(15));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 0, state: ErgState::Releasing }), "not confirmed: shown");
+        let mut confirmed = Ride::fake(FakeConfig::elite_avanti(85), Some(150));
+        confirmed.to(secs(10));
+        confirmed.erg.set_target(None);
+        confirmed.to(secs(15));
+        assert_eq!(confirmed.erg.view(), None, "confirmed: riding free");
+    }
+
+    /// Let go and riding free: a drop does not cost the release, so no
+    /// release goes again after it.
+    #[test]
+    fn a_drop_after_letting_go_sends_nothing_more() {
+        let mut r = Ride::fake(FakeConfig::elite_avanti(85).with_drop(secs(30), secs(6)), Some(150));
+        r.to(secs(20));
+        r.erg.set_target(None);
+        r.to(secs(60));
+        assert_eq!(r.sent_between(secs(20) + ms(1), secs(60)), vec![Control::Release], "once, not after Back");
     }
 
     #[test]

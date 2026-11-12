@@ -127,6 +127,9 @@ export function LiveRide({ live }: { live: TrainingLive }) {
       {pairing && <p className="text-sm text-muted">{t("training.pairing.hint")}</p>}
       {live.phase === "paused" && <p className="text-sm font-medium">{t("training.paused")}</p>}
       {ending && <p className="text-sm text-muted">{t("training.finishing")}</p>}
+      {live.phase === "finishing" && live.release_unconfirmed && (
+        <p className="text-sm px-3 py-2 rounded-field bg-warn-soft">{t("training.releaseUnconfirmed")}</p>
+      )}
       {live.slept_s > 0 && (
         <p className="text-sm px-3 py-2 rounded-field bg-warn-soft">{t("training.slept", { duration: formatDuration(live.slept_s) })}</p>
       )}
