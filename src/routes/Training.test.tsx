@@ -62,6 +62,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     slept_s: 0,
     erg: null,
     release_unconfirmed: false,
+    power_match: null,
     ...over,
   };
 }
@@ -439,6 +440,22 @@ describe("Training during the ride", () => {
     expect(screen.getByText("Letting the brake go…")).toBeTruthy();
     expect(screen.getByText("Hold a power")).toBeTruthy();
     expect(screen.queryByLabelText("Target power")).toBeNull();
+  });
+
+  it("says whether ERG is held by the pedals' watts or the trainer's (#275)", () => {
+    const erg = { target_w: 200, state: "holding" as const };
+    hook.live = live({ erg, power_match: { state: "matching", trainer_target_w: 182 } });
+    renderPage();
+    expect(screen.getByText(/Held by the pedals' watts: the trainer is asked for 182/)).toBeTruthy();
+    cleanup();
+    hook.live = live({ erg, power_match: { state: "no_pedals", trainer_target_w: 200 } });
+    renderPage();
+    expect(screen.getByText("No power from the pedals: held by the trainer's own watts.")).toBeTruthy();
+    cleanup();
+    // Letting go after riding free: nothing is matched.
+    hook.live = live({ erg: { target_w: 0, state: "releasing" }, power_match: { state: "matching", trainer_target_w: 0 } });
+    renderPage();
+    expect(screen.queryByText(/Held by the pedals' watts/)).toBeNull();
   });
 });
 

@@ -19,6 +19,7 @@ pub mod journal;
 pub mod library;
 pub mod pedals;
 pub mod link;
+pub mod power_match;
 pub mod profile;
 pub mod ride;
 pub mod runner;

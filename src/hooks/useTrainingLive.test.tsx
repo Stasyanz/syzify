@@ -44,6 +44,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     slept_s: 0,
     erg: null,
     release_unconfirmed: false,
+    power_match: null,
     ...over,
   };
 }

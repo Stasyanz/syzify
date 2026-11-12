@@ -1027,6 +1027,14 @@ export interface ErgLive {
   state: ErgState;
 }
 
+/** Power match: ERG held by the pedals' watts (`matching`), or by the
+ * trainer's while the pedals are not heard (`no_pedals`). */
+export interface MatchLive {
+  state: "matching" | "no_pedals";
+  /** What the trainer is sent for the target. */
+  trainer_target_w: number;
+}
+
 /** The ride as it is now (`training:live`, a few times a second). */
 export interface TrainingLive {
   phase: TrainingPhase;
@@ -1051,8 +1059,10 @@ export interface TrainingLive {
   slept_s: number;
   /** ERG while a target is set (or the brake is being let go); null riding free. */
   erg: ErgLive | null;
-  /** Finishing: the trainer has not confirmed letting go (another app may
-   * control it); still asked for a few seconds. */
+  /** Power match, while ERG holds a target on a ride with pedals. */
+  power_match: MatchLive | null;
+  /** Finishing: the trainer refused letting go (another app may control
+   * it); still asked for a few seconds. */
   release_unconfirmed: boolean;
 }
 

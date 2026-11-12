@@ -284,6 +284,8 @@ impl View {
                 TrainingPhase::Finishing => None,
                 _ => self.erg.view(),
             },
+            // ERG says nothing before the ride; the end is the runner's.
+            power_match: self.erg.matching().filter(|_| phase != TrainingPhase::Finishing),
         }
     }
 }
@@ -738,17 +740,21 @@ mod tests {
 
     #[test]
     fn the_screen_sets_the_erg_target_and_sees_what_erg_does() {
-        use crate::models::training::{ErgLive, ErgState};
+        use crate::models::training::{ErgLive, ErgState, MatchLive, MatchState};
         let vault = ScratchDir::new("runner_erg");
-        let r = Running::start(Session::pairing(avanti(), None, None), &vault, false);
+        let mut trainer = avanti();
+        let pedals = trainer.pedals(Vec::new(), Vec::new());
+        let r = Running::start(Session::pairing(trainer, Some(Box::new(pedals)), None), &vault, false);
         r.run_to(3_000);
         r.tell(Order::SetTarget(Some(160))); // set while pairing: held from the start
         r.run_to(4_000);
         assert_eq!(r.last().erg, Some(ErgLive { target_w: 160, state: ErgState::Ready }), "held from the start of the ride");
+        assert_eq!(r.last().power_match, None);
         r.ask(Order::Begin).unwrap();
         r.run_to(40_000);
         let riding = r.last();
         assert_eq!(riding.erg, Some(ErgLive { target_w: 160, state: ErgState::Holding }));
+        assert_eq!(riding.power_match, Some(MatchLive { state: MatchState::Matching, trainer_target_w: 160 }), "true pedals: 0 W off");
         assert!(riding.trainer_watts.is_some_and(|w| w.abs_diff(160) <= 16), "{riding:?}");
         r.tell(Order::Pause);
         r.run_to(45_000);
@@ -762,7 +768,8 @@ mod tests {
         r.free();
         r.ask(Order::Finish).unwrap();
         let seen = r.join();
-        assert_eq!(seen.last.and_then(|l| l.erg), None, "letting go at the end is not ERG's");
+        let last = seen.last.expect("shown");
+        assert_eq!((last.erg, last.power_match), (None, None), "letting go at the end is not ERG's");
     }
 
     #[test]

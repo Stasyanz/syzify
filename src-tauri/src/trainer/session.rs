@@ -53,8 +53,13 @@ pub struct Moment<'a> {
     pub paused: bool,
     /// The trainer's profile (generic until it said who it is).
     pub profile: &'static TrainerProfile,
-    /// The ride has pedals and they were never heard yet.
+    /// The ride has pedals…
+    pub has_pedals: bool,
+    /// …and they were never heard yet.
     pub pedals_awaited: bool,
+    /// The last second the pedals' watts were heard in (a second after it
+    /// may hold them a while).
+    pub pedals_heard_in: Option<u32>,
 }
 
 /// Something that acts on the trainer during the ride (ERG, power match).
@@ -340,7 +345,9 @@ impl Session {
                 ride_s: self.seconds.len() as u32,
                 paused: self.paused(),
                 profile: self.profile(),
+                has_pedals: self.pedals.is_some(),
                 pedals_awaited: self.pedals.is_some() && self.last_pedals.is_none(),
+                pedals_heard_in: self.last_pedals.map(|(s, _, _)| s),
             };
             for c in self.controllers.iter_mut() {
                 c.tick(&moment, &events, self.trainer.as_mut());

@@ -17,6 +17,7 @@
 //! would on air), a target forgotten in an outage, slow, lost or missing
 //! acknowledgements, and the link failing for good.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::link::{
@@ -60,6 +61,16 @@ pub struct FakeConfig {
     pub lose_every_nth_ack: Option<u32>,
     /// The link fails for good at this time.
     pub fail_at: Option<(Duration, LinkFailure)>,
+    /// The trainer reads this many watts below what the legs put in (what
+    /// power pedals read), by cadence; in ERG it holds its own reading.
+    pub reads_low: fn(u8) -> f32,
+    /// The pedals read up to this many watts either way of the legs, at
+    /// random (seeded: the same every run).
+    pub pedal_noise: f32,
+}
+
+fn reads_true(_: u8) -> f32 {
+    0.0
 }
 
 impl FakeConfig {
@@ -81,6 +92,8 @@ impl FakeConfig {
             lose_every_nth_control: None,
             lose_every_nth_ack: None,
             fail_at: None,
+            reads_low: reads_true,
+            pedal_noise: 0.0,
         }
     }
 
@@ -167,9 +180,23 @@ pub struct FakeTrainer {
     owed: Vec<Owed>,
     controls_out: u32,
     lost_at: Option<Duration>,
+    /// What the pedals read, slot by slot, for [`FakePedals`].
+    pedals: Option<Arc<Mutex<Vec<Reading>>>>,
+    /// The pedals' noise generator.
+    seed: u64,
 }
 
 impl FakeTrainer {
+    /// Power pedals on this trainer: they read what the legs put in, every
+    /// slot, through the trainer's drops (they are another radio), not
+    /// through `drops` of their own (Lost, then Back), nor `mutes` (silent,
+    /// never said lost).
+    pub fn pedals(&mut self, drops: Vec<(Duration, Duration)>, mutes: Vec<(Duration, Duration)>) -> FakePedals {
+        let tap = Arc::new(Mutex::new(Vec::new()));
+        self.pedals = Some(tap.clone());
+        FakePedals { tap, drops, mutes, connected: false, lost_at: None }
+    }
+
     pub fn new(mut cfg: FakeConfig) -> FakeTrainer {
         assert!(cfg.period > Duration::ZERO, "a zero period never reaches `now`");
         cfg.cadence.sort_by_key(|&(t, _)| t);
@@ -192,7 +219,15 @@ impl FakeTrainer {
             owed: Vec::new(),
             controls_out: 0,
             lost_at: None,
+            pedals: None,
+            seed: 0x2545_F491_4F6C_DD1D,
         }
+    }
+
+    /// Uniform in −1…1, from a linear congruential generator.
+    fn noise(&mut self) -> f32 {
+        self.seed = self.seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        (self.seed >> 40) as f32 / (1u64 << 23) as f32 - 1.0
     }
 
     fn slot(&mut self, t: Duration, events: &mut Vec<LinkEvent>) {
@@ -253,10 +288,13 @@ impl FakeTrainer {
             }
         }
 
-        let cadence = self.cfg.cadence_at(t) as f32;
+        let rpm = self.cfg.cadence_at(t);
+        let cadence = rpm as f32;
+        let low = (self.cfg.reads_low)(rpm);
         let goal = match self.mode {
             Mode::Free => self.cfg.free_ride_k * cadence,
-            Mode::Erg(target) if cadence > 0.0 => target as f32 / cadence,
+            // It holds its own reading: the legs put in what it reads low.
+            Mode::Erg(target) if cadence > 0.0 => (target as f32 + low).max(0.0) / cadence,
             Mode::Erg(_) => self.torque,
             // 50 % ≈ riding free; 0 % (a release) is lighter.
             Mode::Resistance(pct) => self.cfg.free_ride_k * cadence * (0.4 + 1.2 * pct as f32 / 100.0),
@@ -267,8 +305,16 @@ impl FakeTrainer {
 
         self.report_owed(|due| due <= t, events);
 
+        let legs = (self.torque * cadence).max(0.0);
+        if self.pedals.is_some() {
+            let read = legs + self.cfg.pedal_noise * self.noise();
+            let watts = Some(read.max(0.0).round().min(u16::MAX as f32) as u16);
+            if let Some(tap) = &self.pedals {
+                tap.lock().unwrap().push(Reading { at: t, watts, cadence_rpm: Some(rpm), ..Reading::default() });
+            }
+        }
         if heard {
-            let watts = (self.torque * cadence).max(0.0).round().min(u16::MAX as f32) as u16;
+            let watts = (legs - low).max(0.0).round().min(u16::MAX as f32) as u16;
             let (reports_on_target, reported_target) = match self.mode {
                 Mode::Erg(target) => {
                     let near = (watts as f32 - target as f32).abs() <= target as f32 * 0.05;
@@ -380,6 +426,49 @@ impl TrainerLink for FakeTrainer {
         self.next_id += 1;
         self.queued.push((id, control));
         id
+    }
+}
+
+/// Power pedals on a [`FakeTrainer`] ([`FakeTrainer::pedals`]). Poll the
+/// trainer first: they read what it simulated.
+pub struct FakePedals {
+    tap: Arc<Mutex<Vec<Reading>>>,
+    drops: Vec<(Duration, Duration)>,
+    mutes: Vec<(Duration, Duration)>,
+    connected: bool,
+    lost_at: Option<Duration>,
+}
+
+impl SensorLink for FakePedals {
+    fn identity(&self) -> Option<&Identity> {
+        None
+    }
+
+    fn poll(&mut self, now: Duration) -> Vec<LinkEvent> {
+        let mut events = Vec::new();
+        if !std::mem::replace(&mut self.connected, true) {
+            events.push(LinkEvent::Connected { at: now });
+        }
+        for r in std::mem::take(&mut *self.tap.lock().unwrap()) {
+            let within = |&(start, len): &(Duration, Duration)| r.at >= start && r.at < start + len;
+            let down = self.drops.iter().find(|span| within(span)).map(|&(start, _)| start);
+            match (down, self.lost_at) {
+                (Some(start), None) => {
+                    self.lost_at = Some(start);
+                    events.push(LinkEvent::Lost { at: start });
+                }
+                (None, Some(lost)) => {
+                    self.lost_at = None;
+                    events.push(LinkEvent::Back { at: r.at, outage: r.at - lost });
+                }
+                _ => {}
+            }
+            if down.is_none() && !self.mutes.iter().any(within) {
+                // (within: the span holds this reading's time)
+                events.push(LinkEvent::Reading(r));
+            }
+        }
+        events
     }
 }
 

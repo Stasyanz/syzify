@@ -104,6 +104,25 @@ pub struct ErgLive {
     pub state: ErgState,
 }
 
+/// Power match: whether ERG is held by the pedals' watts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchState {
+    /// Held by the pedals: the trainer is sent a corrected target.
+    Matching,
+    /// The ride's pedals are not heard (not yet, or lost): held by the
+    /// trainer's own watts.
+    NoPedals,
+}
+
+/// Power match while ERG holds a target on a ride with pedals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MatchLive {
+    pub state: MatchState,
+    /// What the trainer is sent for the target.
+    pub trainer_target_w: u16,
+}
+
 /// The ride as it is now, a few times a second.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrainingLive {
@@ -132,6 +151,8 @@ pub struct TrainingLive {
     pub slept_s: u32,
     /// ERG, while a target is set; None riding free.
     pub erg: Option<ErgLive>,
+    /// Power match, while ERG holds a target on a ride with pedals.
+    pub power_match: Option<MatchLive>,
     /// Finishing: the trainer refused letting go (another app may control
     /// it); still asked for a few seconds.
     pub release_unconfirmed: bool,

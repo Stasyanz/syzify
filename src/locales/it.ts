@@ -1064,6 +1064,8 @@ export const it: Messages = {
   "training.erg.paused": "In pausa: il freno è rilasciato.",
   "training.erg.noCadence": "I rulli mantengono l'obiettivo. Non inviano la cadenza, quindi il freno si rilascia solo quando ti fermi, non se rallenti: alleggerisci prima.",
   "training.erg.releasing": "Rilascio del freno…",
+  "training.erg.matching": "Obiettivo tenuto sui watt dei pedali: ai rulli sono chiesti {watts}.",
+  "training.erg.noPedals": "Nessuna potenza dai pedali: obiettivo tenuto sui watt dei rulli.",
   "training.pending.title": "Uscite non terminate",
   "training.pending.intro": "Un arresto anomalo o un'app chiusa hanno interrotto queste uscite. Terminane una per aggiungerla alla libreria.",
   "training.pending.locked": "Crittografata: sblocca l'archivio per terminarla.",

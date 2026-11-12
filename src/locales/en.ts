@@ -1113,6 +1113,8 @@ export const en = {
   "training.erg.paused": "Paused: the brake is off.",
   "training.erg.noCadence": "The trainer holds the target. It sends no cadence, so the brake is let go only once you stop, not when you slow down: ease off first.",
   "training.erg.releasing": "Letting the brake go…",
+  "training.erg.matching": "Held by the pedals' watts: the trainer is asked for {watts}.",
+  "training.erg.noPedals": "No power from the pedals: held by the trainer's own watts.",
   "training.pending.title": "Unfinished rides",
   "training.pending.intro": "A crash or a closed app cut these rides short. Finish one to add it to your library.",
   "training.pending.locked": "Encrypted: unlock the vault to finish it.",

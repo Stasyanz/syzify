@@ -92,6 +92,16 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
           {stateText(live.erg.state, t)}
         </p>
       )}
+      {erg && live.power_match && (
+        <p
+          className={`text-sm ${live.power_match.state === "matching" ? "text-muted" : ""}`}
+          data-match={live.power_match.state}
+        >
+          {live.power_match.state === "matching"
+            ? t("training.erg.matching", { watts: formatPower(live.power_match.trainer_target_w) })
+            : t("training.erg.noPedals")}
+        </p>
+      )}
       {set.error != null && <p className="text-sm text-danger">{errorText(set.error)}</p>}
     </section>
   );

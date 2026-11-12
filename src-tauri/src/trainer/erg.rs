@@ -27,6 +27,10 @@
 //!   runner's (`let_go`).
 //! - **The screen says what is confirmed**, not what was wished: until the
 //!   trainer answers, it waits.
+//! - **Power match.** With pedals heard, the trainer is sent the target
+//!   corrected by how far its watts read off the pedals'
+//!   ([`super::power_match`]); the trainer's watts are then judged against
+//!   what it was sent.
 //!
 //! The target comes from the screen ([`ErgHandle::set_target`]) or a
 //! workout ([`ErgHandle::set_workout`]).
@@ -34,10 +38,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::journal::Second;
+use super::journal::{Second, Source as Role};
 use super::link::{Control, ControlId, ControlOutcome, LinkEvent, TrainerLink};
+use super::power_match::{Heard, PowerMatch};
 use super::session::{Controller, Moment};
-use crate::models::training::{ErgLive, ErgState};
+use crate::models::training::{ErgLive, ErgState, MatchLive, MatchState};
 
 /// Below this cadence for `LOW_FOR` seconds the brake is let go.
 pub const LOW_CADENCE: u8 = 40;
@@ -124,6 +129,7 @@ enum Source {
 struct Shared {
     source: Source,
     view: Option<ErgLive>,
+    matching: Option<MatchLive>,
 }
 
 /// The ERG controller's side the screen sees: set the target, read the
@@ -155,6 +161,11 @@ impl ErgHandle {
         self.0.lock().ok().and_then(|s| s.view)
     }
 
+    /// Power match, while a target is held on a ride with pedals.
+    pub fn matching(&self) -> Option<MatchLive> {
+        self.0.lock().ok().and_then(|s| s.matching)
+    }
+
     /// Before the ride: the target it will start with.
     pub fn ready(&self) -> Option<ErgLive> {
         let s = self.0.lock().ok()?;
@@ -179,9 +190,10 @@ impl ErgHandle {
         }
     }
 
-    fn show(&self, view: Option<ErgLive>) {
+    fn show(&self, view: Option<ErgLive>, matching: Option<MatchLive>) {
         if let Ok(mut s) = self.0.lock() {
             s.view = view;
+            s.matching = matching;
         }
     }
 }
@@ -235,6 +247,8 @@ pub struct Erg {
     blind: bool,
     off: u32,
     off_target: bool,
+    /// The trainer's target from the pedals' watts.
+    matcher: PowerMatch,
 }
 
 impl Erg {
@@ -258,6 +272,7 @@ impl Erg {
             blind: false,
             off: 0,
             off_target: false,
+            matcher: PowerMatch::default(),
         }
     }
 
@@ -453,9 +468,26 @@ impl Controller for Erg {
             self.back = 0;
         }
         for s in moment.closed {
-            self.judge(s, target, moment.pedals_awaited);
+            // The trainer holds its own watts at what it is sent.
+            let to_trainer = target.map(|t| self.matcher.trainer_target(t));
+            self.judge(s, to_trainer, moment.pedals_awaited);
+            // Close on what it confirmed: tighter than off-target's. (Let
+            // go, nothing confirmed is a target: sending the release
+            // forgets it.)
+            let settled = match self.acked {
+                Some(Control::TargetPower(a)) => s.trainer_watts.is_some_and(|w| w.abs_diff(a) <= (a / 20).max(8)),
+                _ => false,
+            };
+            self.matcher.second(Heard {
+                pedals: s.sample.watts.filter(|_| s.power_from == Some(Role::Pedals)),
+                fresh: moment.pedals_heard_in == Some(s.sample.t),
+                trainer: s.trainer_watts,
+                cadence: s.sample.cadence_rpm,
+                settled,
+            });
         }
-        let wish = self.wish(moment.paused, target);
+        let to_trainer = target.map(|t| self.matcher.trainer_target(t));
+        let wish = self.wish(moment.paused, to_trainer);
         if wish.map(kind) != self.last_wish.map(kind) {
             self.off = 0;
             self.off_target = false;
@@ -489,7 +521,18 @@ impl Controller for Erg {
             }
             None => None,
         };
-        self.handle.show(view);
+        // Only while a target is held and confirmed, and once the pedals
+        // were heard (or should have been: they wake with the legs).
+        let holding = matches!(state, ErgState::Holding | ErgState::OffTarget | ErgState::NoCadence);
+        let waking = moment.pedals_awaited && moment.ride_s < BLIND_AWAITING_PEDALS;
+        let matching = match wish {
+            Some(Control::TargetPower(trainer_target_w)) if holding && moment.has_pedals && !waking => {
+                let state = if self.matcher.heard() { MatchState::Matching } else { MatchState::NoPedals };
+                Some(MatchLive { state, trainer_target_w })
+            }
+            _ => None,
+        };
+        self.handle.show(view, matching);
     }
 }
 
@@ -666,6 +709,30 @@ mod tests {
 
         fn now(&self) -> Duration {
             ms(self.q * 250)
+        }
+
+        /// A fake trainer with power pedals on it (`drops`: the pedals').
+        fn matched(cfg: FakeConfig, drops: Vec<(Duration, Duration)>, target: Option<u16>) -> Ride {
+            Ride::muted(cfg, drops, Vec::new(), target)
+        }
+
+        /// …and pedals silent at times without being said lost.
+        fn muted(cfg: FakeConfig, drops: Vec<(Duration, Duration)>, mutes: Vec<(Duration, Duration)>, target: Option<u16>) -> Ride {
+            let mut trainer = FakeTrainer::new(cfg);
+            let pedals = trainer.pedals(drops, mutes);
+            Ride::with_pedals(trainer, Some(Box::new(pedals)), target)
+        }
+
+        fn pedal_watts(&self, from: usize, to: usize) -> Vec<u16> {
+            self.session.seconds()[from..to]
+                .iter()
+                .filter(|s| s.power_from == Some(Role::Pedals))
+                .filter_map(|s| s.sample.watts)
+                .collect()
+        }
+
+        fn targets_between(&self, from: Duration, to: Duration) -> Vec<u16> {
+            self.sent_between(from, to).iter().filter_map(|c| if let Control::TargetPower(w) = c { Some(*w) } else { None }).collect()
         }
 
         fn trainer_watts(&self, from: usize, to: usize) -> Vec<u16> {
@@ -1073,6 +1140,175 @@ mod tests {
         r.erg.set_target(None);
         r.to(secs(60));
         assert_eq!(r.sent_between(secs(20) + ms(1), secs(60)), vec![Control::Release], "once, not after Back");
+    }
+
+    /// How far the Avanti reads below the pedals, by cadence (the spike:
+    /// −4 W at ≤ 66 rpm, +6…+24 W at 79–85, +6…+13 above).
+    fn avanti_gap(rpm: u8) -> f32 {
+        match rpm {
+            0..=66 => -4.0,
+            67..=78 => 6.0,
+            79..=86 => 18.0,
+            _ => 10.0,
+        }
+    }
+
+    fn avanti_reading_low(cadence: u8) -> FakeConfig {
+        FakeConfig { reads_low: avanti_gap, ..FakeConfig::elite_avanti(cadence) }
+    }
+
+    fn near(watts: &[u16], target: u16, by: u16) -> bool {
+        !watts.is_empty() && watts.iter().all(|w| w.abs_diff(target) <= by)
+    }
+
+    #[test]
+    fn the_pedals_watts_are_brought_onto_the_target() {
+        let mut r = Ride::matched(avanti_reading_low(85), vec![], Some(200));
+        r.to(secs(180));
+        let early = r.pedal_watts(4, 6);
+        assert!(early.iter().any(|&w| w >= 215), "before it is learnt, the trainer's own 200 W are 218 on the pedals: {early:?}");
+        assert!(near(&r.pedal_watts(120, 180), 200, 2), "{:?}", r.pedal_watts(120, 180));
+        let late = r.targets_between(secs(120), secs(180));
+        assert!(late.iter().all(|&w| w == 182), "steady, no pumping: {late:?}");
+        assert_eq!(r.erg.matching(), Some(MatchLive { state: MatchState::Matching, trainer_target_w: 182 }));
+        assert_eq!(r.erg.view(), Some(ErgLive { target_w: 200, state: ErgState::Holding }), "judged by what the trainer was sent");
+        // Without pedals there is nothing to match.
+        let mut plain = Ride::fake(avanti_reading_low(85), Some(200));
+        plain.to(secs(30));
+        assert_eq!(plain.erg.matching(), None);
+        assert!(plain.targets_between(secs(0), secs(30)).iter().all(|&w| w == 200));
+    }
+
+    #[test]
+    fn a_cadence_ridden_before_is_matched_at_once() {
+        let cfg = avanti_reading_low(64).then_cadence(secs(150), 85).then_cadence(secs(330), 64);
+        let mut r = Ride::matched(cfg, vec![], Some(200));
+        r.to(secs(360));
+        assert!(near(&r.pedal_watts(120, 150), 200, 2), "64 rpm: {:?}", r.pedal_watts(120, 150));
+        assert!(near(&r.pedal_watts(300, 330), 200, 2), "85 rpm: {:?}", r.pedal_watts(300, 330));
+        let back = r.pedal_watts(340, 360);
+        assert!(near(&back, 200, 3), "back at 64 rpm, matched without learning again: {back:?}");
+    }
+
+    #[test]
+    fn pedals_lost_mid_interval_fall_back_to_plain_erg() {
+        let mut r = Ride::matched(avanti_reading_low(85), vec![(secs(150), secs(30))], Some(200));
+        r.to(secs(148));
+        assert_eq!(r.erg.matching().map(|m| m.trainer_target_w), Some(182));
+        r.to(secs(170));
+        assert!(r.targets_between(secs(150), secs(154)).contains(&200), "the plain target at once");
+        assert!(near(&r.trainer_watts(156, 170), 200, 3), "held by the trainer's watts");
+        assert_eq!(r.erg.matching(), Some(MatchLive { state: MatchState::NoPedals, trainer_target_w: 200 }));
+        r.to(secs(190));
+        assert!(r.targets_between(secs(180), secs(184)).contains(&182), "back, with what was learnt");
+        assert_eq!(r.erg.matching().map(|m| m.state), Some(MatchState::Matching));
+    }
+
+    /// Pedals that read ±20 W at random, a cadence across a band edge (and
+    /// the Avanti's gap step) every 10 s: the trainer's target moves
+    /// seldom, and the pedals hold the target on average.
+    #[test]
+    fn riding_across_a_band_edge_with_noisy_pedals_does_not_pump() {
+        let mut cfg = FakeConfig { pedal_noise: 20.0, ..avanti_reading_low(84) };
+        for t in (10..600).step_by(10) {
+            cfg = cfg.then_cadence(secs(t), if t % 20 == 0 { 84 } else { 89 });
+        }
+        let mut r = Ride::matched(cfg, vec![], Some(200));
+        r.to(secs(600));
+        let sent: Vec<(Duration, u16)> = r
+            .log
+            .lock()
+            .unwrap()
+            .sent
+            .iter()
+            .filter_map(|&(at, c)| match c {
+                Control::TargetPower(w) if at >= secs(180) => Some((at, w)),
+                _ => None,
+            })
+            .collect();
+        let moves: Vec<Duration> = sent.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0).collect();
+        // Following the cadence (a change every 10 s) is the point, nudges
+        // come at most every SETTLE_FOR; pumping is moves on each other's
+        // heels, faster than the trainer settles.
+        assert!(moves.len() <= 42 + 28, "{} moves in 7 minutes", moves.len());
+        // A nudge may fall just before a cadence change: rarely.
+        let quick = moves.windows(2).filter(|w| w[1] - w[0] < secs(4)).count();
+        assert!(quick <= 3, "{quick} moves on each other's heels: {moves:?}");
+        let pedals = r.pedal_watts(180, 600);
+        let mean = pedals.iter().map(|&w| f32::from(w)).sum::<f32>() / pedals.len() as f32;
+        assert!((mean - 200.0).abs() <= 3.0, "{mean}");
+    }
+
+    #[test]
+    fn power_match_is_shown_only_while_a_target_is_held() {
+        let mut r = Ride::matched(avanti_reading_low(30).then_cadence(secs(20), 85), vec![], Some(200));
+        r.to(secs(15));
+        assert_eq!(r.erg.view().map(|v| v.state), Some(ErgState::Ready));
+        assert_eq!(r.erg.matching(), None, "nothing asked of the trainer yet");
+        r.to(secs(40));
+        assert_eq!(r.erg.matching().map(|m| m.state), Some(MatchState::Matching));
+        r.session.pause(r.now());
+        r.to(secs(45));
+        assert_eq!(r.erg.matching(), None, "paused: the brake is let go");
+        // Not confirmed: nothing is said to be held.
+        let mut cfg = avanti_reading_low(85);
+        cfg.lose_every_nth_control = Some(1);
+        let mut deaf = Ride::matched(cfg, vec![], Some(200));
+        deaf.to(secs(20));
+        assert_eq!(deaf.erg.view().map(|v| v.state), Some(ErgState::Waiting));
+        assert_eq!(deaf.erg.matching(), None);
+        // Pedals never heard: no warning while they may be waking up, then
+        // one.
+        let mut asleep = Ride::with_pedals(FakeTrainer::new(avanti_reading_low(85)), Some(Box::new(Silent)), Some(200));
+        asleep.to(secs(20));
+        assert_eq!(asleep.erg.view().map(|v| v.state), Some(ErgState::Holding));
+        assert_eq!(asleep.erg.matching(), None);
+        asleep.to(secs(40));
+        assert_eq!(asleep.erg.matching(), Some(MatchLive { state: MatchState::NoPedals, trainer_target_w: 200 }));
+    }
+
+    /// Pedals at a steady `.0` watts and 85 rpm, four times a second.
+    struct Steady(u16);
+
+    impl SensorLink for Steady {
+        fn identity(&self) -> Option<&Identity> {
+            None
+        }
+        fn poll(&mut self, now: Duration) -> Vec<LinkEvent> {
+            // A reading in every quarter: enough for every second.
+            let at = ms(now.as_millis() as u64 / 250 * 250);
+            vec![LinkEvent::Reading(Reading { at, watts: Some(self.0), cadence_rpm: Some(85), ..Reading::default() })]
+        }
+    }
+
+    /// Where the trainer's own watts sit on a confirmed `target`, with the
+    /// pedals 18 W above them: what is the trainer sent after two minutes?
+    fn matched_on(target: u16, trainer: fn(Duration) -> (u8, Option<u16>), pedals: u16) -> u16 {
+        let mut r = Ride::with_pedals(Stub::new(trainer, ack), Some(Box::new(Steady(pedals))), Some(target));
+        r.to(secs(120));
+        assert_eq!(r.erg.view().map(|v| v.state), Some(ErgState::Holding), "on target for ERG");
+        r.erg.matching().expect("matching").trainer_target_w
+    }
+
+    /// Only a trainer close on what it confirmed (5 %, at least 8 W) is
+    /// learnt from: ERG's 10 % is too wide for a gap of a few watts.
+    #[test]
+    fn a_trainer_not_close_on_its_target_teaches_nothing() {
+        assert_eq!(matched_on(200, |_| (85, Some(212)), 230), 200, "12 W off 200: not close");
+        assert!(matched_on(200, |_| (85, Some(210)), 228) < 200, "10 W off 200: close, just");
+        assert!(matched_on(100, |_| (85, Some(107)), 125) < 100, "7 W off 100: close (the 8 W floor)");
+    }
+
+    /// Pedals heard every other second: the seconds between hold their
+    /// last watts over, and those are never learnt from.
+    #[test]
+    fn watts_held_over_from_the_pedals_teach_nothing() {
+        let mutes: Vec<(Duration, Duration)> = (1..120).step_by(2).map(|s| (secs(s), secs(1))).collect();
+        let mut r = Ride::muted(avanti_reading_low(85), vec![], mutes, Some(200));
+        r.to(secs(120));
+        assert_eq!(r.erg.matching(), Some(MatchLive { state: MatchState::Matching, trainer_target_w: 200 }), "nothing learnt");
+        r.to(secs(240));
+        assert_eq!(r.erg.matching().map(|m| m.trainer_target_w), Some(182), "heard every second: learnt");
     }
 
     #[test]
