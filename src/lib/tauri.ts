@@ -341,7 +341,8 @@ export const api = {
   // come as `training:live` events (see useTrainingLive). ──
   trainingScan: (seconds?: number) =>
     invoke<FoundDevice[]>("training_scan", { seconds: seconds ?? null }),
-  trainingConnect: (trainer: string, pedals: string | null, strap: string | null) =>
+  /** `pedals`: none, one device, or a pair's two (left, right). */
+  trainingConnect: (trainer: string, pedals: string[], strap: string | null) =>
     invoke<void>("training_connect", { trainer, pedals, strap }),
   trainingBegin: () => invoke<void>("training_begin"),
   trainingLap: () => invoke<void>("training_lap"),

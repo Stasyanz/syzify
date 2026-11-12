@@ -19,8 +19,8 @@ describe("training api wrappers (#273)", () => {
     expect(mocked).toHaveBeenLastCalledWith("training_scan", { seconds: null });
     await api.trainingScan(8);
     expect(mocked).toHaveBeenLastCalledWith("training_scan", { seconds: 8 });
-    await api.trainingConnect("T", "P", null);
-    expect(mocked).toHaveBeenLastCalledWith("training_connect", { trainer: "T", pedals: "P", strap: null });
+    await api.trainingConnect("T", ["PL", "PR"], null);
+    expect(mocked).toHaveBeenLastCalledWith("training_connect", { trainer: "T", pedals: ["PL", "PR"], strap: null });
     await api.trainingSetTarget(150);
     expect(mocked).toHaveBeenLastCalledWith("training_set_target", { watts: 150 });
     await api.trainingSetTarget(null);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canBegin, devicesFor, firstTarget, MAX_TARGET, powerZone, stepTarget, trainingSupported } from "./training";
+import { canBegin, devicesFor, firstTarget, MAX_TARGET, pedalAddresses, powerZone, stepTarget, trainingSupported } from "./training";
 
 describe("ERG targets", () => {
   it("start at an easy effort and step within the range", () => {
@@ -34,15 +34,23 @@ describe("powerZone", () => {
 
 describe("devices and the start", () => {
   const found: FoundDevice[] = [
-    { role: "trainer", address: "T", name: "AVANTI COG" },
-    { role: "pedals", address: "P", name: null },
-    { role: "strap", address: "H", name: "HRM-Pro" },
+    { role: "trainer", address: "T", name: "AVANTI COG", other_side: null, lone_side: false },
+    { role: "pedals", address: "P", name: null, other_side: null, lone_side: false },
+    { role: "strap", address: "H", name: "HRM-Pro", other_side: null, lone_side: false },
   ];
 
   it("rides on macOS only", () => {
     expect(trainingSupported("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")).toBe(true);
     expect(trainingSupported("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(false);
     expect(typeof trainingSupported()).toBe("boolean");
+  });
+
+  it("links both sides of a pedal pair", () => {
+    const pair: FoundDevice[] = [{ role: "pedals", address: "PL", name: "ASSIOMA55430", other_side: "PR", lone_side: false }];
+    expect(pedalAddresses(pair, "PL")).toEqual(["PL", "PR"]);
+    expect(pedalAddresses(found, "P")).toEqual(["P"]);
+    expect(pedalAddresses(found, null)).toEqual([]);
+    expect(pedalAddresses(found, "T")).toEqual([]); // a trainer is no pedal
   });
 
   it("lists the devices of a role", () => {

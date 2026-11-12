@@ -991,6 +991,11 @@ export interface FoundDevice {
   /** What the OS calls it; what `training_connect` takes. */
   address: string;
   name: string | null;
+  /** Pedals that are two devices (an Assioma Duo over BLE): the other
+   * pedal's address; both are linked and summed. */
+  other_side: string | null;
+  /** One pedal of such a pair, seen alone: its power is one leg's. */
+  lone_side: boolean;
 }
 
 export type TrainingPhase = "pairing" | "riding" | "paused" | "finishing";

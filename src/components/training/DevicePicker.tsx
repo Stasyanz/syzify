@@ -4,7 +4,7 @@ import { Bluetooth } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
 import { useT } from "../../lib/i18n";
-import { ROLES, devicesFor } from "../../lib/training";
+import { ROLES, devicesFor, pedalAddresses } from "../../lib/training";
 import type { FoundDevice, SensorRole } from "../../lib/types";
 
 type Picks = Record<SensorRole, string | null>;
@@ -28,7 +28,7 @@ export function DevicePicker() {
     },
   });
   const connect = useMutation({
-    mutationFn: (trainer: string) => api.trainingConnect(trainer, picks.pedals, picks.strap),
+    mutationFn: (trainer: string) => api.trainingConnect(trainer, pedalAddresses(found ?? [], picks.pedals), picks.strap),
   });
   const trainer = picks.trainer;
 
@@ -81,6 +81,13 @@ export function DevicePicker() {
                       onChange={() => setPicks({ ...picks, [role]: d.address })}
                     />
                     {d.name ? <span translate="no">{d.name}</span> : t("training.setup.unnamed")}
+                    {d.other_side && <span className="text-xs text-faint">{t("training.setup.bothPedals")}</span>}
+                    {/* Picked alone it records one leg: say so plainly. (Not
+                        searched for by name: a one-sided pedal may be named
+                        the same way and would get no power at all.) */}
+                    {d.lone_side && (
+                        <span className="text-xs px-2 py-0.5 rounded-field bg-warn-soft">{t("training.setup.lonePedal")}</span>
+                    )}
                   </label>
                 ))}
               </fieldset>

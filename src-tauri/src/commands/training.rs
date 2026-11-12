@@ -75,12 +75,25 @@ fn link_failure(failure: LinkFailure) -> CommandError {
 /// The devices to link: a trainer always (an empty address would search
 /// for ever), pedals and a strap when named.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn targets(trainer: String, pedals: Option<String>, strap: Option<String>) -> Result<(String, Option<String>, Option<String>), CommandError> {
-    let named = |a: Option<String>| a.filter(|a| !a.trim().is_empty());
+fn targets(trainer: String, pedals: Vec<String>, strap: Option<String>) -> Result<(String, Vec<String>, Option<String>), CommandError> {
     if trainer.trim().is_empty() {
         return Err(CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
     }
-    Ok((trainer, named(pedals), named(strap)))
+    let pedals: Vec<String> = pedals.into_iter().filter(|a| !a.trim().is_empty()).collect();
+    // One pedal device, or the two of a pair (an Assioma Duo over BLE),
+    // left first: the order is the caller's word.
+    if pedals.len() > 2 {
+        return Err(CommandError::coded("training.tooManyPedals", "Pick one pair of pedals"));
+    }
+    let strap = strap.filter(|a| !a.trim().is_empty());
+    // One device, one link: two links on one device would fight over it
+    // (and its power would count twice).
+    let mut all: Vec<&String> = std::iter::once(&trainer).chain(&pedals).chain(&strap).collect();
+    all.sort();
+    if all.windows(2).any(|w| w[0] == w[1]) {
+        return Err(CommandError::coded("training.sameDevice", "One device was picked twice"));
+    }
+    Ok((trainer, pedals, strap))
 }
 
 fn active_journal(training: &TrainingState) -> Result<Option<PathBuf>, CommandError> {
@@ -273,11 +286,12 @@ pub async fn training_scan(seconds: Option<u32>) -> Result<Vec<FoundDevice>, Com
 }
 
 /// Links the picked devices (BLE addresses from `training_scan`) and starts
-/// pairing.
+/// pairing. `pedals`: none, one device, or a pair's two (left, right) —
+/// summed into one power source.
 #[tauri::command]
 pub fn training_connect<R: Runtime>(
     trainer: String,
-    pedals: Option<String>,
+    pedals: Vec<String>,
     strap: Option<String>,
     app: AppHandle<R>,
 ) -> Result<(), CommandError> {
@@ -286,11 +300,16 @@ pub fn training_connect<R: Runtime>(
         use crate::trainer::ble::driver::BleLink;
         use crate::trainer::ble::machine::{Role, Target};
         use crate::trainer::link::SensorLink;
+        use crate::trainer::pedals::PedalPair;
         let (trainer, pedals, strap) = targets(trainer, pedals, strap)?;
         ensure_free(&app)?;
         let epoch = std::time::Instant::now();
         let link = |role, address: String| BleLink::start(Target { role, address: Some(address), name_contains: None }, epoch);
-        let pedals = pedals.map(|a| Box::new(link(Role::Pedals, a)) as Box<dyn SensorLink>);
+        let mut sides = pedals.into_iter().map(|a| Box::new(link(Role::Pedals, a)) as Box<dyn SensorLink>);
+        let pedals = match (sides.next(), sides.next()) {
+            (Some(left), Some(right)) => Some(Box::new(PedalPair::new(left, right)) as Box<dyn SensorLink>),
+            (one, _) => one,
+        };
         let strap = strap.map(|a| Box::new(link(Role::Heart, a)) as Box<dyn SensorLink>);
         let session = Session::pairing(Box::new(link(Role::Trainer, trainer)), pedals, strap);
         start_session(&app, session, runner::SystemClock::new(epoch))
@@ -728,10 +747,18 @@ mod tests {
 
     #[test]
     fn a_trainer_must_be_named_and_blank_sensors_are_none() {
-        let no_trainer = targets("  ".into(), Some("P".into()), None).unwrap_err();
+        let no_trainer = targets("  ".into(), vec!["P".into()], None).unwrap_err();
         assert_eq!(no_trainer, CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
-        let picked = targets("T".into(), Some(" ".into()), Some("H".into())).unwrap();
-        assert_eq!(picked, ("T".into(), None, Some("H".into())));
+        let picked = targets("T".into(), vec![" ".into()], Some("H".into())).unwrap();
+        assert_eq!(picked, ("T".into(), vec![], Some("H".into())));
+        let pair = targets("T".into(), vec!["L".into(), "R".into()], Some(" ".into())).unwrap();
+        assert_eq!(pair, ("T".into(), vec!["L".into(), "R".into()], None));
+        let three = targets("T".into(), vec!["A".into(), "B".into(), "C".into()], None).unwrap_err();
+        assert_eq!(three, CommandError::coded("training.tooManyPedals", "Pick one pair of pedals"));
+        let twice = CommandError::coded("training.sameDevice", "One device was picked twice");
+        assert_eq!(targets("T".into(), vec!["A".into(), "A".into()], None).unwrap_err(), twice);
+        assert_eq!(targets("T".into(), vec!["T".into()], None).unwrap_err(), twice, "the trainer as pedals");
+        assert_eq!(targets("T".into(), vec![], Some("T".into())).unwrap_err(), twice, "the trainer as the strap");
     }
 
     /// While a ride runs, nothing ends the process under it, and the vault
@@ -840,9 +867,9 @@ mod tests {
         let vault = ScratchDir::new("training_elsewhere");
         let app = app_at(&vault);
         assert_eq!(block_on(training_scan(None)).unwrap_err(), unsupported());
-        let connect = training_connect("T".into(), None, None, app.handle().clone());
+        let connect = training_connect("T".into(), vec![], None, app.handle().clone());
         assert_eq!(connect.unwrap_err(), unsupported());
-        let nameless = training_connect("".into(), None, None, app.handle().clone());
+        let nameless = training_connect("".into(), vec![], None, app.handle().clone());
         assert_eq!(nameless.unwrap_err().code, Some("training.noTrainer"));
     }
 }

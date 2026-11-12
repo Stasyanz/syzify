@@ -4,7 +4,10 @@
 //! trainer's profile says (resend interval) and lets go at the end.
 //!
 //!   cargo run --manifest-path src-tauri/Cargo.toml --example ble_ride -- \
-//!     [--trainer NAME] [--pedals NAME] [--erg WATTS] [--secs N]
+//!     [--trainer NAME] [--pedals NAME [--pedals NAME]] [--erg WATTS] [--secs N]
+//!
+//! An Assioma Duo is two pedals over BLE, each its own leg: name both
+//! (`--pedals ASSIOMA55430L --pedals ASSIOMA55430R`) and their power is summed.
 //!
 //! Run it from your own terminal, in a debug build: macOS asks the terminal
 //! for Bluetooth, and the debug build carries the app's Info.plist (the
@@ -28,23 +31,25 @@ mod macos {
     use syzify_lib::trainer::ble::driver::BleLink;
     use syzify_lib::trainer::ble::machine::{Role, Target};
     use syzify_lib::trainer::link::{Control, ControlOutcome, LinkEvent, Reading, SensorLink, TrainerLink};
+    use syzify_lib::trainer::pedals::PedalPair;
     use syzify_lib::trainer::profile::{profile_for, TrainerProfile, GENERIC};
 
     struct Args {
         trainer: Option<String>,
-        pedals: Option<String>,
+        /// One name, or two (an Assioma Duo's L and R: summed).
+        pedals: Vec<String>,
         erg: Option<u16>,
         secs: u64,
     }
 
     fn args() -> Args {
-        let mut a = Args { trainer: None, pedals: None, erg: None, secs: 300 };
+        let mut a = Args { trainer: None, pedals: Vec::new(), erg: None, secs: 300 };
         let mut it = std::env::args().skip(1);
         while let Some(flag) = it.next() {
             let value = it.next();
             match flag.as_str() {
                 "--trainer" => a.trainer = value,
-                "--pedals" => a.pedals = value,
+                "--pedals" => a.pedals.extend(value),
                 "--erg" => a.erg = value.and_then(|v| v.parse().ok()),
                 "--secs" => a.secs = value.and_then(|v| v.parse().ok()).unwrap_or(a.secs),
                 other => eprintln!("ignored argument {other}"),
@@ -81,10 +86,17 @@ mod macos {
         let a = args();
         let epoch = Instant::now();
         let mut trainer = BleLink::start(Target { name_contains: a.trainer.clone(), ..Target::any(Role::Trainer) }, epoch);
-        let mut pedals = a
-            .pedals
-            .clone()
-            .map(|name| BleLink::start(Target { name_contains: Some(name), ..Target::any(Role::Pedals) }, epoch));
+        let side = |name: &String| -> Box<dyn SensorLink> {
+            Box::new(BleLink::start(Target { name_contains: Some(name.clone()), ..Target::any(Role::Pedals) }, epoch))
+        };
+        if a.pedals.len() > 2 {
+            eprintln!("only two --pedals count (left, then right); the rest are ignored");
+        }
+        let mut pedals: Option<Box<dyn SensorLink>> = match a.pedals.as_slice() {
+            [] => None,
+            [one] => Some(side(one)),
+            [left, right, ..] => Some(Box::new(PedalPair::new(side(left), side(right)))),
+        };
         let mut profile: &'static TrainerProfile = &GENERIC;
         let mut connected = false;
         let mut down = false;

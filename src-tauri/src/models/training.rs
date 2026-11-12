@@ -19,6 +19,12 @@ pub struct FoundDevice {
     /// What the OS calls it; a link's `Target.address`.
     pub address: String,
     pub name: Option<String>,
+    /// Pedals that are two devices (an Assioma Duo over BLE: one per leg):
+    /// the other pedal's address. Both are linked, their power summed.
+    pub other_side: Option<String>,
+    /// One pedal of such a pair, seen without the other: its power is one
+    /// leg's.
+    pub lone_side: bool,
 }
 
 /// Where the session is.

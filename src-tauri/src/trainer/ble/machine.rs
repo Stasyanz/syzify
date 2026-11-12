@@ -97,7 +97,8 @@ pub struct Target {
     /// This device and no other (an address the OS gave before).
     pub address: Option<String>,
     /// A device whose advertised name contains this, ignoring case. An
-    /// Assioma Duo is two devices over BLE, one per leg: pick one by name.
+    /// Assioma Duo is two devices over BLE, each its own leg's power: link
+    /// both, each by its name, and sum them (`trainer::pedals::PedalPair`).
     pub name_contains: Option<String>,
 }
 

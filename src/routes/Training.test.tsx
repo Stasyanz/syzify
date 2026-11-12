@@ -164,10 +164,10 @@ describe("Training before a session", () => {
 
   it("searches, preselects the first trainer and connects the picks", async () => {
     mocked.trainingScan.mockResolvedValue([
-      { role: "trainer", address: "T1", name: "AVANTI COG" },
-      { role: "trainer", address: "T2", name: null },
-      { role: "pedals", address: "P1", name: "ASSIOMA55430L" },
-      { role: "strap", address: "H1", name: "HRM-Pro" },
+      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "trainer", address: "T2", name: null, other_side: null, lone_side: false },
+      { role: "pedals", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
+      { role: "strap", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
@@ -176,7 +176,7 @@ describe("Training before a session", () => {
     expect(screen.getByText("Search again")).toBeTruthy();
     fireEvent.click(screen.getByText("ASSIOMA55430L"));
     fireEvent.click(screen.getByText("Connect"));
-    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", "P1", null));
+    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", ["P1"], null));
   });
 
   it("says it is searching while it searches", async () => {
@@ -186,17 +186,33 @@ describe("Training before a session", () => {
     expect(await screen.findByText("Searching…")).toBeTruthy();
   });
 
+  it("offers a pedal pair as one and links both its sides (#284)", async () => {
+    mocked.trainingScan.mockResolvedValue([
+      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "pedals", address: "PL", name: "ASSIOMA55430", other_side: "PR", lone_side: false },
+      { role: "pedals", address: "QR", name: "ASSIOMA77001R", other_side: null, lone_side: true },
+    ]);
+    renderPage();
+    fireEvent.click(screen.getByText("Search for devices"));
+    expect(await screen.findByText("ASSIOMA55430")).toBeTruthy();
+    expect(screen.getByText("both pedals")).toBeTruthy();
+    expect(screen.getByText(/one pedal of a pair/)).toBeTruthy();
+    fireEvent.click(screen.getByText("ASSIOMA55430"));
+    fireEvent.click(screen.getByText("Connect"));
+    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", ["PL", "PR"], null));
+  });
+
   it("lets pedals and a strap be left out again", async () => {
     mocked.trainingScan.mockResolvedValue([
-      { role: "trainer", address: "T1", name: "AVANTI COG" },
-      { role: "pedals", address: "P1", name: "ASSIOMA55430L" },
+      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "pedals", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
     fireEvent.click(await screen.findByText("ASSIOMA55430L"));
     fireEvent.click(screen.getAllByText("None")[0]);
     fireEvent.click(screen.getByText("Connect"));
-    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", null, null));
+    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", [], null));
   });
 
   it("only finishes left-over rides elsewhere than macOS", async () => {
@@ -221,7 +237,7 @@ describe("Training before a session", () => {
     fireEvent.click(screen.getByText("Search for devices"));
     expect(await screen.findByText(/Nothing found/)).toBeTruthy();
 
-    mocked.trainingScan.mockResolvedValue([{ role: "strap", address: "H1", name: "HRM-Pro" }]);
+    mocked.trainingScan.mockResolvedValue([{ role: "strap", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false }]);
     fireEvent.click(screen.getByText("Search again"));
     expect(await screen.findByText(/No trainer found/)).toBeTruthy();
     expect((screen.getByText("Connect") as HTMLButtonElement).disabled).toBe(true);

@@ -32,6 +32,13 @@ export function firstTarget(ftp: number | null): number {
 /** The roles in the order the screen lists them. */
 export const ROLES: readonly SensorRole[] = ["trainer", "pedals", "strap"];
 
+/** The addresses to link for the picked pedals: a pair's two, else one. */
+export function pedalAddresses(found: readonly FoundDevice[], picked: string | null): string[] {
+  const device = found.find((d) => d.role === "pedals" && d.address === picked);
+  if (!device) return [];
+  return device.other_side ? [device.address, device.other_side] : [device.address];
+}
+
 /** The devices found for one role. */
 export function devicesFor(found: readonly FoundDevice[], role: SensorRole): FoundDevice[] {
   return found.filter((d) => d.role === role);
