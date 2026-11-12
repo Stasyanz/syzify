@@ -1101,6 +1101,7 @@ export const en = {
   // {why} is the journal reader's own words.
   "training.pending.unreadable": "Cannot be read: {why}",
   "training.pending.open": "Open the unfinished rides",
+  "training.pending.sealedElsewhere": "Encrypted with another vault's key: it cannot be opened here.",
   "training.unsupported": "Riding a trainer needs macOS. Rides left unfinished on a Mac can be finished or discarded here.",
   "training.pending.discardTitle": "Discard this ride?",
   "training.pending.discardMessage": "It will be removed and cannot be brought back.",
@@ -1194,6 +1195,8 @@ export const en = {
   "error.training.none": "No trainer is connected",
   "error.training.busy": "A trainer is connected already",
   "error.training.riding": "Finish or discard the ride first",
+  "error.training.rideUnderWay": "An indoor ride is under way: finish or discard it first",
+  "error.training.noTrainer": "Pick a trainer to ride with",
   "error.training.bluetoothDenied": "Syzify may not use Bluetooth: allow it in System Settings → Privacy & Security → Bluetooth",
   "error.training.bluetoothOff": "Bluetooth is off",
   "error.training.noBluetooth": "No Bluetooth adapter",

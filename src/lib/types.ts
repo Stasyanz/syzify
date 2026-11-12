@@ -1041,6 +1041,8 @@ export interface PendingRide {
   ride_s: number | null;
   /** Encrypted and the vault locked. */
   locked: boolean;
+  /** Encrypted under another vault's key: it cannot be opened here. */
+  sealed_elsewhere: boolean;
   /** Why it does not read; the journal's own words. */
   unreadable: string | null;
 }

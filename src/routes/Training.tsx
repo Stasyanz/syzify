@@ -4,6 +4,7 @@ import { useTrainingLive } from "../hooks/useTrainingLive";
 import { DevicePicker } from "../components/training/DevicePicker";
 import { LiveRide } from "../components/training/LiveRide";
 import { PendingRides } from "../components/training/PendingRides";
+import { useTrainingPageShown } from "../components/training/useFinished";
 
 /** The /training page (#273, macOS only): pick devices and connect, then
  * ride; a ride a crash left behind is offered first. The ride itself runs
@@ -11,6 +12,7 @@ import { PendingRides } from "../components/training/PendingRides";
 export function Training() {
   const t = useT();
   const live = useTrainingLive();
+  useTrainingPageShown();
   return (
     <div className="flex flex-col h-full">
       <main className="flex-1 overflow-y-auto scroll-themed">

@@ -103,6 +103,12 @@ pub fn riding() -> CommandError {
     CommandError::coded("training.riding", "Finish or discard the ride first")
 }
 
+/// What the rest of the app hears while a ride runs: it holds the vault
+/// and the trainer until it is finished or discarded.
+pub fn ride_under_way() -> CommandError {
+    CommandError::coded("training.rideUnderWay", "An indoor ride is under way: finish or discard it first")
+}
+
 /// The last value of one kind and when it came.
 type Stamped<T> = Option<(T, Duration)>;
 

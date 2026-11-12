@@ -120,6 +120,9 @@ pub struct PendingRide {
     pub ride_s: Option<u32>,
     /// Encrypted and the vault locked.
     pub locked: bool,
+    /// Encrypted, but this vault is not: it was sealed under another
+    /// vault's key and cannot be opened here.
+    pub sealed_elsewhere: bool,
     /// Why it does not read (another key, a ruined file).
     pub unreadable: Option<String>,
 }

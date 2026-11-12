@@ -8,24 +8,23 @@
 //! under an open journal, and keeps the Mac awake. Live values reach the
 //! screen as `training:live` events (null once the session is over).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::import::ensure_vault_unlocked;
-use super::vault_busy;
-use crate::db;
+use super::vault_busy_in;
 use crate::error::CommandError;
-use crate::import::pipeline::ImportOutcome;
-use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive};
+use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive, TrainingPhase};
 use crate::state::{AppState, SingleFlightGuard};
 use crate::trainer::awake::KeepAwake;
 use crate::trainer::fit::{Ride, SubSport};
-use crate::trainer::journal::{self, Journal, KeyFn, ReadError};
+use crate::trainer::journal::{self, Journal, KeyFn};
+use crate::trainer::library::{self, ride_key};
 use crate::trainer::link::LinkFailure;
-use crate::trainer::ride::{self, FinishError, Finished};
 use crate::trainer::runner::{self, Clock, Host, Order, Reply};
 use crate::trainer::session::Session;
 
@@ -40,7 +39,9 @@ pub struct TrainingState {
     /// What the screen was last shown, for a screen that comes back.
     live: Mutex<Option<TrainingLive>>,
     /// The running ride's journal: not offered as a left-over one.
-    active: Mutex<Option<std::path::PathBuf>>,
+    active: Mutex<Option<PathBuf>>,
+    /// A quit is waiting for the ride to finish.
+    quitting: AtomicBool,
 }
 
 #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -70,104 +71,59 @@ fn link_failure(failure: LinkFailure) -> CommandError {
     }
 }
 
-/// The activities key for a ride's journal and import: None while that
-/// scope is off, an error while it is on and the vault locked — never plain
-/// text into an encrypted vault.
-pub(crate) fn ride_key(state: &AppState) -> Result<Option<[u8; 32]>, String> {
-    let on = crate::crypto::read_vault_lock(&state.vault_path)?.is_some_and(|lock| lock.scopes.activities);
-    if !on {
-        return Ok(None);
+/// The devices to link: a trainer always (an empty address would search
+/// for ever), pedals and a strap when named.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn targets(trainer: String, pedals: Option<String>, strap: Option<String>) -> Result<(String, Option<String>, Option<String>), CommandError> {
+    let named = |a: Option<String>| a.filter(|a| !a.trim().is_empty());
+    if trainer.trim().is_empty() {
+        return Err(CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
     }
-    match *state.encryption_key.lock().map_err(|e| e.to_string())? {
-        Some(key) => Ok(Some(key)),
-        None => Err("the vault is locked".into()),
+    Ok((trainer, named(pedals), named(strap)))
+}
+
+fn active_journal(training: &TrainingState) -> Result<Option<PathBuf>, CommandError> {
+    Ok(training.active.lock().map_err(|e| e.to_string())?.clone())
+}
+
+/// Whether a ride is under way (begun and not over): pairing is not one.
+fn ride_running(training: &TrainingState) -> bool {
+    training
+        .live
+        .lock()
+        .is_ok_and(|live| live.as_ref().is_some_and(|l| l.phase != TrainingPhase::Pairing))
+}
+
+/// Refuses what would end the process under a ride (a restart, an
+/// update): the trainer would not be let go and the ride not saved.
+pub(crate) fn ensure_no_ride<R: Runtime>(app: &AppHandle<R>) -> Result<(), CommandError> {
+    match app.try_state::<TrainingState>() {
+        Some(training) if ride_running(&training) => Err(runner::ride_under_way()),
+        _ => Ok(()),
     }
 }
 
-fn finish_error(e: FinishError) -> CommandError {
-    match e {
-        FinishError::Journal(ReadError::Locked) => {
-            CommandError::coded("training.journalLocked", "The ride is encrypted: unlock the vault first")
-        }
-        other => other.to_string().into(),
+/// The app is asked to quit (Cmd+Q, the last window closed). A ride under
+/// way is finished first — the trainer let go, the ride imported — and
+/// `then` quits; returns true when the quit must wait for that. Asked
+/// again while it finishes, the app quits at once (the journal stays for
+/// next time).
+pub(crate) fn finish_before_exit<R: Runtime>(app: &AppHandle<R>, then: impl FnOnce() + Send + 'static) -> bool {
+    let Some(training) = app.try_state::<TrainingState>() else { return false };
+    if !ride_running(&training) || training.quitting.swap(true, Ordering::SeqCst) {
+        return false;
     }
-}
-
-/// What came of a ride that started at `start_unix`.
-fn outcome(conn: &rusqlite::Connection, start_unix: i64, finished: Finished) -> Result<TrainingFinish, CommandError> {
-    let kind = match finished {
-        Finished::Empty => return Ok(TrainingFinish { kind: FinishKind::Empty, activity_id: None }),
-        Finished::Imported(ImportOutcome::Skipped) => FinishKind::Duplicate,
-        Finished::Imported(_) => FinishKind::Imported,
-    };
-    // The new activity, or the one already in the library (when it came in
-    // under this ride's name).
-    let activity_id = db::raw_files::activity_of_original(conn, &ride::file_name_at(start_unix)).map_err(|e| e.to_string())?;
-    Ok(TrainingFinish { kind, activity_id })
-}
-
-/// Imports a ride just ridden and removes its journal.
-fn finish_core(state: &AppState, ride: &Ride, journal: Option<&Path>) -> Result<TrainingFinish, CommandError> {
-    ensure_vault_unlocked(state)?;
-    let key = ride_key(state)?;
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let finished = ride::finish(&conn, &state.vault_path, ride, journal, key.as_ref()).map_err(finish_error)?;
-    outcome(&conn, ride.start_unix, finished)
-}
-
-/// The journal of a left-over ride, if it is one (not the ride running).
-fn left_over(state: &AppState, training: &TrainingState, start_unix: i64) -> Result<std::path::PathBuf, CommandError> {
-    let path = journal::path_of(&state.vault_path, start_unix);
-    if training.active.lock().map_err(|e| e.to_string())?.as_deref() == Some(path.as_path()) {
-        return Err(runner::riding());
+    let Ok(Some(orders)) = training.orders.lock().map(|o| o.clone()) else { return false };
+    let (tx, rx) = channel();
+    if orders.send(Order::Finish(tx)).is_err() {
+        return false;
     }
-    if !path.is_file() {
-        return Err(CommandError::coded("training.noSuchRide", "That ride is gone"));
-    }
-    Ok(path)
-}
-
-fn pending_core(state: &AppState, training: &TrainingState) -> Result<Vec<PendingRide>, CommandError> {
-    let active = training.active.lock().map_err(|e| e.to_string())?.clone();
-    // A locked vault reads nothing sealed: those show as locked.
-    let key = ride_key(state).ok().flatten();
-    Ok(journal::pending(&state.vault_path)
-        .into_iter()
-        .filter(|p| Some(p) != active.as_ref())
-        .filter_map(|path| {
-            let start_unix = journal::start_of(&path)?;
-            let (ride_s, locked, unreadable) = match journal::read(&path, key.as_ref()) {
-                Ok(r) => (Some(r.seconds.len() as u32), false, None),
-                Err(ReadError::Locked) => (None, true, None),
-                Err(e) => (None, false, Some(e.to_string())),
-            };
-            Some(PendingRide { start_unix, ride_s, locked, unreadable })
-        })
-        .collect())
-}
-
-fn finish_pending_core(state: &AppState, training: &TrainingState, start_unix: i64) -> Result<TrainingFinish, CommandError> {
-    let path = left_over(state, training, start_unix)?;
-    ensure_vault_unlocked(state)?;
-    let key = ride_key(state)?;
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let finished = ride::finish_journal(&conn, &state.vault_path, &path, key.as_ref()).map_err(finish_error)?;
-    outcome(&conn, start_unix, finished)
-}
-
-fn discard_pending_core(state: &AppState, training: &TrainingState, start_unix: i64) -> Result<(), CommandError> {
-    let path = left_over(state, training, start_unix)?;
-    Ok(journal::discard(&path)?)
-}
-
-/// Refuses an encryption change while a ride is left over: its journal is
-/// sealed (or not) under the key that is about to change.
-pub(crate) fn ensure_no_left_over_rides(state: &AppState) -> Result<(), CommandError> {
-    if journal::pending(&state.vault_path).is_empty() {
-        Ok(())
-    } else {
-        Err(CommandError::coded("training.pendingRides", "Finish or discard the unfinished indoor rides first"))
-    }
+    std::thread::spawn(move || {
+        // The answer comes once the session is over, whatever it was.
+        let _ = rx.recv();
+        then();
+    });
+    true
 }
 
 /// The app's side of a ride.
@@ -193,7 +149,7 @@ impl<R: Runtime> Drop for AppHost<'_, R> {
 
 impl<R: Runtime> Host for AppHost<'_, R> {
     fn begin(&mut self, start_unix: i64, sub_sport: SubSport) -> Result<Option<Journal>, CommandError> {
-        let flight = self.state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+        let flight = self.state.vault_flight.try_begin_ride().ok_or_else(|| vault_busy_in(&self.state.vault_flight))?;
         ensure_vault_unlocked(self.state)?;
         let app = self.app.clone();
         let key: KeyFn = Box::new(move || ride_key(&app.state::<AppState>()));
@@ -205,7 +161,7 @@ impl<R: Runtime> Host for AppHost<'_, R> {
     }
 
     fn finish(&mut self, ride: &Ride, journal: Option<&Path>) -> Result<TrainingFinish, CommandError> {
-        let finished = finish_core(self.state, ride, journal);
+        let finished = ensure_vault_unlocked(self.state).and_then(|()| library::finish_ride(self.state, ride, journal));
         if matches!(finished, Ok(TrainingFinish { kind: FinishKind::Imported, .. })) {
             let _ = self.app.emit("activities:updated", ());
         }
@@ -239,6 +195,7 @@ impl<R: Runtime> Host for AppHost<'_, R> {
         if let Ok(mut orders) = self.training.orders.lock() {
             *orders = None;
         }
+        self.training.quitting.store(false, Ordering::SeqCst);
         let _ = self.app.emit(LIVE_EVENT, None::<TrainingLive>);
     }
 }
@@ -321,6 +278,7 @@ pub fn training_connect<R: Runtime>(
         use crate::trainer::ble::driver::BleLink;
         use crate::trainer::ble::machine::{Role, Target};
         use crate::trainer::link::SensorLink;
+        let (trainer, pedals, strap) = targets(trainer, pedals, strap)?;
         ensure_free(&app)?;
         let epoch = std::time::Instant::now();
         let link = |role, address: String| BleLink::start(Target { role, address: Some(address), name_contains: None }, epoch);
@@ -331,7 +289,7 @@ pub fn training_connect<R: Runtime>(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (trainer, pedals, strap);
+        targets(trainer, pedals, strap)?;
         ensure_free(&app)?;
         Err(unsupported())
     }
@@ -386,23 +344,29 @@ pub fn training_live(training: State<'_, TrainingState>) -> Result<Option<Traini
 pub fn training_ftp(state: State<'_, AppState>) -> Result<Option<f64>, CommandError> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let rides = crate::models::activity::SportType::family("ride");
-    Ok(db::activities::latest_ftp(&conn, rides).map_err(|e| e.to_string())?)
+    Ok(crate::db::activities::latest_ftp(&conn, rides).map_err(|e| e.to_string())?)
 }
 
 /// Rides a crash or a closed app left unfinished. Each journal is read
 /// whole (and opened, when sealed): off the main thread.
 #[tauri::command]
 pub async fn training_pending<R: Runtime>(app: AppHandle<R>) -> Result<Vec<PendingRide>, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || pending_core(&app.state::<AppState>(), &app.state::<TrainingState>()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let active = active_journal(&app.state::<TrainingState>())?;
+        Ok(library::pending(&app.state::<AppState>(), active.as_deref()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn training_finish_pending<R: Runtime>(start_unix: i64, app: AppHandle<R>) -> Result<TrainingFinish, CommandError> {
     let handle = app.clone();
     let finished = tauri::async_runtime::spawn_blocking(move || {
-        finish_pending_core(&handle.state::<AppState>(), &handle.state::<TrainingState>(), start_unix)
+        let state = handle.state::<AppState>();
+        ensure_vault_unlocked(&state)?;
+        let active = active_journal(&handle.state::<TrainingState>())?;
+        library::finish_pending(&state, active.as_deref(), start_unix)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -418,7 +382,7 @@ pub fn training_discard_pending(
     state: State<'_, AppState>,
     training: State<'_, TrainingState>,
 ) -> Result<(), CommandError> {
-    discard_pending_core(&state, &training, start_unix)
+    library::discard_pending(&state, active_journal(&training)?.as_deref(), start_unix)
 }
 
 #[cfg(test)]
@@ -429,7 +393,7 @@ mod tests {
     use crate::trainer::fake::{FakeConfig, FakeTrainer};
     use crate::trainer::journal::{fixed, Second};
     use crate::trainer::runner::test_clock::StepClock;
-    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tauri::async_runtime::block_on;
 
@@ -594,7 +558,7 @@ mod tests {
         {
             let state = app.state::<AppState>();
             let _backup = state.vault_flight.try_begin().unwrap();
-            assert_eq!(block_on(training_begin(handle.clone())).unwrap_err(), vault_busy());
+            assert_eq!(block_on(training_begin(handle.clone())).unwrap_err(), crate::commands::vault_busy());
         }
         // Locked: the activities scope on, no key.
         crate::crypto::write_vault_lock(&vault, &lock(true)).unwrap();
@@ -614,9 +578,11 @@ mod tests {
         std::fs::write(journal::path_of(&vault, START + 3000), b"not a journal").unwrap();
 
         let pending = block_on(training_pending(handle.clone())).unwrap();
+        // (start, seconds, sealed elsewhere — the vault is not encrypted, unreadable)
         let summary: Vec<(i64, Option<u32>, bool, bool)> =
-            pending.iter().map(|p| (p.start_unix - START, p.ride_s, p.locked, p.unreadable.is_some())).collect();
+            pending.iter().map(|p| (p.start_unix - START, p.ride_s, p.sealed_elsewhere, p.unreadable.is_some())).collect();
         assert_eq!(summary, vec![(0, Some(120), false, false), (1000, None, true, false), (2000, Some(0), false, false), (3000, None, false, true)]);
+        assert!(pending.iter().all(|p| !p.locked));
 
         // Encryption waits for them.
         let scopes = EncryptionScopes { activities: true, database: false, photos: false };
@@ -647,7 +613,7 @@ mod tests {
         assert_eq!(block_on(training_pending(handle.clone())).unwrap()[0].ride_s, Some(60));
         assert_eq!(block_on(training_finish_pending(START + 1000, handle.clone())).unwrap().kind, FinishKind::Imported);
         assert!(block_on(training_pending(handle.clone())).unwrap().is_empty());
-        ensure_no_left_over_rides(&app.state::<AppState>()).unwrap();
+        library::ensure_no_left_over_rides(&app.state::<AppState>()).unwrap();
     }
 
     #[test]
@@ -716,6 +682,111 @@ mod tests {
         assert_eq!(unsupported().code, Some("training.unsupported"));
     }
 
+    #[test]
+    fn a_trainer_must_be_named_and_blank_sensors_are_none() {
+        let no_trainer = targets("  ".into(), Some("P".into()), None).unwrap_err();
+        assert_eq!(no_trainer, CommandError::coded("training.noTrainer", "Pick a trainer to ride with"));
+        let picked = targets("T".into(), Some(" ".into()), Some("H".into())).unwrap();
+        assert_eq!(picked, ("T".into(), None, Some("H".into())));
+    }
+
+    /// While a ride runs, nothing ends the process under it, and the vault
+    /// says the ride holds it; a quit finishes the ride first.
+    #[test]
+    fn a_ride_under_way_holds_off_restarts_and_finishes_before_a_quit() {
+        let vault = ScratchDir::new("training_guards");
+        let app = app_at(&vault);
+        let handle = app.handle().clone();
+        let quit = Arc::new(AtomicBool::new(false));
+        let quitter = || {
+            let quit = quit.clone();
+            move || quit.store(true, Ordering::SeqCst)
+        };
+        // No ride: nothing to wait for.
+        ensure_no_ride(&handle).unwrap();
+        assert!(!finish_before_exit(&handle, quitter()));
+        // Without the training state at all (an app that never had one).
+        let bare = mock_app_at(&vault);
+        ensure_no_ride(bare.handle()).unwrap();
+        assert!(!finish_before_exit(bare.handle(), quitter()));
+
+        let clock = StepClock::new();
+        clock.stop_at.store(3_000, Ordering::SeqCst);
+        start_session(&handle, Session::pairing(avanti(), None, None), clock.clone()).unwrap();
+        wait_for(&app, |_| true);
+        ensure_no_ride(&handle).unwrap(); // pairing is no ride yet
+        assert!(!finish_before_exit(&handle, quitter()), "pairing: quit at once");
+
+        block_on(training_begin(handle.clone())).unwrap();
+        wait_for(&app, |l| l.phase == TrainingPhase::Riding);
+        let ride = Some("training.rideUnderWay");
+        assert_eq!(ensure_no_ride(&handle).unwrap_err().code, ride);
+        assert_eq!(crate::commands::settings::restart_app(handle.clone()).unwrap_err().code, ride);
+        assert_eq!(block_on(crate::commands::settings::install_update(handle.clone())).unwrap_err().code, ride);
+        let scopes = crate::crypto::EncryptionScopes { activities: true, database: false, photos: false };
+        let encrypt = block_on(crate::commands::settings::enable_encryption("pw".into(), scopes, handle.clone()));
+        assert_eq!(encrypt.unwrap_err().code, ride, "the vault names the ride that holds it");
+
+        clock.stop_at.store(u64::MAX, Ordering::SeqCst);
+        assert!(finish_before_exit(&handle, quitter()), "the quit waits for the ride");
+        assert!(!finish_before_exit(&handle, quitter()), "asked again: quit at once");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !quit.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "never quit");
+            std::thread::yield_now();
+        }
+        assert!(journal::pending(&vault).is_empty(), "the ride was finished, not left");
+        let n: i64 = app.state::<AppState>().db.lock().unwrap().query_row("SELECT COUNT(*) FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        assert!(!app.state::<TrainingState>().quitting.load(Ordering::SeqCst), "the next session starts afresh");
+        ensure_no_ride(&handle).unwrap();
+    }
+
+    /// A ride whose thread is gone cannot be finished: the quit goes at once.
+    #[test]
+    fn a_quit_whose_ride_thread_is_gone_goes_at_once() {
+        let vault = ScratchDir::new("training_gone");
+        let app = app_at(&vault);
+        let training = app.state::<TrainingState>();
+        let (tx, rx) = channel();
+        drop(rx);
+        *training.orders.lock().unwrap() = Some(tx);
+        *training.live.lock().unwrap() = Some(TrainingLive {
+            phase: TrainingPhase::Riding,
+            ride_s: 0,
+            lap_s: 0,
+            lap: 1,
+            watts: None,
+            power_from: None,
+            trainer_watts: None,
+            cadence_rpm: None,
+            heart_rate: None,
+            speed_kmh: None,
+            distance_m: 0.0,
+            avg_watts: None,
+            profile: None,
+            links: vec![],
+            warnings: vec![],
+            slept_s: 0,
+        });
+        assert!(!finish_before_exit(app.handle(), || {}));
+    }
+
+    /// A sealed journal says why it waits: the vault is locked, or it was
+    /// sealed under another vault's key.
+    #[test]
+    fn a_sealed_left_over_ride_says_why_it_cannot_open() {
+        let vault = ScratchDir::new("training_sealed");
+        let app = app_at(&vault);
+        left_over_ride(&vault, START, Some([5; 32]), 10);
+        let one = || block_on(training_pending(app.handle().clone())).unwrap().remove(0);
+        let elsewhere = one();
+        assert!(elsewhere.sealed_elsewhere && !elsewhere.locked, "a plain vault: sealed elsewhere");
+        crate::crypto::write_vault_lock(&vault, &lock(true)).unwrap();
+        let locked = one();
+        assert!(locked.locked && !locked.sealed_elsewhere, "the vault is locked");
+    }
+
     /// Elsewhere than macOS there is nothing to scan or connect.
     #[cfg(not(target_os = "macos"))]
     #[test]
@@ -725,5 +796,7 @@ mod tests {
         assert_eq!(block_on(training_scan(None)).unwrap_err(), unsupported());
         let connect = training_connect("T".into(), None, None, app.handle().clone());
         assert_eq!(connect.unwrap_err(), unsupported());
+        let nameless = training_connect("".into(), None, None, app.handle().clone());
+        assert_eq!(nameless.unwrap_err().code, Some("training.noTrainer"));
     }
 }

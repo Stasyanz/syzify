@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, fireEvent, screen, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
 import type { LinkStatus, PendingRide, TrainingLive } from "../lib/types";
 import { useLanguageStore } from "../lib/i18n";
@@ -64,7 +64,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
 }
 
 function pending(over: Partial<PendingRide> = {}): PendingRide {
-  return { start_unix: 1_794_420_000, ride_s: 1800, locked: false, unreadable: null, ...over };
+  return { start_unix: 1_794_420_000, ride_s: 1800, locked: false, sealed_elsewhere: false, unreadable: null, ...over };
 }
 
 afterEach(() => {
@@ -103,9 +103,11 @@ function renderPage() {
   const tree = () => (
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/training"]}>
+        <Link to="/elsewhere">go elsewhere</Link>
         <Routes>
           <Route path="/training" element={<Training />} />
           <Route path="/activity/:id" element={<p>activity page</p>} />
+          <Route path="/elsewhere" element={<p>elsewhere</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -128,12 +130,14 @@ describe("Training before a session", () => {
       pending(),
       pending({ start_unix: 1_794_430_000, ride_s: null, locked: true }),
       pending({ start_unix: 1_794_440_000, ride_s: null, unreadable: "the journal cannot be read: empty" }),
+      pending({ start_unix: 1_794_450_000, ride_s: null, sealed_elsewhere: true }),
     ]);
     renderPage();
     expect(await screen.findByText("Unfinished rides")).toBeTruthy();
     expect(screen.getByText(/30:00/)).toBeTruthy();
     expect(screen.getByText("Encrypted: unlock the vault to finish it.")).toBeTruthy();
     expect(screen.getByText("Cannot be read: the journal cannot be read: empty")).toBeTruthy();
+    expect(screen.getByText(/another vault's key/)).toBeTruthy();
     // Only the readable one can be finished; each can be discarded.
     expect(screen.getAllByText("Finish")).toHaveLength(1);
     fireEvent.click(screen.getAllByText("Discard")[2]);
@@ -302,6 +306,19 @@ describe("Training during the ride", () => {
     await waitFor(() => expect(mocked.trainingPause).toHaveBeenCalled());
     fireEvent.click(screen.getByText("Finish"));
     expect(await screen.findByText("activity page")).toBeTruthy();
+  });
+
+  it("does not pull the user back when the ride is saved after they left", async () => {
+    let done: (f: { kind: "imported"; activity_id: string }) => void = () => {};
+    mocked.trainingFinish.mockReturnValue(new Promise((resolve) => (done = resolve)));
+    hook.live = live();
+    renderPage();
+    fireEvent.click(screen.getByText("Finish"));
+    fireEvent.click(screen.getByText("go elsewhere"));
+    expect(screen.getByText("elsewhere")).toBeTruthy();
+    await act(async () => done({ kind: "imported", activity_id: "new-ride" }));
+    expect(screen.getByText("elsewhere")).toBeTruthy();
+    expect(screen.queryByText("activity page")).toBeNull();
   });
 
   it("resumes a paused ride; no lap while paused", async () => {

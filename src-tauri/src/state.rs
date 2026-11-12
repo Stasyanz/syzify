@@ -14,22 +14,40 @@ pub type Db = Arc<Mutex<Connection>>;
 /// released when the returned guard drops, panics included — or returns None
 /// while another holder is alive.
 #[derive(Default)]
-pub struct SingleFlight(AtomicBool);
+pub struct SingleFlight {
+    busy: AtomicBool,
+    /// The holder is an indoor ride (it holds the vault for an hour, not a
+    /// moment): a refusal can say so.
+    ride: AtomicBool,
+}
 
 impl SingleFlight {
     pub fn try_begin(&self) -> Option<SingleFlightGuard<'_>> {
-        self.0
+        self.busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()?;
-        Some(SingleFlightGuard(&self.0))
+        Some(SingleFlightGuard(self))
+    }
+
+    /// `try_begin` for an indoor ride.
+    pub fn try_begin_ride(&self) -> Option<SingleFlightGuard<'_>> {
+        let guard = self.try_begin()?;
+        self.ride.store(true, Ordering::Release);
+        Some(guard)
+    }
+
+    /// Whether an indoor ride holds the slot now.
+    pub fn held_by_ride(&self) -> bool {
+        self.ride.load(Ordering::Acquire)
     }
 }
 
-pub struct SingleFlightGuard<'a>(&'a AtomicBool);
+pub struct SingleFlightGuard<'a>(&'a SingleFlight);
 
 impl Drop for SingleFlightGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.ride.store(false, Ordering::Release);
+        self.0.busy.store(false, Ordering::Release);
     }
 }
 
@@ -82,6 +100,25 @@ impl AppState {
             return Ok(None);
         }
         Ok(*self.encryption_key.lock().map_err(|e| e.to_string())?)
+    }
+
+    /// `encryption_key_for`, but a scope that is on while the vault is
+    /// locked is an error instead of `None`: for a writer that would
+    /// otherwise write plain text into an encrypted vault (a ride's journal
+    /// asks this every line).
+    pub fn encryption_key_strict(
+        &self,
+        scope: impl Fn(&crate::crypto::EncryptionScopes) -> bool,
+    ) -> Result<Option<[u8; 32]>, String> {
+        // One read of vault.lock: the journal asks every second.
+        let enabled = crate::crypto::read_vault_lock(&self.vault_path)?.is_some_and(|lock| scope(&lock.scopes));
+        if !enabled {
+            return Ok(None);
+        }
+        match *self.encryption_key.lock().map_err(|e| e.to_string())? {
+            Some(key) => Ok(Some(key)),
+            None => Err("the vault is locked".into()),
+        }
     }
 }
 
@@ -144,6 +181,25 @@ mod tests {
         // Scope on but vault locked (no key yet): nothing to encrypt with.
         let state = state_with(&vault, None);
         assert_eq!(state.encryption_key_for(|s| s.activities).unwrap(), None);
+        // The strict reader says so instead of None.
+        assert!(state.encryption_key_strict(|s| s.activities).is_err());
+        assert_eq!(state.encryption_key_strict(|s| s.photos).unwrap(), None, "photos are off: plain is right");
+        let state = state_with(&vault, Some(key));
+        assert_eq!(state.encryption_key_strict(|s| s.activities).unwrap(), Some(key));
+    }
+
+    #[test]
+    fn a_ride_says_it_holds_the_slot() {
+        let flight = SingleFlight::default();
+        let ride = flight.try_begin_ride().expect("free");
+        assert!(flight.held_by_ride());
+        assert!(flight.try_begin().is_none() && flight.try_begin_ride().is_none());
+        assert!(flight.held_by_ride(), "a refused claim changes nothing");
+        drop(ride);
+        assert!(!flight.held_by_ride());
+        let backup = flight.try_begin().expect("free again");
+        assert!(!flight.held_by_ride());
+        drop(backup);
     }
 
     /// The slot is exclusive while a guard lives and frees on drop — panics

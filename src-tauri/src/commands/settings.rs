@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::vault_busy_in;
+#[cfg(test)]
 use crate::commands::vault_busy;
 use crate::crypto;
 use crate::db;
@@ -186,7 +188,7 @@ pub async fn relocate_vault<R: tauri::Runtime>(
         // running backup or restore would tear whichever loses the race.
         // Claimed before the connection swap, so failing here is side-effect-free.
         let flight_state = app.state::<AppState>();
-        let _flight = flight_state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+        let _flight = flight_state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&flight_state.vault_flight))?;
 
         let config_dir = app
             .path()
@@ -286,7 +288,7 @@ pub(crate) fn switch_vault_core(
     config_dir: &Path,
     state: &AppState,
 ) -> Result<PathBuf, CommandError> {
-    let flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    let flight = state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&state.vault_flight))?;
     let root = if expect_existing {
         vault::resolve_existing_vault_root(dest)?
     } else {
@@ -315,9 +317,11 @@ pub(crate) fn switch_vault_core(
 }
 
 /// Relaunch the app — used after a vault relocation so every service picks up
-/// the new location.
+/// the new location. Refused while an indoor ride runs: the trainer would
+/// not be let go, nor the ride saved.
 #[tauri::command]
-pub fn restart_app(app: AppHandle) {
+pub fn restart_app<R: tauri::Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
+    crate::commands::training::ensure_no_ride(&app)?;
     app.restart();
 }
 
@@ -733,9 +737,9 @@ fn enable_encryption_core(
     // and every raw/photo file renamed to .enc — must not interleave with a
     // backup walking those same directories (or a restore/relocation moving
     // them). Claimed before anything is written, so a refusal changes nothing.
-    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&state.vault_flight))?;
     // A left-over ride's journal would stay plain in an encrypted vault.
-    crate::commands::training::ensure_no_left_over_rides(state)?;
+    crate::trainer::library::ensure_no_left_over_rides(state)?;
 
     if crypto::read_vault_lock(&state.vault_path)?.is_some() {
         return Err(CommandError::coded("encryption.alreadyEnabled", "Encryption is already enabled"));
@@ -945,10 +949,10 @@ fn disable_encryption_core(password: &str, state: &AppState) -> Result<(), Comma
     // Same vault-wide gate as enable: the decrypt sweep renames every .enc
     // back while a concurrent backup/restore/relocation would be walking or
     // moving those same directories.
-    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&state.vault_flight))?;
     // A left-over ride's journal sealed under the key that is about to go
     // would never open again.
-    crate::commands::training::ensure_no_left_over_rides(state)?;
+    crate::trainer::library::ensure_no_left_over_rides(state)?;
 
     let mut lock = crypto::read_vault_lock(&state.vault_path)?
         .ok_or_else(|| CommandError::coded("encryption.notEnabled", "Encryption is not enabled"))?;
@@ -1067,9 +1071,11 @@ pub async fn check_for_updates() -> Result<crate::models::update::UpdateCheck, C
 /// minisign signature against the public key baked into tauri.conf.json
 /// before touching the installed app; on success `restart()` never returns.
 #[tauri::command]
-pub async fn install_update(app: AppHandle) -> Result<(), CommandError> {
+pub async fn install_update<R: tauri::Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
     use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
+    // It ends with a restart: not under a ride.
+    crate::commands::training::ensure_no_ride(&app)?;
     let update = app
         .updater()
         .map_err(|e| format!("Updater unavailable: {}", e))?
@@ -1095,7 +1101,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), CommandError> {
         )
         .await
         .map_err(install_failed)?;
-    app.restart();
+    // A ride begun while the update downloaded: it stays installed for the
+    // next start, the ride goes on.
+    restart_app(app)
 }
 
 /// A plugin secret that does not open stops Disable in coded words, the

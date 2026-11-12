@@ -60,12 +60,13 @@ export function PendingRides() {
                   {ride.ride_s != null && <> · {formatDuration(ride.ride_s)}</>}
                 </div>
                 {ride.locked && <div className="text-xs text-faint">{t("training.pending.locked")}</div>}
+                {ride.sealed_elsewhere && <div className="text-xs text-faint">{t("training.pending.sealedElsewhere")}</div>}
                 {ride.unreadable && (
                   <div className="text-xs text-faint">{t("training.pending.unreadable", { why: ride.unreadable })}</div>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {!ride.unreadable && !ride.locked && (
+                {ride.ride_s != null && (
                   <button
                     className="px-3 py-1 rounded-field bg-accent text-accent-ink text-xs font-medium hover:bg-accent-2 disabled:opacity-50"
                     disabled={busy}

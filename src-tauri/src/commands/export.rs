@@ -4,7 +4,7 @@ use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::activities::activity_not_found;
-use crate::commands::vault_busy;
+use crate::commands::vault_busy_in;
 use crate::db;
 use crate::error::CommandError;
 use crate::export::{gpx_writer, vault_backup};
@@ -177,7 +177,7 @@ pub(crate) fn backup_vault_core(
     // One vault mutation at a time: a concurrent backup would clobber this
     // run's .backup-snapshot mid-archive, and a concurrent restore/relocation
     // would move raw/ and photos/ out from under the archive walk.
-    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&state.vault_flight))?;
 
     let vault_path = &state.vault_path;
     let snapshot_dir = vault_path.join(".backup-snapshot");
@@ -246,7 +246,7 @@ pub(crate) fn restore_vault_core(
     // One vault mutation at a time: restoring while a backup streams raw/ and
     // photos/ (or another restore/relocation runs) would tear the archive or
     // mix states. Failing here is pre-flight semantics — nothing was touched.
-    let _flight = state.vault_flight.try_begin().ok_or_else(vault_busy)?;
+    let _flight = state.vault_flight.try_begin().ok_or_else(|| vault_busy_in(&state.vault_flight))?;
 
     // Pre-flight (deep: safe entry names, no zip bomb, vault.db present): a
     // bad or wrong-kind archive fails here with the live DB still untouched,

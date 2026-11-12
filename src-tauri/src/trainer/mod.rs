@@ -15,6 +15,7 @@ pub mod ble;
 pub mod fake;
 pub mod fit;
 pub mod journal;
+pub mod library;
 pub mod link;
 pub mod profile;
 pub mod ride;

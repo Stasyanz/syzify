@@ -8,6 +8,7 @@ mod export;
 mod geocoding;
 mod import;
 mod maps;
+mod menu;
 mod models;
 // pub for dev tooling (examples/find_multisport); not a public API promise.
 pub mod parser;
@@ -479,7 +480,16 @@ pub(crate) fn start_background_services(handle: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS: a Quit of our own, so Cmd+Q raises ExitRequested (menu.rs).
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu::app_menu);
+    builder
+        .on_menu_event(|app, event| {
+            if menu::is_quit(event.id().as_ref()) {
+                app.exit(0);
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -739,8 +749,23 @@ pub fn run() {
             commands::training::training_finish_pending,
             commands::training::training_discard_pending,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Cmd+Q or the last window closed under an indoor ride: finish
+            // the ride first (the trainer let go, the ride saved), then quit.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                // A restart cannot be held (Tauri ignores prevent_exit for
+                // it); `restart_app` and `install_update` refuse under a ride.
+                if code == Some(tauri::RESTART_EXIT_CODE) {
+                    return;
+                }
+                let handle = app.clone();
+                if commands::training::finish_before_exit(app, move || handle.exit(0)) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 /// Map a layer ID to its upstream tile URL.
