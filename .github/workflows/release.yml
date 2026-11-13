@@ -57,6 +57,18 @@ jobs:
             echo "tag ${GITHUB_REF_NAME} != tauri.conf.json (${conf}) / Cargo.toml (${cargo})" >&2
             exit 1
           fi
+      # A release has the ANT+ key built in; build.rs checks it is the key
+      # (the same parsing as the app). This only fails in seconds, not after
+      # the build, when the secret is missing altogether.
+      - name: Verify the ANT+ key secret is set
+        shell: bash
+        env:
+          SYZIFY_ANT_KEY: ${{ secrets.SYZIFY_ANT_KEY }}
+        run: |
+          if [ -z "${SYZIFY_ANT_KEY//[[:space:]]/}" ]; then
+            echo "the SYZIFY_ANT_KEY secret is missing from the release environment" >&2
+            exit 1
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -82,13 +94,16 @@ jobs:
       # createUpdaterArtifacts makes the build refuse to run without the
       # signing key, so a tag can never publish unsigned update payloads.
       # SYZIFY_ANT_KEY: the ANT+ network key (not in the sources, see
-      # LICENSE-ANT-KEY.md). Without the secret a build has no ANT+ built in
-      # and asks for the key on the training screen instead.
+      # LICENSE-ANT-KEY.md), built in so users never type it.
+      # SYZIFY_ANT_KEY_REQUIRED makes build.rs refuse a release without it
+      # or with a value that is not the key, rather than ship a build that
+      # asks every user for it.
       - name: Build bundle
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SYZIFY_ANT_KEY: ${{ secrets.SYZIFY_ANT_KEY }}
+          SYZIFY_ANT_KEY_REQUIRED: "1"
         run: npm run tauri build -- --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:

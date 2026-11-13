@@ -2,14 +2,13 @@
 //! publishes it (developer.garmin.com/ant-program), subject to the ANT+
 //! Adopter Agreement, and asks that it not be published in source code —
 //! so it is not in these sources, only its SHA-256, which does not give
-//! it away. A build may be given it (`SYZIFY_ANT_KEY`, 16 hex digits); a
-//! build without it takes the one the user typed in. Either is checked
-//! against the hash.
+//! it away. A build may be given it (`SYZIFY_ANT_KEY`, 16 hex digits; a
+//! value that is not the key stops the build, see
+//! [`key_rules`](super::key_rules)); a build without it takes the one the
+//! user typed in. Either is checked against the hash.
 
-use sha2::{Digest, Sha256};
-
-/// SHA-256 of the key's eight bytes.
-pub const KEY_SHA256: &str = "ba53300909ed532d17a25cad3c433266e2864ee5db97d6424b9021fc3334a774";
+use super::key_rules::matches;
+pub use super::key_rules::{checked, parse_key, KEY_SHA256};
 
 /// Where a key the user typed in is kept (hex).
 pub const SETTING: &str = "training.ant_key";
@@ -18,27 +17,6 @@ pub const SETTING: &str = "training.ant_key";
 pub const KEY_PAGE: &str = "https://developer.garmin.com/ant-program/ant-ant-plus/network-keys/";
 /// …and the agreement its use is subject to.
 pub const AGREEMENT_PAGE: &str = "https://developer.garmin.com/ant-program/licensing/adopter-agreement/";
-
-/// Eight bytes from 16 hex digits; spaces, colons, commas and a `0x` per
-/// byte are left out.
-pub fn parse_key(text: &str) -> Option<[u8; 8]> {
-    let digits: String = text
-        .split(|c: char| c.is_whitespace() || c == ':' || c == ',')
-        .map(|part| part.trim_start_matches("0x").trim_start_matches("0X"))
-        .collect();
-    if digits.len() != 16 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut key = [0u8; 8];
-    for (i, byte) in key.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&digits[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(key)
-}
-
-fn matches(key: &[u8; 8], sha: &str) -> bool {
-    hex::encode(Sha256::digest(key)) == sha
-}
 
 /// The first of `built` and `entered` that is the key whose hash is `sha`.
 fn choose(built: Option<&str>, entered: Option<&str>, sha: &str) -> Option<[u8; 8]> {
@@ -55,15 +33,11 @@ pub fn network_key(entered: Option<&str>) -> Option<[u8; 8]> {
     choose(option_env!("SYZIFY_ANT_KEY"), entered, KEY_SHA256)
 }
 
-/// A key the user typed in, as it is kept, if it is the key whose hash is
-/// `sha` (`KEY_SHA256`; tests give their own).
-pub fn checked(text: &str, sha: &str) -> Option<String> {
-    parse_key(text).filter(|k| matches(k, sha)).map(hex::encode)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::key_rules::{build_problem, KEY_VAR, REQUIRED_VAR};
     use super::*;
+    use sha2::{Digest, Sha256};
 
     const DUMMY: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
 
@@ -90,6 +64,26 @@ mod tests {
         assert_eq!(network_key(Some("nonsense")), choose(option_env!("SYZIFY_ANT_KEY"), None, KEY_SHA256));
         assert_eq!(built_in(), network_key(None).is_some());
     }
+
+    /// The key this build was given passed the build's own check: a build
+    /// that has one has the key.
+    #[test]
+    fn the_build_s_key_passes_the_build_s_check() {
+        let given = |name: &str| (name == KEY_VAR).then_some(option_env!("SYZIFY_ANT_KEY")).flatten().map(Into::into);
+        assert_eq!(build_problem(given, KEY_SHA256), None);
+    }
+
+    /// A release build is given the key and requires it, in the step that
+    /// builds: without either a release would ship asking users for it.
+    #[test]
+    fn a_release_is_built_with_the_key_required() {
+        let workflow = include_str!("../../../../.github/workflows/release.yml");
+        let (_, rest) = workflow.split_once("- name: Build bundle").expect("the build step");
+        let step = rest.split("\n      - ").next().expect("its body");
+        // Whole lines: a line commented out does not count.
+        let has = |line: String| step.lines().any(|l| l.trim() == line);
+        assert!(has(format!("{KEY_VAR}: ${{{{ secrets.{KEY_VAR} }}}}")), "the build step is given {KEY_VAR}");
+        assert!(has(format!("{REQUIRED_VAR}: \"1\"")), "the build step requires it");    }
 
     /// Sum and XOR of the key's bytes (mod 256): a cheap look before the
     /// hash, the same whichever way round the bytes go. Changed only with

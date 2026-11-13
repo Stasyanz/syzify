@@ -23,6 +23,8 @@ pub mod pages;
 pub mod sim;
 
 pub mod key;
+/// The key's rules, shared with build.rs.
+pub mod key_rules;
 
 #[cfg(target_os = "macos")]
 pub mod driver;
