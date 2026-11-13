@@ -154,6 +154,8 @@ fn problem_of(reason: &LinkFailure) -> (LinkProblem, Option<String>) {
         LinkFailure::PermissionDenied => (LinkProblem::PermissionDenied, None),
         LinkFailure::RadioOff => (LinkProblem::RadioOff, None),
         LinkFailure::AdapterGone => (LinkProblem::AdapterGone, None),
+        LinkFailure::StickGone => (LinkProblem::StickGone, None),
+        LinkFailure::StickBusy => (LinkProblem::StickBusy, None),
         LinkFailure::Other(why) => (LinkProblem::Other, Some(why.clone())),
     }
 }
@@ -1013,6 +1015,8 @@ mod tests {
     fn a_link_failure_is_told_by_kind() {
         assert_eq!(problem_of(&LinkFailure::RadioOff), (LinkProblem::RadioOff, None));
         assert_eq!(problem_of(&LinkFailure::AdapterGone), (LinkProblem::AdapterGone, None));
+        assert_eq!(problem_of(&LinkFailure::StickGone), (LinkProblem::StickGone, None));
+        assert_eq!(problem_of(&LinkFailure::StickBusy), (LinkProblem::StickBusy, None));
         assert_eq!(problem_of(&LinkFailure::Other("boom".into())), (LinkProblem::Other, Some("boom".into())));
         let clock = SystemClock::new(Instant::now());
         clock.sleep(Duration::from_millis(1));

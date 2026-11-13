@@ -19,6 +19,12 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Forget a setting (absent already: nothing to do).
+pub fn delete_setting(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM setting WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,5 +49,14 @@ mod tests {
         set_setting(&conn, "units", "km").unwrap();
         set_setting(&conn, "units", "mi").unwrap();
         assert_eq!(get_setting(&conn, "units").unwrap(), Some("mi".to_string()));
+    }
+
+    #[test]
+    fn delete_forgets_and_minds_no_absence() {
+        let conn = db::test_db();
+        set_setting(&conn, "units", "km").unwrap();
+        delete_setting(&conn, "units").unwrap();
+        assert_eq!(get_setting(&conn, "units").unwrap(), None);
+        delete_setting(&conn, "units").unwrap();
     }
 }

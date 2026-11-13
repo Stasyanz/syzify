@@ -986,8 +986,32 @@ export interface MonitoringDeleted {
 export type SensorRole = "trainer" | "pedals" | "strap";
 
 /** A device that advertised during `training_scan`. */
+/** Why an ANT+ stick did not search along. */
+export type StickProblem = { kind: "in_use" } | { kind: "other"; detail: string };
+
+/** What a search found, and why the stick did not search along. */
+export interface Found {
+  devices: FoundDevice[];
+  stick: StickProblem | null;
+}
+
+/** Whether ANT+ can be used: it needs Garmin's network key, which is not in
+ * the sources. */
+export interface AntKeyStatus {
+  /** This build was given it. */
+  built_in: boolean;
+  /** Built in, or typed in. */
+  known: boolean;
+  /** Where Garmin publishes it… */
+  page: string;
+  /** …and the agreement its use is subject to. */
+  agreement: string;
+}
+
 export interface FoundDevice {
   role: SensorRole;
+  /** Bluetooth, or an ANT+ USB stick: the same trainer may be found both ways. */
+  radio: "ble" | "ant";
   /** What the OS calls it; what `training_connect` takes. */
   address: string;
   name: string | null;
@@ -1000,7 +1024,7 @@ export interface FoundDevice {
 
 export type TrainingPhase = "pairing" | "riding" | "paused" | "finishing";
 export type LinkState = "searching" | "connected" | "lost" | "failed";
-export type LinkProblem = "permission_denied" | "radio_off" | "adapter_gone" | "other";
+export type LinkProblem = "permission_denied" | "radio_off" | "adapter_gone" | "stick_gone" | "stick_busy" | "other";
 
 export interface LinkStatus {
   role: SensorRole;

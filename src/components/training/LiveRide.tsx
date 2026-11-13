@@ -28,6 +28,10 @@ function linkText(link: LinkStatus, t: Translator): string {
           return t("training.problem.radioOff");
         case "adapter_gone":
           return t("training.problem.adapterGone");
+        case "stick_gone":
+          return t("training.problem.stickGone");
+        case "stick_busy":
+          return t("training.problem.stickBusy");
         default:
           return t("training.problem.other", { detail: link.detail ?? "" });
       }

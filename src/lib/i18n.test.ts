@@ -306,7 +306,8 @@ describe("the dictionaries", () => {
   // the same on purpose — Italian writes the international unit symbols,
   // and takes these words from English as its own.
   const SAME_ON_PURPOSE: Record<"ru" | "it", string[]> = {
-    ru: [],
+    // A trade name (#277).
+    ru: ["training.setup.viaBle"],
     it: [
       "units.km", "units.mi", "units.m", "units.ft", "units.yd", "units.kmh", "units.mph", "units.kg",
       "units.lb", "units.bpm", "units.w", "units.rpm", "units.kcal", "units.h", "units.min", "units.mm",
@@ -318,6 +319,8 @@ describe("the dictionaries", () => {
       "activity.header.multisport", "activity.zones.power.vo2max", "activity.segments.pr",
       // "Garage" and "Plugin" are Italian words too (the glossary of #237).
       "settings.tab.garage", "plugins.page.fallbackName", "settings.garage.title",
+      // A trade name (#277).
+      "training.setup.viaBle",
     ],
   };
 

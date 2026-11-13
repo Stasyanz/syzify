@@ -4,7 +4,7 @@ import { render, cleanup, fireEvent, screen, waitFor, act } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { api } from "../lib/tauri";
-import type { LinkStatus, PendingRide, TrainingLive, WorkoutFile, WorkoutLive } from "../lib/types";
+import type { FoundDevice, LinkStatus, PendingRide, StickProblem, TrainingLive, WorkoutFile, WorkoutLive } from "../lib/types";
 import { useLanguageStore } from "../lib/i18n";
 import { useToastStore } from "../stores/toastStore";
 import { commandError } from "../test/commandError";
@@ -29,6 +29,8 @@ vi.mock("../lib/tauri", () => ({
     trainingFinishPending: vi.fn(),
     trainingDiscardPending: vi.fn(),
     trainingWorkouts: vi.fn(),
+    trainingAntKey: vi.fn(),
+    trainingSetAntKey: vi.fn(),
     trainingSetWorkoutsDir: vi.fn(),
     trainingStartWorkout: vi.fn(),
   },
@@ -43,6 +45,14 @@ vi.mock("../stores/confirmStore", () => ({ confirmDialog: (opts: unknown) => con
 import { Training } from "./Training";
 
 const mocked = vi.mocked(api);
+
+const KEY_PAGE = "https://developer.garmin.com/ant-program/ant-ant-plus/network-keys/";
+const AGREEMENT = "https://developer.garmin.com/ant-program/licensing/adopter-agreement/";
+
+/** A search finds `devices`; the stick says `stick`. */
+function scanned(devices: FoundDevice[], stick: StickProblem | null = null) {
+  mocked.trainingScan.mockResolvedValue({ devices, stick });
+}
 
 function link(over: Partial<LinkStatus> = {}): LinkStatus {
   return { role: "trainer", state: "connected", name: null, problem: null, detail: null, ...over };
@@ -89,7 +99,7 @@ beforeEach(() => {
   hook.live = null;
   mocked.trainingPending.mockResolvedValue([]);
   mocked.trainingFtp.mockResolvedValue(244);
-  mocked.trainingScan.mockResolvedValue([]);
+  scanned([]);
   for (const ok of [
     mocked.trainingConnect,
     mocked.trainingBegin,
@@ -102,10 +112,12 @@ beforeEach(() => {
     mocked.trainingDiscardPending,
     mocked.trainingSetWorkoutsDir,
     mocked.trainingStartWorkout,
+    mocked.trainingSetAntKey,
   ]) {
     ok.mockResolvedValue(undefined);
   }
   mocked.trainingWorkouts.mockResolvedValue({ dir: null, missing: false, workouts: [] });
+  mocked.trainingAntKey.mockResolvedValue({ built_in: true, known: true, page: KEY_PAGE, agreement: AGREEMENT });
   mocked.trainingFinish.mockResolvedValue({ kind: "imported", activity_id: "new-ride" });
   mocked.trainingFinishPending.mockResolvedValue({ kind: "imported", activity_id: "old-ride" });
   confirmMock.mockResolvedValue(true);
@@ -175,20 +187,56 @@ describe("Training before a session", () => {
   });
 
   it("searches, preselects the first trainer and connects the picks", async () => {
-    mocked.trainingScan.mockResolvedValue([
-      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
-      { role: "trainer", address: "T2", name: null, other_side: null, lone_side: false },
-      { role: "pedals", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
-      { role: "strap", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false },
+    scanned([
+      { role: "trainer", radio: "ble", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "trainer", radio: "ble", address: "T2", name: null, other_side: null, lone_side: false },
+      { role: "trainer", radio: "ant", address: "ant:17:14830", name: "Elite 14830", other_side: null, lone_side: false },
+      { role: "pedals", radio: "ble", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
+      { role: "strap", radio: "ble", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
     expect(await screen.findByText("AVANTI COG")).toBeTruthy();
     expect(screen.getByText("Unnamed device")).toBeTruthy();
     expect(screen.getByText("Search again")).toBeTruthy();
+    // The same trainer both ways: which way it goes is said.
+    expect(screen.getAllByText("Bluetooth")).toHaveLength(4);
+    expect(screen.getAllByText("ANT+ stick")).toHaveLength(1);
     fireEvent.click(screen.getByText("ASSIOMA55430L"));
     fireEvent.click(screen.getByText("Connect"));
     await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", ["P1"], null));
+    fireEvent.click(screen.getByText("Elite 14830"));
+    fireEvent.click(screen.getByText("Connect"));
+    await waitFor(() => expect(mocked.trainingConnect).toHaveBeenLastCalledWith("ant:17:14830", ["P1"], null));
+  });
+
+  it("asks for the ANT+ network key when the build has none, checks it and can forget it (#277)", async () => {
+    mocked.trainingAntKey.mockResolvedValue({ built_in: false, known: false, page: KEY_PAGE, agreement: AGREEMENT });
+    renderPage();
+    const box = await screen.findByRole("region", { name: "ANT+ USB stick" });
+    expect(box.textContent).toContain("Garmin publishes it");
+    expect(screen.getByText("The ANT+ network key on Garmin's site").getAttribute("href")).toBe(KEY_PAGE);
+    expect(screen.getByText("The ANT+ Adopter Agreement").getAttribute("href")).toBe(AGREEMENT);
+    const save = screen.getByText("Save") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    const field = screen.getByLabelText("ANT+ network key");
+    mocked.trainingSetAntKey.mockRejectedValueOnce(commandError("training.badAntKey", "That is not the ANT+ network key"));
+    fireEvent.change(field, { target: { value: "01 23 45 67 89 ab cd ef" } });
+    fireEvent.click(save);
+    expect(await screen.findByText("That is not the ANT+ network key")).toBeTruthy();
+    expect(mocked.trainingSetAntKey).toHaveBeenCalledWith("01 23 45 67 89 ab cd ef");
+    // The right one: kept, and the box says so.
+    mocked.trainingAntKey.mockResolvedValue({ built_in: false, known: true, page: KEY_PAGE, agreement: AGREEMENT });
+    fireEvent.submit(field.closest("form")!);
+    expect(await screen.findByText(/The ANT\+ network key is saved/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Forget it"));
+    await waitFor(() => expect(mocked.trainingSetAntKey).toHaveBeenLastCalledWith(null));
+    // Built in: nothing to ask.
+    cleanup();
+    mocked.trainingAntKey.mockResolvedValue({ built_in: true, known: true, page: KEY_PAGE, agreement: AGREEMENT });
+    renderPage();
+    await screen.findByText("Search for devices");
+    expect(screen.queryByRole("region", { name: "ANT+ USB stick" })).toBeNull();
   });
 
   it("says it is searching while it searches", async () => {
@@ -199,10 +247,10 @@ describe("Training before a session", () => {
   });
 
   it("offers a pedal pair as one and links both its sides (#284)", async () => {
-    mocked.trainingScan.mockResolvedValue([
-      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
-      { role: "pedals", address: "PL", name: "ASSIOMA55430L + ASSIOMA61026R", other_side: "PR", lone_side: false },
-      { role: "pedals", address: "QR", name: "ASSIOMA77001R", other_side: null, lone_side: true },
+    scanned([
+      { role: "trainer", radio: "ble", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "pedals", radio: "ble", address: "PL", name: "ASSIOMA55430L + ASSIOMA61026R", other_side: "PR", lone_side: false },
+      { role: "pedals", radio: "ble", address: "QR", name: "ASSIOMA77001R", other_side: null, lone_side: true },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
@@ -215,9 +263,9 @@ describe("Training before a session", () => {
   });
 
   it("lets pedals and a strap be left out again", async () => {
-    mocked.trainingScan.mockResolvedValue([
-      { role: "trainer", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
-      { role: "pedals", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
+    scanned([
+      { role: "trainer", radio: "ble", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "pedals", radio: "ble", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
     ]);
     renderPage();
     fireEvent.click(screen.getByText("Search for devices"));
@@ -249,10 +297,18 @@ describe("Training before a session", () => {
     fireEvent.click(screen.getByText("Search for devices"));
     expect(await screen.findByText(/Nothing found/)).toBeTruthy();
 
-    mocked.trainingScan.mockResolvedValue([{ role: "strap", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false }]);
+    scanned([{ role: "strap", radio: "ble", address: "H1", name: "HRM-Pro", other_side: null, lone_side: false }]);
     fireEvent.click(screen.getByText("Search again"));
     expect(await screen.findByText(/No trainer found/)).toBeTruthy();
     expect((screen.getByText("Connect") as HTMLButtonElement).disabled).toBe(true);
+
+    // The stick could not search along: said, whatever was found.
+    scanned([], { kind: "in_use" });
+    fireEvent.click(screen.getByText("Search again"));
+    expect(await screen.findByText(/another app is using it \(Zwift, Garmin Express\)/)).toBeTruthy();
+    scanned([], { kind: "other", detail: "the ANT stick refused message 0x46 (code 0x28)" });
+    fireEvent.click(screen.getByText("Search again"));
+    expect(await screen.findByText("The ANT+ stick did not search: the ANT stick refused message 0x46 (code 0x28)")).toBeTruthy();
 
     mocked.trainingScan.mockRejectedValue(commandError("training.bluetoothOff", "Bluetooth is off"));
     fireEvent.click(screen.getByText("Search again"));
@@ -290,6 +346,14 @@ describe("Training while pairing", () => {
     expect(screen.getByText(/Bluetooth not allowed/)).toBeTruthy();
     expect(screen.getByText("Bluetooth is off")).toBeTruthy();
     expect(screen.getByText("no Bluetooth adapter")).toBeTruthy();
+    cleanup();
+    hook.live = live({
+      phase: "pairing",
+      links: [link({ state: "failed", problem: "stick_gone" }), link({ role: "pedals", state: "failed", problem: "stick_busy" })],
+    });
+    renderPage();
+    expect(screen.getByText("no ANT+ stick, or it was unplugged")).toBeTruthy();
+    expect(screen.getByText("another app is using the ANT+ stick")).toBeTruthy();
     cleanup();
     hook.live = live({ phase: "pairing", links: [link({ state: "failed", problem: "other", detail: "boom" })] });
     renderPage();

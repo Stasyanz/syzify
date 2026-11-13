@@ -4,7 +4,7 @@ import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
 import { useT } from "../../lib/i18n";
 
-export type LegalDoc = "license" | "exception" | "notices";
+export type LegalDoc = "license" | "exception" | "antKey" | "notices";
 
 /** The legal documents are English, and so are the names of the licence
  * and its exception: a translated title would name a document that does
@@ -12,6 +12,7 @@ export type LegalDoc = "license" | "exception" | "notices";
 const LEGAL_NAMES = {
   license: "GNU Affero General Public License v3",
   exception: "Syzify Plugin Exception",
+  antKey: "Syzify ANT+ Network Key Permission",
 } as const;
 
 /** Full text of a bundled legal document (Settings → About). Only the

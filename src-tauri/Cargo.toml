@@ -75,6 +75,8 @@ ed25519-dalek = "2"
 # trainer/ble/machine.rs); a new one must be checked against them.
 btleplug = "=0.11.8"
 futures = "0.3"
+# ANT+ sticks over USB (IOKit, no libusb); the version the spike rode with.
+nusb = "=0.1.14"
 
 # The SHA256 core stays optimized even in dev builds — password checks run
 # PBKDF2 with 600k iterations: ~4.3s/check without this, ~1.7s with it

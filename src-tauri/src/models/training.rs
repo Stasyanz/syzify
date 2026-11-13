@@ -12,10 +12,53 @@ pub enum SensorRole {
     Strap,
 }
 
+/// Whether ANT+ can be used (it needs the ANT+ network key, which is not in
+/// the sources).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AntKeyStatus {
+    /// This build was given it.
+    pub built_in: bool,
+    /// It is known: built in, or typed in.
+    pub known: bool,
+    /// Where Garmin publishes it…
+    pub page: String,
+    /// …and the agreement its use is subject to.
+    pub agreement: String,
+}
+
+/// Why an ANT+ stick did not search along.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StickProblem {
+    /// Another app holds it (Zwift, Garmin Express).
+    InUse,
+    /// Anything else, in the stick's own words.
+    Other { detail: String },
+}
+
+/// What a search found, and why the stick (if one is plugged in) did not
+/// search along.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Found {
+    pub devices: Vec<FoundDevice>,
+    pub stick: Option<StickProblem>,
+}
+
+/// How a device is reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Radio {
+    Ble,
+    /// Through an ANT+ USB stick.
+    Ant,
+}
+
 /// A device that advertised during a search, for the screen to offer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FoundDevice {
     pub role: SensorRole,
+    /// The same trainer may be found both ways: the user picks.
+    pub radio: Radio,
     /// What the OS calls it; a link's `Target.address`.
     pub address: String,
     pub name: Option<String>,
@@ -59,6 +102,8 @@ pub enum LinkProblem {
     PermissionDenied,
     RadioOff,
     AdapterGone,
+    StickGone,
+    StickBusy,
     Other,
 }
 

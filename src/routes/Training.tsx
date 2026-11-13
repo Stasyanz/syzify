@@ -1,6 +1,7 @@
 import { useT } from "../lib/i18n";
 import { trainingSupported } from "../lib/training";
 import { useTrainingLive } from "../hooks/useTrainingLive";
+import { AntKey } from "../components/training/AntKey";
 import { DevicePicker } from "../components/training/DevicePicker";
 import { LiveRide } from "../components/training/LiveRide";
 import { PendingRides } from "../components/training/PendingRides";
@@ -25,7 +26,14 @@ export function Training() {
               <PendingRides />
               {/* Elsewhere the page is reached from Settings, for rides a
                   Mac left in the vault. */}
-              {trainingSupported() ? <DevicePicker /> : <p className="text-sm text-muted">{t("training.unsupported")}</p>}
+              {trainingSupported() ? (
+                <>
+                  <DevicePicker />
+                  <AntKey />
+                </>
+              ) : (
+                <p className="text-sm text-muted">{t("training.unsupported")}</p>
+              )}
             </>
           ) : (
             <LiveRide live={live} />

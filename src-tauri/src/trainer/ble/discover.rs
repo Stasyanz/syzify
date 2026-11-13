@@ -6,7 +6,7 @@
 use super::gatt;
 use super::machine::Advert;
 pub use crate::models::training::FoundDevice as Found;
-use crate::models::training::SensorRole as Source;
+use crate::models::training::{Radio, SensorRole as Source};
 use crate::trainer::pedals::{model_of, side_of, Side};
 
 /// The roles an advertisement offers: a trainer (FTMS), pedals (Cycling
@@ -48,6 +48,7 @@ impl Discovery {
                 }
                 None => self.found.push(Found {
                     role,
+                    radio: Radio::Ble,
                     address: ad.address.clone(),
                     name: ad.name.clone(),
                     other_side: None,

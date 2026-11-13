@@ -29,6 +29,10 @@ describe("training api wrappers (#273)", () => {
     expect(mocked).toHaveBeenLastCalledWith("training_finish_pending", { startUnix: 1_794_420_000 });
     await api.trainingDiscardPending(1_794_420_000);
     expect(mocked).toHaveBeenLastCalledWith("training_discard_pending", { startUnix: 1_794_420_000 });
+    await api.trainingSetAntKey("01 23");
+    expect(mocked).toHaveBeenLastCalledWith("training_set_ant_key", { key: "01 23" });
+    await api.trainingSetAntKey(null);
+    expect(mocked).toHaveBeenLastCalledWith("training_set_ant_key", { key: null });
     await api.trainingSetWorkoutsDir("/w");
     expect(mocked).toHaveBeenLastCalledWith("training_set_workouts_dir", { dir: "/w" });
     await api.trainingStartWorkout("user/ss.zwo");
@@ -46,6 +50,7 @@ describe("training api wrappers (#273)", () => {
       [api.trainingFtp, "training_ftp"],
       [api.trainingPending, "training_pending"],
       [api.trainingWorkouts, "training_workouts"],
+      [api.trainingAntKey, "training_ant_key"],
     ] as const;
     for (const [call, command] of bare) {
       await call();

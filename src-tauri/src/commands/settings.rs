@@ -33,6 +33,7 @@ fn legal_doc_file(doc: &str) -> Option<&'static str> {
     match doc {
         "license" => Some("LICENSE"),
         "exception" => Some("LICENSE-PLUGIN-EXCEPTION.md"),
+        "antKey" => Some("LICENSE-ANT-KEY.md"),
         "notices" => Some("THIRD-PARTY-NOTICES.md"),
         _ => None,
     }
@@ -1408,7 +1409,14 @@ mod tests {
     fn legal_doc_allowlist() {
         assert_eq!(legal_doc_file("license"), Some("LICENSE"));
         assert_eq!(legal_doc_file("exception"), Some("LICENSE-PLUGIN-EXCEPTION.md"));
+        assert_eq!(legal_doc_file("antKey"), Some("LICENSE-ANT-KEY.md"));
         assert_eq!(legal_doc_file("notices"), Some("THIRD-PARTY-NOTICES.md"));
+        // Each is bundled: the app carries what it says.
+        let conf = include_str!("../../tauri.conf.json");
+        for doc in ["license", "exception", "antKey", "notices"] {
+            let file = legal_doc_file(doc).unwrap();
+            assert!(conf.contains(&format!("\"../{file}\": \"{file}\"")), "{file} is a bundle resource");
+        }
         assert_eq!(legal_doc_file("../../etc/passwd"), None);
         assert_eq!(legal_doc_file(""), None);
     }

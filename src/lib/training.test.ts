@@ -34,9 +34,9 @@ describe("powerZone", () => {
 
 describe("devices and the start", () => {
   const found: FoundDevice[] = [
-    { role: "trainer", address: "T", name: "AVANTI COG", other_side: null, lone_side: false },
-    { role: "pedals", address: "P", name: null, other_side: null, lone_side: false },
-    { role: "strap", address: "H", name: "HRM-Pro", other_side: null, lone_side: false },
+    { role: "trainer", radio: "ble", address: "T", name: "AVANTI COG", other_side: null, lone_side: false },
+    { role: "pedals", radio: "ble", address: "P", name: null, other_side: null, lone_side: false },
+    { role: "strap", radio: "ble", address: "H", name: "HRM-Pro", other_side: null, lone_side: false },
   ];
 
   it("rides on macOS only", () => {
@@ -46,7 +46,7 @@ describe("devices and the start", () => {
   });
 
   it("links both sides of a pedal pair", () => {
-    const pair: FoundDevice[] = [{ role: "pedals", address: "PL", name: "ASSIOMA55430", other_side: "PR", lone_side: false }];
+    const pair: FoundDevice[] = [{ role: "pedals", radio: "ble", address: "PL", name: "ASSIOMA55430", other_side: "PR", lone_side: false }];
     expect(pedalAddresses(pair, "PL")).toEqual(["PL", "PR"]);
     expect(pedalAddresses(found, "P")).toEqual(["P"]);
     expect(pedalAddresses(found, null)).toEqual([]);

@@ -150,8 +150,12 @@ pub enum LinkFailure {
     PermissionDenied,
     /// The radio is off.
     RadioOff,
-    /// The adapter went away (the USB stick was pulled).
+    /// The Bluetooth adapter went away.
     AdapterGone,
+    /// No ANT+ USB stick, or it was pulled.
+    StickGone,
+    /// Another app holds the ANT+ stick.
+    StickBusy,
     /// Anything else, in the library's own words.
     Other(String),
 }

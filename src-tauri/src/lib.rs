@@ -737,6 +737,8 @@ pub fn run() {
             commands::training::training_pause,
             commands::training::training_resume,
             commands::training::training_set_target,
+            commands::training::training_ant_key,
+            commands::training::training_set_ant_key,
             commands::training::training_workouts,
             commands::training::training_set_workouts_dir,
             commands::training::training_start_workout,

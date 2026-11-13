@@ -5,7 +5,7 @@ import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
 import { useT } from "../../lib/i18n";
 import { ROLES, devicesFor, pedalAddresses } from "../../lib/training";
-import type { FoundDevice, SensorRole } from "../../lib/types";
+import type { FoundDevice, SensorRole, StickProblem } from "../../lib/types";
 
 type Picks = Record<SensorRole, string | null>;
 
@@ -16,12 +16,14 @@ const NONE: Picks = { trainer: null, pedals: null, strap: null };
 export function DevicePicker() {
   const t = useT();
   const [found, setFound] = useState<FoundDevice[] | null>(null);
+  const [stick, setStick] = useState<StickProblem | null>(null);
   const [picks, setPicks] = useState<Picks>(NONE);
 
   const scan = useMutation({
     mutationFn: () => api.trainingScan(),
-    onSuccess: (devices) => {
+    onSuccess: ({ devices, stick }) => {
       setFound(devices);
+      setStick(stick);
       // The first of each role is the likely one; pedals and a strap stay
       // a choice (a watch's strap may be someone else's).
       setPicks({ ...NONE, trainer: devicesFor(devices, "trainer")[0]?.address ?? null });
@@ -48,6 +50,11 @@ export function DevicePicker() {
         {scan.isPending ? t("training.setup.searching") : found ? t("training.setup.searchAgain") : t("training.setup.search")}
       </button>
       {error != null && <p className="mt-2 text-sm text-danger">{errorText(error)}</p>}
+      {stick && (
+        <p className="mt-2 text-sm px-3 py-2 rounded-field bg-warn-soft">
+          {stick.kind === "in_use" ? t("training.setup.stickInUse") : t("training.setup.stickOther", { detail: stick.detail })}
+        </p>
+      )}
 
       {found && found.length === 0 && <p className="mt-3 text-sm text-muted">{t("training.setup.nothing")}</p>}
 
@@ -81,6 +88,8 @@ export function DevicePicker() {
                       onChange={() => setPicks({ ...picks, [role]: d.address })}
                     />
                     {d.name ? <span translate="no">{d.name}</span> : t("training.setup.unnamed")}
+                    {/* The same trainer may be found both ways: the user picks. */}
+                    <span className="text-xs text-faint">{d.radio === "ant" ? t("training.setup.viaAnt") : t("training.setup.viaBle")}</span>
                     {d.other_side && <span className="text-xs text-faint">{t("training.setup.bothPedals")}</span>}
                     {/* Picked alone it records one leg: say so plainly. (Not
                         searched for by name: a one-sided pedal may be named

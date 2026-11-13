@@ -43,10 +43,11 @@ import type {
   MonitoringSummary,
   RecoveryNight,
   MonitoringDeleted,
-  FoundDevice,
+  Found,
   TrainingFinish,
   TrainingLive,
   WorkoutList,
+  AntKeyStatus,
   PendingRide,
 } from "./types";
 
@@ -241,7 +242,7 @@ export const api = {
     invoke<void>("set_setting", { key, value }),
 
   // Legal texts bundled as resources (LICENSE / plugin exception / notices)
-  getLegalText: (doc: "license" | "exception" | "notices") =>
+  getLegalText: (doc: "license" | "exception" | "antKey" | "notices") =>
     invoke<string>("get_legal_text", { doc }),
 
   // Encryption
@@ -341,7 +342,7 @@ export const api = {
   // ── Indoor training (#273): the ride runs in the backend; live values
   // come as `training:live` events (see useTrainingLive). ──
   trainingScan: (seconds?: number) =>
-    invoke<FoundDevice[]>("training_scan", { seconds: seconds ?? null }),
+    invoke<Found>("training_scan", { seconds: seconds ?? null }),
   /** `pedals`: none, one device, or a pair's two (left, right). */
   trainingConnect: (trainer: string, pedals: string[], strap: string | null) =>
     invoke<void>("training_connect", { trainer, pedals, strap }),
@@ -356,6 +357,8 @@ export const api = {
   trainingLeave: () => invoke<void>("training_leave"),
   trainingLive: () => invoke<TrainingLive | null>("training_live"),
   trainingFtp: () => invoke<number | null>("training_ftp"),
+  trainingAntKey: () => invoke<AntKeyStatus>("training_ant_key"),
+  trainingSetAntKey: (key: string | null) => invoke<void>("training_set_ant_key", { key }),
   trainingWorkouts: () => invoke<WorkoutList>("training_workouts"),
   trainingSetWorkoutsDir: (dir: string) => invoke<void>("training_set_workouts_dir", { dir }),
   trainingStartWorkout: (path: string) => invoke<void>("training_start_workout", { path }),

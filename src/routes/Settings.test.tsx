@@ -231,6 +231,8 @@ describe("SettingsPage tabs", () => {
     expect(screen.getByRole("button", { name: "AGPL-3.0" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Third-party notices" }));
     expect(screen.getByText("LEGAL notices")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "ANT+ key permission" }));
+    expect(screen.getByText("LEGAL antKey")).toBeTruthy();
   });
 
   it("moves between tabs with the arrow keys, wrapping at the ends, and Home/End", () => {
@@ -594,7 +596,7 @@ describe("SettingsPage tabs", () => {
       const license = screen.getByText("AGPL-3.0");
       expect(license.getAttribute("translate")).toBe("no");
       expect(license.parentElement?.textContent).toBe(
-        "© 2026 Stanislav Zainullin · AGPL-3.0 с исключением для плагинов · Сторонние лицензии",
+        "© 2026 Stanislav Zainullin · AGPL-3.0 с исключением для плагинов · Разрешение о ключе ANT+ · Сторонние лицензии",
       );
       expect(screen.getByText("hi@example.com").parentElement?.textContent).toBe(
         "Сообщить об ошибке или предложить идею можно в GitHub Issues или письмом на hi@example.com",

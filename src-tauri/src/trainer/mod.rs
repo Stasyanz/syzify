@@ -9,6 +9,7 @@
 //! - `fake` (`cfg(test)`, so for tests inside this crate) — a
 //!   deterministic trainer with opt-in quirks.
 
+pub mod ant;
 pub mod awake;
 pub mod ble;
 pub mod erg;

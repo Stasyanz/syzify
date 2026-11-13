@@ -81,10 +81,14 @@ jobs:
       - run: npm ci
       # createUpdaterArtifacts makes the build refuse to run without the
       # signing key, so a tag can never publish unsigned update payloads.
+      # SYZIFY_ANT_KEY: the ANT+ network key (not in the sources, see
+      # LICENSE-ANT-KEY.md). Without the secret a build has no ANT+ built in
+      # and asks for the key on the training screen instead.
       - name: Build bundle
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SYZIFY_ANT_KEY: ${{ secrets.SYZIFY_ANT_KEY }}
         run: npm run tauri build -- --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:

@@ -259,8 +259,9 @@ dmg digests GitHub computed on upload; commit and push the tap by hand.
 
 ## License
 
-Syzify is distributed under the [GNU AGPL v3](LICENSE) with an additional
-permission — the [Syzify Plugin Exception](LICENSE-PLUGIN-EXCEPTION.md):
+Syzify is distributed under the [GNU AGPL v3](LICENSE) with two additional
+permissions: the ANT+ key permission (below), and the
+[Syzify Plugin Exception](LICENSE-PLUGIN-EXCEPTION.md):
 plugins that interact with the application only through the official Plugin API
 (manifest, host functions, ViewSpec — see
 [examples/plugins/README.md](examples/plugins/README.md))
@@ -269,6 +270,16 @@ commercial one.
 
 The example plugins in [examples/plugins/](examples/plugins/) are licensed
 under MIT-0 — feel free to copy them into your own plugin under any license.
+
+Riding through an ANT+ USB stick needs the ANT+ network key, which Garmin
+publishes at <https://developer.garmin.com/ant-program/ant-ant-plus/network-keys/>
+subject to its ANT+ Adopter Agreement; it is not in these sources, only its
+SHA-256 (`src-tauri/src/trainer/ant/key.rs`). Give it to a build as the
+`SYZIFY_ANT_KEY` environment variable (16 hex digits), or type it in on the
+training screen; either is checked against the hash. The ANT+ key
+permission, [LICENSE-ANT-KEY.md](LICENSE-ANT-KEY.md), lets builds made with
+the key be conveyed without it. ANT+ is a trademark of Garmin Canada Inc.;
+Syzify is not affiliated with or endorsed by Garmin.
 
 ```
 Syzify — local-first workout viewer and journal

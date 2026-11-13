@@ -18,7 +18,10 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use super::import::ensure_vault_unlocked;
 use super::vault_busy_in;
 use crate::error::CommandError;
-use crate::models::training::{FinishKind, FoundDevice, PendingRide, TrainingFinish, TrainingLive, TrainingPhase, WorkoutList};
+use crate::models::training::{
+    AntKeyStatus, FinishKind, Found, FoundDevice, PendingRide, SensorRole, StickProblem, TrainingFinish, TrainingLive, TrainingPhase,
+    WorkoutList,
+};
 use crate::state::{AppState, SingleFlightGuard};
 use crate::trainer::awake::KeepAwake;
 use crate::trainer::erg::MAX_TARGET;
@@ -27,6 +30,7 @@ use crate::trainer::journal::{self, Journal, KeyFn};
 use crate::trainer::library::{self, ride_key};
 use crate::trainer::link::LinkFailure;
 use crate::trainer::runner::{self, Clock, Host, Order, Reply};
+use crate::trainer::ant::key as ant_key;
 use crate::trainer::session::Session;
 use crate::trainer::workouts;
 
@@ -69,6 +73,8 @@ fn link_failure(failure: LinkFailure) -> CommandError {
         ),
         LinkFailure::RadioOff => CommandError::coded("training.bluetoothOff", "Bluetooth is off"),
         LinkFailure::AdapterGone => CommandError::coded("training.noBluetooth", "No Bluetooth adapter"),
+        LinkFailure::StickGone => CommandError::coded("training.noStick", "No ANT+ stick is plugged in"),
+        LinkFailure::StickBusy => CommandError::coded("training.stickBusy", "Another app is using the ANT+ stick"),
         LinkFailure::Other(why) => why.into(),
     }
 }
@@ -271,17 +277,110 @@ async fn ask<R: Runtime, T: Send + 'static>(app: &AppHandle<R>, order: fn(Reply<
         .map_err(|_| no_session())?
 }
 
-/// Trainers, power meters and straps advertising now (a few seconds' scan).
+/// What both radios found, by role (Bluetooth first within one), and why
+/// the stick did not search along. Bluetooth's failure stands only when
+/// ANT+ found nothing either.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn merge_found(ble: Result<Vec<FoundDevice>, CommandError>, ant: Result<Vec<FoundDevice>, StickProblem>) -> Result<Found, CommandError> {
+    let (ant, stick) = match ant {
+        Ok(devices) => (devices, None),
+        Err(problem) => (Vec::new(), Some(problem)),
+    };
+    let mut devices = match ble {
+        Ok(devices) => devices,
+        Err(e) if ant.is_empty() => return Err(e),
+        Err(_) => Vec::new(),
+    };
+    devices.extend(ant);
+    let rank = |r: SensorRole| match r {
+        SensorRole::Trainer => 0,
+        SensorRole::Pedals => 1,
+        SensorRole::Strap => 2,
+    };
+    devices.sort_by_key(|f| rank(f.role));
+    Ok(Found { devices, stick })
+}
+
+/// The channels on the stick of the picked devices that go over ANT+ (in
+/// pick order), and what the stick is to look for.
+type AntPlan = (Vec<Option<usize>>, Vec<crate::trainer::ant::machine::Wanted>);
+
+/// Which picked devices go over ANT+ (their addresses say so). A build
+/// without the network key has none to offer.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn ant_plan(picked: &[(SensorRole, &str)], has_key: bool) -> Result<AntPlan, CommandError> {
+    use crate::trainer::ant::{discover::parse_address, machine::Wanted};
+    let mut wanted = Vec::new();
+    let channels = picked
+        .iter()
+        .map(|&(role, address)| {
+            let sender = parse_address(address)?;
+            wanted.push(Wanted { role, number: sender.number });
+            Some(wanted.len() - 1)
+        })
+        .collect();
+    if !wanted.is_empty() && !has_key {
+        return Err(CommandError::coded("training.noAntKey", "No ANT+ network key yet: enter it on the training screen"));
+    }
+    Ok((channels, wanted))
+}
+
+/// The ANT+ network key to use: this build's, else the one typed in.
+fn ant_key(state: &AppState) -> Result<Option<[u8; 8]>, CommandError> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let entered = crate::db::settings::get_setting(&conn, ant_key::SETTING).map_err(|e| e.to_string())?;
+    Ok(ant_key::network_key(entered.as_deref()))
+}
+
+/// Whether ANT+ can be used: the key built in, or typed in.
 #[tauri::command]
-pub async fn training_scan(seconds: Option<u32>) -> Result<Vec<FoundDevice>, CommandError> {
+pub fn training_ant_key(state: State<'_, AppState>) -> Result<AntKeyStatus, CommandError> {
+    Ok(AntKeyStatus {
+        built_in: ant_key::built_in(),
+        known: ant_key(&state)?.is_some(),
+        page: ant_key::KEY_PAGE.to_string(),
+        agreement: ant_key::AGREEMENT_PAGE.to_string(),
+    })
+}
+
+/// Keeps the ANT+ network key the user typed in (it must be the one Garmin
+/// publishes); None forgets it.
+#[tauri::command]
+pub fn training_set_ant_key(key: Option<String>, state: State<'_, AppState>) -> Result<(), CommandError> {
+    set_ant_key(&state, key, ant_key::KEY_SHA256)
+}
+
+/// Keeps `key` if it is the one whose hash is `sha`; None forgets it.
+fn set_ant_key(state: &AppState, key: Option<String>, sha: &str) -> Result<(), CommandError> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let result = match key {
+        Some(text) => {
+            let kept = ant_key::checked(&text, sha).ok_or_else(|| CommandError::coded("training.badAntKey", "That is not the ANT+ network key"))?;
+            crate::db::settings::set_setting(&conn, ant_key::SETTING, &kept)
+        }
+        None => crate::db::settings::delete_setting(&conn, ant_key::SETTING),
+    };
+    Ok(result.map_err(|e| e.to_string())?)
+}
+
+/// Trainers, power meters and straps advertising now (a few seconds' scan),
+/// over Bluetooth and an ANT+ stick at once.
+#[tauri::command]
+pub async fn training_scan<R: Runtime>(seconds: Option<u32>, app: AppHandle<R>) -> Result<Found, CommandError> {
     #[cfg(target_os = "macos")]
     {
         let window = std::time::Duration::from_secs(u64::from(seconds.unwrap_or(6).clamp(2, 20)));
-        crate::trainer::ble::driver::find_devices(window).await.map_err(link_failure)
+        // A key that cannot be read is none: Bluetooth searches anyway.
+        let key = ant_key(&app.state::<AppState>()).ok().flatten();
+        let (ble, ant) = tokio::join!(
+            crate::trainer::ble::driver::find_devices(window),
+            crate::trainer::ant::driver::find_devices(window, key)
+        );
+        merge_found(ble.map_err(link_failure), ant)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = seconds;
+        let _ = (seconds, app);
         Err(unsupported())
     }
 }
@@ -298,21 +397,45 @@ pub fn training_connect<R: Runtime>(
 ) -> Result<(), CommandError> {
     #[cfg(target_os = "macos")]
     {
+        use crate::trainer::ant::driver::{self as ant, AntLink};
         use crate::trainer::ble::driver::BleLink;
         use crate::trainer::ble::machine::{Role, Target};
-        use crate::trainer::link::SensorLink;
+        use crate::trainer::link::{SensorLink, TrainerLink};
         use crate::trainer::pedals::PedalPair;
         let (trainer, pedals, strap) = targets(trainer, pedals, strap)?;
         ensure_free(&app)?;
         let epoch = std::time::Instant::now();
-        let link = |role, address: String| BleLink::start(Target { role, address: Some(address), name_contains: None }, epoch);
-        let mut sides = pedals.into_iter().map(|a| Box::new(link(Role::Pedals, a)) as Box<dyn SensorLink>);
+        // The ANT+ devices share the stick, a channel each.
+        let mut picked = vec![(SensorRole::Trainer, trainer.as_str())];
+        picked.extend(pedals.iter().map(|a| (SensorRole::Pedals, a.as_str())));
+        picked.extend(strap.iter().map(|a| (SensorRole::Strap, a.as_str())));
+        let key = ant_key(&app.state::<AppState>())?;
+        let (channels, wanted) = ant_plan(&picked, key.is_some())?;
+        let mut on_stick: Vec<Option<AntLink>> = match (wanted.is_empty(), key) {
+            (false, Some(key)) => ant::start(wanted, key, epoch).into_iter().map(Some).collect(),
+            _ => Vec::new(),
+        };
+        // Each pick's own link on the stick, by its place among the picks.
+        let mut by_pick: Vec<Option<AntLink>> = channels.iter().map(|ch| ch.and_then(|ch| on_stick[ch].take())).collect();
+        let ble = |role, address: String| BleLink::start(Target { role, address: Some(address), name_contains: None }, epoch);
+        let trainer: Box<dyn TrainerLink> = match by_pick[0].take() {
+            Some(link) => Box::new(link),
+            None => Box::new(ble(Role::Trainer, trainer)),
+        };
+        let mut sensor = |pick: usize, role, address: String| -> Box<dyn SensorLink> {
+            match by_pick[pick].take() {
+                Some(link) => Box::new(link),
+                None => Box::new(ble(role, address)),
+            }
+        };
+        let strap_pick = 1 + pedals.len();
+        let mut sides = pedals.into_iter().enumerate().map(|(i, a)| sensor(1 + i, Role::Pedals, a)).collect::<Vec<_>>().into_iter();
         let pedals = match (sides.next(), sides.next()) {
             (Some(left), Some(right)) => Some(Box::new(PedalPair::new(left, right)) as Box<dyn SensorLink>),
             (one, _) => one,
         };
-        let strap = strap.map(|a| Box::new(link(Role::Heart, a)) as Box<dyn SensorLink>);
-        let session = Session::pairing(Box::new(link(Role::Trainer, trainer)), pedals, strap);
+        let strap = strap.map(|a| sensor(strap_pick, Role::Heart, a));
+        let session = Session::pairing(trainer, pedals, strap);
         start_session(&app, session, runner::SystemClock::new(epoch))
     }
     #[cfg(not(target_os = "macos"))]
@@ -762,6 +885,8 @@ mod tests {
         assert_eq!(code(LinkFailure::PermissionDenied), Some("training.bluetoothDenied"));
         assert_eq!(code(LinkFailure::RadioOff), Some("training.bluetoothOff"));
         assert_eq!(code(LinkFailure::AdapterGone), Some("training.noBluetooth"));
+        assert_eq!(code(LinkFailure::StickGone), Some("training.noStick"));
+        assert_eq!(code(LinkFailure::StickBusy), Some("training.stickBusy"));
         assert_eq!(link_failure(LinkFailure::Other("boom".into())), CommandError::from("boom"));
         assert_eq!(unsupported().code, Some("training.unsupported"));
     }
@@ -868,6 +993,62 @@ mod tests {
         assert_eq!(list, serde_json::json!({ "dir": null, "missing": false, "workouts": [] }));
         let refused = call("training_start_workout", serde_json::json!({ "path": "a.zwo" })).unwrap_err();
         assert!(refused.to_string().contains("training.noWorkoutsDir"), "{refused}");
+    }
+
+    fn found(role: SensorRole, radio: crate::models::training::Radio, address: &str) -> FoundDevice {
+        FoundDevice { role, radio, address: address.into(), name: None, other_side: None, lone_side: false }
+    }
+
+    #[test]
+    fn both_radios_finds_merge_by_role_and_bluetooth_fails_only_alone() {
+        use crate::models::training::Radio::{Ant, Ble};
+        let ble = vec![found(SensorRole::Trainer, Ble, "B1"), found(SensorRole::Strap, Ble, "B2")];
+        let ant = vec![found(SensorRole::Trainer, Ant, "ant:17:1"), found(SensorRole::Pedals, Ant, "ant:11:2")];
+        let merged = merge_found(Ok(ble.clone()), Ok(ant.clone())).unwrap();
+        let addresses: Vec<&str> = merged.devices.iter().map(|f| f.address.as_str()).collect();
+        assert_eq!(addresses, vec!["B1", "ant:17:1", "ant:11:2", "B2"], "by role, Bluetooth first within one");
+        assert_eq!(merged.stick, None);
+        let denied = link_failure(LinkFailure::PermissionDenied);
+        assert_eq!(merge_found(Err(denied.clone()), Ok(Vec::new())), Err(denied.clone()), "nothing else found: the reason stands");
+        assert_eq!(merge_found(Err(denied), Ok(ant.clone())).unwrap().devices.len(), 2, "the stick's finds stand");
+        let busy = merge_found(Ok(ble), Err(StickProblem::InUse)).unwrap();
+        assert_eq!((busy.devices.len(), busy.stick), (2, Some(StickProblem::InUse)), "the stick says why it found nothing");
+    }
+
+    #[test]
+    fn an_ant_key_typed_in_must_be_the_key_and_can_be_forgotten() {
+        let vault = ScratchDir::new("training_ant_key");
+        let app = app_at(&vault);
+        let status = training_ant_key(app.state()).unwrap();
+        assert_eq!((status.built_in, status.page.as_str()), (ant_key::built_in(), ant_key::KEY_PAGE));
+        assert_eq!(status.agreement, ant_key::AGREEMENT_PAGE);
+        assert_eq!(status.known, status.built_in, "nothing typed in");
+        let wrong = training_set_ant_key(Some("0123456789abcdef".into()), app.state()).unwrap_err();
+        assert_eq!(wrong, CommandError::coded("training.badAntKey", "That is not the ANT+ network key"));
+        assert_eq!(training_ant_key(app.state()).unwrap().known, status.built_in, "a wrong one is not kept");
+        // The right one is not in the sources: a stand-in and its hash take
+        // its place, kept as plain hex…
+        let state = app.state::<AppState>();
+        let stand_in = hex::encode(<sha2::Sha256 as sha2::Digest>::digest([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]));
+        set_ant_key(&state, Some("01 23 45 67 89 AB CD EF".into()), &stand_in).unwrap();
+        let kept = crate::db::settings::get_setting(&state.db.lock().unwrap(), ant_key::SETTING).unwrap();
+        assert_eq!(kept.as_deref(), Some("0123456789abcdef"));
+        // …and read back through the real check: not the key, nothing.
+        assert_eq!(ant_key(&state).unwrap(), ant_key::network_key(None), "a kept key that is not the key counts for nothing");
+        training_set_ant_key(None, app.state()).unwrap();
+        assert_eq!(crate::db::settings::get_setting(&state.db.lock().unwrap(), ant_key::SETTING).unwrap(), None);
+    }
+
+    #[test]
+    fn devices_picked_over_ant_get_a_channel_each_on_the_stick() {
+        use crate::trainer::ant::machine::Wanted;
+        let picked = [(SensorRole::Trainer, "ant:17:14830"), (SensorRole::Pedals, "B-PEDAL"), (SensorRole::Strap, "ant:120:7")];
+        let (channels, wanted) = ant_plan(&picked, true).unwrap();
+        assert_eq!(channels, vec![Some(0), None, Some(1)]);
+        assert_eq!(wanted, vec![Wanted { role: SensorRole::Trainer, number: 14830 }, Wanted { role: SensorRole::Strap, number: 7 }]);
+        assert_eq!(ant_plan(&[(SensorRole::Trainer, "B")], false).unwrap(), (vec![None], Vec::new()), "all Bluetooth: no key needed");
+        let no_key = ant_plan(&picked, false).unwrap_err();
+        assert_eq!(no_key, CommandError::coded("training.noAntKey", "No ANT+ network key yet: enter it on the training screen"));
     }
 
     #[test]

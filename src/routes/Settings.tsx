@@ -802,6 +802,10 @@ export function SettingsPage() {
                     ),
                   })}
                   {" · "}
+                  <button onClick={() => setLegalDoc("antKey")} className="text-accent-2 hover:underline">
+                    {t("settings.about.antKey")}
+                  </button>
+                  {" · "}
                   <button
                     onClick={() => setLegalDoc("notices")}
                     className="text-accent-2 hover:underline"
