@@ -1017,8 +1017,6 @@ export const it: Messages = {
   "training.antKey.agreement": "L'ANT+ Adopter Agreement",
   "training.antKey.field": "Chiave di rete ANT+",
   "training.antKey.save": "Salva",
-  "training.antKey.known": "La chiave di rete ANT+ è salvata: la ricerca guarda anche tramite la chiavetta.",
-  "training.antKey.forget": "Dimenticala",
   "training.setup.viaBle": "Bluetooth",
   "training.setup.viaAnt": "chiavetta ANT+",
   "training.setup.lonePedal": "un pedale della coppia: sveglia l'altro e cerca di nuovo, altrimenti si registra la potenza di una sola gamba",

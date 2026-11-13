@@ -211,7 +211,7 @@ describe("Training before a session", () => {
     await waitFor(() => expect(mocked.trainingConnect).toHaveBeenLastCalledWith("ant:17:14830", ["P1"], null));
   });
 
-  it("asks for the ANT+ network key when the build has none, checks it and can forget it (#277)", async () => {
+  it("asks for the ANT+ network key when the build has none, checks it, then says nothing more (#277, #301)", async () => {
     mocked.trainingAntKey.mockResolvedValue({ built_in: false, known: false, page: KEY_PAGE, agreement: AGREEMENT });
     renderPage();
     const box = await screen.findByRole("region", { name: "ANT+ USB stick" });
@@ -226,18 +226,23 @@ describe("Training before a session", () => {
     fireEvent.click(save);
     expect(await screen.findByText("That is not the ANT+ network key")).toBeTruthy();
     expect(mocked.trainingSetAntKey).toHaveBeenCalledWith("01 23 45 67 89 ab cd ef");
-    // The right one: kept, and the box says so.
+    // The right one: kept, and the box goes.
     mocked.trainingAntKey.mockResolvedValue({ built_in: false, known: true, page: KEY_PAGE, agreement: AGREEMENT });
     fireEvent.submit(field.closest("form")!);
-    expect(await screen.findByText(/The ANT\+ network key is saved/)).toBeTruthy();
-    fireEvent.click(screen.getByText("Forget it"));
-    await waitFor(() => expect(mocked.trainingSetAntKey).toHaveBeenLastCalledWith(null));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "ANT+ USB stick" })).toBeNull());
+    expect(mocked.trainingSetAntKey).toHaveBeenLastCalledWith("01 23 45 67 89 ab cd ef");
     // Built in: nothing to ask.
     cleanup();
     mocked.trainingAntKey.mockResolvedValue({ built_in: true, known: true, page: KEY_PAGE, agreement: AGREEMENT });
     renderPage();
     await screen.findByText("Search for devices");
     expect(screen.queryByRole("region", { name: "ANT+ USB stick" })).toBeNull();
+    // Not known whether there is one: said, not hidden.
+    cleanup();
+    mocked.trainingAntKey.mockRejectedValue(commandError(null, "database is locked"));
+    renderPage();
+    const failed = await screen.findByRole("region", { name: "ANT+ USB stick" });
+    expect(failed.textContent).toContain("database is locked");
   });
 
   it("says it is searching while it searches", async () => {

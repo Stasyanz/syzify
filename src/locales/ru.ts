@@ -1109,8 +1109,6 @@ export const ru: Messages = {
   "training.antKey.agreement": "Соглашение ANT+ Adopter Agreement",
   "training.antKey.field": "Сетевой ключ ANT+",
   "training.antKey.save": "Сохранить",
-  "training.antKey.known": "Сетевой ключ ANT+ сохранён: поиск смотрит и через стик.",
-  "training.antKey.forget": "Забыть",
   "training.setup.viaBle": "Bluetooth",
   "training.setup.viaAnt": "стик ANT+",
   "training.setup.lonePedal": "одна педаль из пары: разбудите вторую и повторите поиск, иначе запишется мощность одной ноги",

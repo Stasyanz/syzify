@@ -15,6 +15,11 @@ dist
 dist-ssr
 *.local
 
+# Local secrets (the ANT+ network key, SYZIFY_ANT_KEY, must never be committed)
+.env
+.env.*
+!.env.example
+
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/

@@ -1060,8 +1060,6 @@ export const en = {
   "training.antKey.agreement": "The ANT+ Adopter Agreement",
   "training.antKey.field": "ANT+ network key",
   "training.antKey.save": "Save",
-  "training.antKey.known": "The ANT+ network key is saved: a search also looks through the stick.",
-  "training.antKey.forget": "Forget it",
   "training.setup.viaBle": "Bluetooth",
   "training.setup.viaAnt": "ANT+ stick",
   "training.setup.lonePedal": "one pedal of a pair: wake the other and search again, or only its leg's power is recorded",
