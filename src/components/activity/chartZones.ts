@@ -47,7 +47,8 @@ export function zoneIndexOffset(indices: Iterable<number>, zoneCount: number): 0
   return top >= zoneCount ? 1 : 0;
 }
 
-/** Zone ranges from the device's own time_in_zone buckets, colored by ZONE
+/** Zone ranges from the time_in_zone buckets (a device's own, or the ones
+ * worked out for a ride without — shaped the same, #298), colored by ZONE
  * INDEX: bucket k is zone k and wears palette[k − 1]. Garmin writes one
  * bucket per index — 0 is "below zone 1" (its ceiling is the Z1 floor; for
  * power it is 0 W and folds away), 1…N are the zones with their ceilings,

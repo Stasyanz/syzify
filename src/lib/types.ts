@@ -159,6 +159,9 @@ export interface HrvSample {
   rr_interval_ms: number;
 }
 
+/** A zone bucket as a device writes it. The detail command also returns
+ * HR buckets worked out from the heart rate of a ride with none of its own
+ * (Zwift, Syzify's rides — #298): those are not stored and carry no id. */
 export interface TimeInZone {
   id: number | null;
   activity_id: string;

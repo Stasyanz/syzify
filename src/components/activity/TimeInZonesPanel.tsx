@@ -30,7 +30,9 @@ function pctLabel(pct: number, lang: Language): string {
  * Heart rate and power as a switch when the activity carries both (power
  * first — it is the rarer, richer signal); no switch with one type. The
  * pick lives with the mounted card: callers key it by activity so a new
- * activity opens on power again. Renders nothing without device zone data.
+ * activity opens on power again. Renders nothing without zone data (a
+ * device's, or worked out for a ride without — power at import #224, HR
+ * by the detail command #298).
  */
 export function TimeInZonesPanel({ timeInZones, durationS, className = "" }: Props) {
   const t = useT();

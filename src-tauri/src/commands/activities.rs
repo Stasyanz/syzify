@@ -53,7 +53,25 @@ pub fn get_activity_detail(
     let legs = db::multisport_legs::get_legs(&conn, &id).map_err(|e| e.to_string())?;
     let lengths = db::swim_lengths::get_swim_lengths(&conn, &id).map_err(|e| e.to_string())?;
     let sets = db::exercise_sets::get_exercise_sets(&conn, &id).map_err(|e| e.to_string())?;
-    let time_in_zones = db::time_in_zones::get_time_in_zones(&conn, &id).map_err(|e| e.to_string())?;
+    let mut time_in_zones = db::time_in_zones::get_time_in_zones(&conn, &id).map_err(|e| e.to_string())?;
+    // No HR rows from the device (Zwift, Syzify's own rides): worked out
+    // from the heart rate on the recovery load's tops, fitted to the timer
+    // (#298). Rows the
+    // device did write — even all zero — stay its word; they come back
+    // with an id, these without one.
+    if !time_in_zones.iter().any(|z| z.zone_type == "hr") {
+        let worked_out = db::training_load::hr_zones_from_stream(
+            &conn,
+            &id,
+            &activity.start_time,
+            &activity.sport_type,
+            activity.duration_s,
+            &trackpoints.t,
+            &trackpoints.hr,
+        )
+        .map_err(|e| e.to_string())?;
+        time_in_zones.extend(worked_out);
+    }
     let hrv_samples = db::hrv_samples::get_hrv_samples(&conn, &id).map_err(|e| e.to_string())?;
     let gear_id = db::gear::gear_of_activity(&conn, &id).map_err(|e| e.to_string())?;
     let is_multisport = db::multisport_legs::is_multisport(&conn, &id).map_err(|e| e.to_string())?;
@@ -1003,6 +1021,69 @@ mod tests {
         let detail = get_activity_detail("zwift".into(), app.state()).unwrap();
         let ids: Vec<&str> = detail.recent_power.iter().map(|p| p.activity_id.as_str()).collect();
         assert_eq!(ids, ["road"]);
+    }
+
+    /// A ride with no HR zones of its own gets them from its heart rate
+    /// with the device's last tops (#298); a device's zones stay as they are.
+    #[test]
+    fn get_activity_detail_works_out_hr_zones_a_device_did_not_count() {
+        use tauri::Manager;
+        let vault = ScratchDir::new("detail_hr_zones");
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.manage(test_state(&vault));
+        {
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO activity (id, start_time, sport_type) VALUES
+                   ('road', '2026-10-01T08:00:00+00:00', 'ride'),
+                   ('zwift', '2026-10-17T18:00:00+00:00', 'virtual_ride');",
+            )
+            .unwrap();
+            let tops = [100.0, 120.0, 140.0, 160.0, 180.0, 190.0];
+            let row = |activity: &str, kind: &str, i: i32| crate::models::time_in_zone::TimeInZone {
+                id: None,
+                activity_id: activity.into(),
+                zone_type: kind.into(),
+                zone_index: i,
+                time_s: 60.0,
+                zone_high_boundary: tops.get(i as usize).copied(),
+            };
+            // The road ride's HR zones; Zwift's power zones (as #224 stores
+            // them), and no HR zones.
+            let rows: Vec<_> = (0..7).map(|i| row("road", "hr", i)).chain((0..7).map(|i| row("zwift", "power", i))).collect();
+            crate::db::time_in_zones::insert_time_in_zones(&conn, &rows).unwrap();
+            for (id, day) in [("road", "01"), ("zwift", "17")] {
+                for s in 0..=120 {
+                    conn.execute(
+                        "INSERT INTO trackpoint (activity_id, t, hr) VALUES (?1, ?2, 150)",
+                        rusqlite::params![id, format!("2026-10-{day}T18:{:02}:{:02}+00:00", s / 60, s % 60)],
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        let of = |id: &str, kind: &str| -> Vec<(i32, f64, Option<f64>)> {
+            let detail = get_activity_detail(id.into(), app.state()).unwrap();
+            let mut rows: Vec<_> = detail
+                .time_in_zones
+                .iter()
+                .filter(|z| z.zone_type == kind)
+                .map(|z| (z.zone_index, z.time_s, z.zone_high_boundary))
+                .collect();
+            rows.sort_by_key(|z| z.0);
+            rows
+        };
+        let hr_of = |id: &str| of(id, "hr");
+        let power = of("zwift", "power");
+        assert!(power.len() == 7 && power.iter().all(|z| z.1 == 60.0), "power as stored: {power:?}");
+        let zwift = hr_of("zwift");
+        assert_eq!(zwift.len(), 7, "{zwift:?}");
+        assert_eq!(zwift[3], (3, 120.0, Some(160.0)), "two minutes at 150: Z3 under the road ride's tops");
+        assert_eq!(zwift[6].2, None, "the top bucket is open");
+        assert!(hr_of("road").iter().all(|z| z.1 == 60.0), "the device's own rows, nothing added");
     }
 
     /// The three writes are one transaction: a failure while the zones are

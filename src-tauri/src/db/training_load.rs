@@ -10,8 +10,10 @@
 //! An activity whose file carries no HR zones (Zwift, Syzify's own indoor
 //! rides) but has a heart-rate stream gets its time in zone from the
 //! stream, with the zone boundaries the athlete's device last recorded
-//! (#294). Worked out on every read, never stored: the Time in Zones card
-//! keeps showing the device's own numbers only. A ride is often recorded
+//! (#294). Worked out on every read, never stored, so stored HR rows are
+//! always a device's; the Time in Zones card gets the same buckets from the
+//! same tops ([`hr_zones_from_stream`], #298), fitted to the timer — they
+//! differ from the load by the short stops. A ride is often recorded
 //! twice (Zwift and the bike computer, Syzify and Zwift): stream time that
 //! another recording already counts is left out. The stream counts elapsed
 //! time (a stop up to 30 s holds), the device its timer: within ~1 % on
@@ -22,6 +24,7 @@ use std::collections::BTreeMap;
 use rusqlite::{params, Connection, Result};
 
 use crate::models::activity::SportType;
+use crate::models::time_in_zone::TimeInZone;
 
 /// Intensity-factor equivalent per HR bucket (below-Z1, Z1…Z5, above max).
 const ZONE_IF: [f64; 7] = [0.3, 0.5, 0.65, 0.8, 0.95, 1.1, 1.15];
@@ -193,6 +196,63 @@ fn zones_of(stream: &[(f64, Option<f64>)], high: &[f64], covered: &[(f64, f64)])
         }
     }
     zones
+}
+
+/// HR zones worked out from an activity's own stream (`t` in seconds, `hr`
+/// as the detail page has them — its times read like [`instant`]'s for
+/// every stored kind but a naive one), as rows shaped like a device's, for
+/// the Time in Zones card and the charts of a ride or a run with none of
+/// its own (#298): the same tops and buckets as its load. Empty for any
+/// other sport (a swim's wrist heart rate on a runner's tops says little),
+/// with no heart rate, or with no tops at or before it. Never stored, so
+/// stored HR rows stay the device's.
+///
+/// The card reads the zones against the timer (`duration_s`), a device's
+/// own way; the stream holds a heart rate through short stops, so the
+/// seconds are scaled down to the timer when they run past it. The load
+/// keeps the unscaled seconds: the two differ by those stops.
+pub(crate) fn hr_zones_from_stream(
+    conn: &Connection,
+    activity_id: &str,
+    start: &str,
+    sport: &str,
+    duration_s: Option<f64>,
+    t: &[Option<f64>],
+    hr: &[Option<i32>],
+) -> Result<Vec<TimeInZone>> {
+    let has_hr = hr.iter().any(|h| h.is_some_and(|h| h > 0));
+    if !has_hr || SportType::family(sport).is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(at) = instant(start) else { return Ok(Vec::new()) };
+    let bounds = recorded_bounds(conn)?;
+    let Some(high) = bounds_for(&bounds, sport, at) else { return Ok(Vec::new()) };
+    let mut stream: Vec<(f64, Option<f64>)> =
+        t.iter().zip(hr).filter_map(|(t, hr)| t.map(|t| (t, hr.map(f64::from)))).collect();
+    stream.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut zones = zones_of(&stream, high, &[]);
+    let total: f64 = zones.iter().sum();
+    if total == 0.0 {
+        return Ok(Vec::new());
+    }
+    if let Some(timer) = duration_s.filter(|&d| d > 0.0 && d < total) {
+        // `total × timer / total` can come out a hair past the timer, and
+        // the card drops a zone longer than the ride.
+        let scale = timer / total;
+        zones.iter_mut().for_each(|secs| *secs = (*secs * scale).min(timer));
+    }
+    Ok(zones
+        .iter()
+        .enumerate()
+        .map(|(i, &secs)| TimeInZone {
+            id: None,
+            activity_id: activity_id.to_string(),
+            zone_type: "hr".to_string(),
+            zone_index: i as i32,
+            time_s: secs,
+            zone_high_boundary: high.get(i).copied(),
+        })
+        .collect())
 }
 
 /// The spans of the activities whose device zones count, on `day` or a
@@ -579,6 +639,69 @@ mod tests {
         assert!((daily["2026-11-11"] - 64.0).abs() < 0.01, "{daily:?}");
         assert!(!daily.contains_key("2026-11-12"), "{daily:?}");
         assert!(!daily.contains_key("2026-11-21") && !daily.contains_key("2026-11-22"), "{daily:?}");
+    }
+
+    #[test]
+    fn hr_zones_for_the_card_come_from_the_stream_or_not_at_all() {
+        let conn = db::test_db();
+        activity_sport(&conn, "zones", "2026-11-01T09:00:00+03:00", "ride");
+        zones_with_tops(&conn, "zones", &TOPS, &[0.0, 0.0, 0.0, 60.0, 0.0, 0.0, 0.0]);
+        // Times in seconds (only their differences count), as the detail
+        // page has them; a sample with no time is left out, one out of
+        // order is put in its place.
+        let start = "2026-11-12T18:00:00+03:00";
+        let t = [Some(100.0), Some(102.0), None, Some(101.0), Some(103.0)];
+        let hr = [Some(150), Some(170), Some(150), Some(150), None];
+        let zones = |sport: &str, duration: Option<f64>| {
+            hr_zones_from_stream(&conn, "zwift", start, sport, duration, &t, &hr).unwrap()
+        };
+        let rows = zones("virtual_ride", Some(3.0));
+        let seconds: Vec<f64> = rows.iter().map(|z| z.time_s).collect();
+        assert_eq!(seconds, [0.0, 0.0, 0.0, 2.0, 1.0, 0.0, 0.0]);
+        assert!(rows.iter().all(|z| z.activity_id == "zwift" && z.zone_type == "hr" && z.id.is_none()));
+        let tops: Vec<Option<f64>> = rows.iter().map(|z| z.zone_high_boundary).collect();
+        assert_eq!(tops[..6], TOPS.map(Some));
+        assert_eq!(tops[6], None);
+        assert_eq!(zones("run", None).len(), 7, "a run, no timer: as counted");
+        // A swim, no tops before it, a start that does not read, no heart
+        // rate: none.
+        assert!(zones("swim", None).is_empty());
+        let none = |start: &str, hr: &[Option<i32>]| {
+            hr_zones_from_stream(&conn, "x", start, "ride", None, &t, hr).unwrap().is_empty()
+        };
+        assert!(none("2026-10-01T09:00:00+03:00", &hr));
+        assert!(none("someday", &hr));
+        assert!(none(start, &[None, Some(0), None, Some(0), None]));
+        assert!(none(start, &[None, None, None, None, Some(150)]), "the last sample alone: no seconds");
+    }
+
+    /// Like Syzify's ride of 11.11: 1 Hz with a stop the timer left out.
+    /// The heart rate held through the stop would run the zones past the
+    /// timer, and the card drops a zone longer than the ride: scaled down.
+    #[test]
+    fn hr_zones_for_the_card_fit_the_timer() {
+        let conn = db::test_db();
+        activity_sport(&conn, "zones", "2026-11-01T09:00:00+03:00", "ride");
+        zones_with_tops(&conn, "zones", &TOPS, &[0.0, 0.0, 0.0, 60.0, 0.0, 0.0, 0.0]);
+        let mut t: Vec<Option<f64>> = (0..60).map(|s| Some(s as f64)).collect();
+        t.extend((0..74).map(|s| Some(88.0 + s as f64)));
+        let hr: Vec<Option<i32>> = (0..134).map(|i| Some(if i < 14 { 110 } else { 125 })).collect();
+        let rows = hr_zones_from_stream(&conn, "syzify", "2026-11-11T19:08:57+03:00", "indoor_ride", Some(134.0), &t, &hr)
+            .unwrap();
+        let total: f64 = rows.iter().map(|z| z.time_s).sum();
+        assert!((total - 134.0).abs() < 1e-9, "{total}");
+        assert!(rows.iter().all(|z| z.time_s <= 134.0));
+        assert!(rows[2].time_s > rows[1].time_s, "Z2 is the ride's: {rows:?}");
+
+        // All in one zone, 43 s held over a 14 s timer: 43 × (14 / 43) is
+        // 14.000000000000002 in floating point — never past the timer.
+        let mut t: Vec<Option<f64>> = (0..=13).map(|s| Some(s as f64)).collect();
+        t.push(Some(43.0));
+        let hr = vec![Some(125); t.len()];
+        let rows = hr_zones_from_stream(&conn, "short", "2026-11-11T19:08:57+03:00", "indoor_ride", Some(14.0), &t, &hr)
+            .unwrap();
+        assert_eq!(rows[2].time_s, 14.0, "{rows:?}");
+        assert!(rows.iter().all(|z| z.time_s <= 14.0));
     }
 
     #[test]

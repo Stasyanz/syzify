@@ -51,7 +51,9 @@ const COLORS: Record<ZoneType, string[]> = { hr: HR_ZONE_COLORS, power: POWER_ZO
  * floor), 1…N = the zones, and for HR one more "above max" bucket without
  * a boundary; power's top bucket carries a sentinel ceiling (3393 W).
  * Like Garmin, only Z1…N are shown, the edge buckets are dropped and the
- * percentages are of the timer duration — a list may sum below 100 %.
+ * percentages are of the timer duration — a list may sum below 100 %
+ * (HR buckets worked out from a heart-rate stream are scaled to fit the
+ * timer, #298).
  * The top zone's own ceiling is never read (sentinel / null): it shows as
  * "> floor". Which bucket is Z1 comes from `zoneIndexOffset`, shared with
  * the charts so the bar here and the band behind the HR chart agree.

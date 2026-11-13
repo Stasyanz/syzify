@@ -59,6 +59,17 @@ describe("timeInZoneRows", () => {
     expect(rows.map((r) => r.color)).toEqual(HR_ZONE_COLORS);
   });
 
+  it("shows HR worked out from a ride's heart rate like a device's (#298)", () => {
+    // Syzify's 134 s ride: no id (not stored), scaled by the backend to
+    // fill the timer — the ride's own zone is shown, not dropped.
+    const worked = [0, 11.6, 122.4, 0, 0, 0, 0].map((s, i) =>
+      row("hr", i, s, [100, 120, 140, 160, 180, 190][i] ?? null),
+    );
+    const rows = timeInZoneRows(worked, "hr", 134)!;
+    expect(rows.map((r) => Math.round(r.timeS))).toEqual([12, 122, 0, 0, 0]);
+    expect(rows.map((r) => Math.round(r.pct))).toEqual([9, 91, 0, 0, 0]);
+  });
+
   it("writes the range's unit in the interface language (#232)", () => {
     useLanguageStore.getState().setPref("ru");
     try {
