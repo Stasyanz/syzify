@@ -33,6 +33,8 @@ describe("training api wrappers (#273)", () => {
     expect(mocked).toHaveBeenLastCalledWith("training_set_ant_key", { key: "01 23" });
     await api.trainingSetAntKey(null);
     expect(mocked).toHaveBeenLastCalledWith("training_set_ant_key", { key: null });
+    await api.getLegalText("antKey");
+    expect(mocked).toHaveBeenLastCalledWith("get_legal_text", { doc: "antKey" });
     await api.trainingSetWorkoutsDir("/w");
     expect(mocked).toHaveBeenLastCalledWith("training_set_workouts_dir", { dir: "/w" });
     await api.trainingStartWorkout("user/ss.zwo");

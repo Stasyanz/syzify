@@ -100,20 +100,27 @@ mod tests {
     /// A build given the key checks the cheap look against it.
     #[test]
     fn the_cheap_look_is_the_key_s() {
-        if let Some(key) = network_key(None) {
-            assert_eq!(key.iter().fold(0u8, |s, &b| s.wrapping_add(b)), KEY_SUM);
-            assert_eq!(key.iter().fold(0, |x, &b| x ^ b), KEY_XOR);
-        }
+        let built = network_key(None).map(|k| Looked::of(&k));
+        assert!(built.is_none_or(|l| (l.sum, l.xor) == (KEY_SUM, KEY_XOR)));
     }
 
     /// What a key with these sum, XOR and hash looks like.
-    struct Looked<'a> {
+    struct Looked {
         sum: u8,
         xor: u8,
-        sha: &'a str,
+        sha: String,
     }
 
-    impl Looked<'_> {
+    impl Looked {
+        /// How `key` looks.
+        fn of(key: &[u8; 8]) -> Looked {
+            Looked {
+                sum: key.iter().fold(0u8, |s, &b| s.wrapping_add(b)),
+                xor: key.iter().fold(0, |x, &b| x ^ b),
+                sha: hex::encode(Sha256::digest(key)),
+            }
+        }
+
         /// Whether eight bytes are the key, either way round.
         fn is(&self, w: &[u8]) -> bool {
             let (sum, xor) = w.iter().fold((0u8, 0u8), |(s, x), &b| (s.wrapping_add(b), x ^ b));
@@ -121,11 +128,11 @@ mod tests {
                 return false;
             }
             let mut key: [u8; 8] = w.try_into().expect("8 bytes");
-            if matches(&key, self.sha) {
+            if matches(&key, &self.sha) {
                 return true;
             }
             key.reverse();
-            matches(&key, self.sha)
+            matches(&key, &self.sha)
         }
 
         /// Whether `bytes` hold the key, however written: as bytes; as hex
@@ -183,11 +190,7 @@ mod tests {
 
     #[test]
     fn the_key_is_found_however_it_is_written() {
-        let dummy = Looked {
-            sum: DUMMY.iter().fold(0u8, |s, &b| s.wrapping_add(b)),
-            xor: DUMMY.iter().fold(0, |x, &b| x ^ b),
-            sha: &hex::encode(Sha256::digest(DUMMY)),
-        };
+        let dummy = Looked::of(&DUMMY);
         for written in [
             "const K: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];",
             "const K: [u8; 8] = [\n    0x01,\n    0x23,\n    0x45,\n    0x67,\n    0x89,\n    0xAB,\n    0xCD,\n    0xEF,\n];",
@@ -211,7 +214,7 @@ mod tests {
     /// its hash is here.
     #[test]
     fn the_key_is_in_no_file_of_the_repository() {
-        let key = Looked { sum: KEY_SUM, xor: KEY_XOR, sha: KEY_SHA256 };
+        let key = Looked { sum: KEY_SUM, xor: KEY_XOR, sha: KEY_SHA256.into() };
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
         let listed = std::process::Command::new("git")
             .args(["ls-files", "--cached", "--others", "--exclude-standard"])

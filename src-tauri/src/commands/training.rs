@@ -961,34 +961,50 @@ mod tests {
         block_on(training_leave(handle)).unwrap();
     }
 
-    /// The async workout commands, called the way the screen calls them.
-    #[test]
-    fn the_workout_commands_answer_over_ipc() {
-        use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
-        let vault = ScratchDir::new("training_ipc");
-        let app = mock_builder()
-            .invoke_handler(tauri::generate_handler![training_workouts, training_start_workout])
-            .build(mock_context(noop_assets()))
-            .unwrap();
+    type MockApp = tauri::App<tauri::test::MockRuntime>;
+    type MockWebview = tauri::WebviewWindow<tauri::test::MockRuntime>;
+
+    /// An app on `vault` serving `handler`'s commands, and its window.
+    fn ipc_app<H>(vault: &ScratchDir, handler: H) -> (MockApp, MockWebview)
+    where
+        H: Fn(tauri::ipc::Invoke<tauri::test::MockRuntime>) -> bool + Send + Sync + 'static,
+    {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let app = mock_builder().invoke_handler(handler).build(mock_context(noop_assets())).unwrap();
         let mut state = crate::test_support::app_state_on(crate::db::test_db());
         state.vault_path = vault.to_path_buf();
         app.manage(state);
         app.manage(TrainingState::default());
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
-        let call = |cmd: &str, body: serde_json::Value| {
-            get_ipc_response(
-                &webview,
-                tauri::webview::InvokeRequest {
-                    cmd: cmd.into(),
-                    callback: tauri::ipc::CallbackFn(0),
-                    error: tauri::ipc::CallbackFn(1),
-                    url: "http://tauri.localhost".parse().unwrap(),
-                    body: tauri::ipc::InvokeBody::Json(body),
-                    headers: Default::default(),
-                    invoke_key: INVOKE_KEY.to_string(),
-                },
-            )
-        };
+        (app, webview)
+    }
+
+    /// `cmd` called the way the screen calls it.
+    fn invoke(
+        webview: &MockWebview,
+        cmd: &str,
+        body: serde_json::Value,
+    ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            webview,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+    }
+
+    /// The async workout commands, called the way the screen calls them.
+    #[test]
+    fn the_workout_commands_answer_over_ipc() {
+        let vault = ScratchDir::new("training_ipc");
+        let (_app, webview) = ipc_app(&vault, tauri::generate_handler![training_workouts, training_start_workout]);
+        let call = |cmd: &str, body: serde_json::Value| invoke(&webview, cmd, body);
         let list = call("training_workouts", serde_json::json!({})).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(list, serde_json::json!({ "dir": null, "missing": false, "workouts": [] }));
         let refused = call("training_start_workout", serde_json::json!({ "path": "a.zwo" })).unwrap_err();
@@ -1183,5 +1199,9 @@ mod tests {
         assert_eq!(connect.unwrap_err(), unsupported());
         let nameless = training_connect("".into(), vec![], None, app.handle().clone());
         assert_eq!(nameless.unwrap_err().code, Some("training.noTrainer"));
+        // The async scan answers over IPC too.
+        let (_ipc, webview) = ipc_app(&vault, tauri::generate_handler![training_scan]);
+        let refused = invoke(&webview, "training_scan", serde_json::json!({})).unwrap_err();
+        assert!(refused.to_string().contains("training.unsupported"), "{refused}");
     }
 }
