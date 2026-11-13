@@ -284,11 +284,14 @@ impl View {
             slept_s: if slept > SLEEP_SLACK { slept as u32 } else { 0 },
             release_unconfirmed: self.release_unconfirmed,
             erg: match phase {
+                TrainingPhase::Pairing if session.target_power() == Some(false) => None,
                 TrainingPhase::Pairing => self.erg.ready(),
                 // Letting go at the end is the runner's, not ERG's.
                 TrainingPhase::Finishing => None,
                 _ => self.erg.view(),
             },
+            // Said before the ride too, while another trainer can be picked.
+            erg_unsupported: session.target_power() == Some(false),
             // ERG says nothing before the ride; the end is the runner's.
             power_match: self.erg.matching().filter(|_| phase != TrainingPhase::Finishing),
             workout: match phase {
@@ -746,6 +749,26 @@ mod tests {
         r.ask(Order::Discard).unwrap();
         let seen = r.join();
         assert_eq!(seen.calls, vec!["begin", "discard", "done"]);
+    }
+
+    /// A trainer that said it cannot hold watts: the screen says so while
+    /// pairing, when another can still be picked (#292).
+    #[test]
+    fn a_trainer_without_erg_is_said_before_the_ride() {
+        let vault = ScratchDir::new("runner_no_erg");
+        let mut cfg = FakeConfig::elite_avanti(80);
+        cfg.identity.target_power = Some(false);
+        cfg.identify_after = Duration::ZERO;
+        let r = Running::start(Session::pairing(Box::new(FakeTrainer::new(cfg)), None, None), &vault, false);
+        r.run_to(1_000);
+        assert!(r.last().erg_unsupported, "said with no target set");
+        r.tell(Order::SetTarget(Some(160)));
+        r.run_to(2_000);
+        let live = r.last();
+        assert!(live.erg_unsupported);
+        assert_eq!(live.erg, None, "no target is held with it");
+        r.ask(Order::Leave).unwrap();
+        r.join();
     }
 
     #[test]

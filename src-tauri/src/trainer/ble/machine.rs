@@ -493,6 +493,10 @@ impl Machine {
                 actions.push(Action::Read { characteristic: c });
             }
         }
+        // What the trainer can be told to do: ERG or not.
+        if self.has_control_point && characteristics.contains(&gatt::FTMS_FEATURE) {
+            actions.push(Action::Read { characteristic: gatt::FTMS_FEATURE });
+        }
         // After the first connection every loss went through `lose`, which
         // set `lost_at`: a connect without it is the first.
         if let Some(lost) = self.lost_at.take() {
@@ -553,6 +557,16 @@ impl Machine {
     }
 
     fn read(&mut self, at: Duration, characteristic: u16, value: &[u8]) {
+        if characteristic == gatt::FTMS_FEATURE {
+            let said = gatt::parse_target_power_supported(value);
+            if said.is_some() && said != self.identity.target_power {
+                self.identity.target_power = said;
+                if self.identified {
+                    self.events.push(LinkEvent::Identified { at, identity: self.identity.clone() });
+                }
+            }
+            return;
+        }
         let text = String::from_utf8_lossy(value).trim_end_matches('\0').trim().to_string();
         if text.is_empty() {
             return;
@@ -839,6 +853,46 @@ mod tests {
         let id = m.identity().cloned().unwrap_or_else(|| Identity::new(Transport::Ble));
         assert_eq!((id.model.as_deref(), id.firmware.as_deref()), (Some("Avanti"), Some("37")));
         assert_eq!(m.take_events().len(), 2, "each field announced");
+    }
+
+    /// FTMS Fitness Machine Feature says whether the trainer holds a target
+    /// power (#292): read with the rest, told once per change.
+    #[test]
+    fn the_trainer_says_whether_it_holds_watts() {
+        let mut m = Machine::new(Target::any(Role::Trainer), s(0.0));
+        m.handle(s(0.1), Input::Radio(RadioState::On));
+        let chars = [&TRAINER_CHARS[..], &[gatt::FTMS_FEATURE]].concat();
+        let actions = connect(&mut m, 1.0, &chars);
+        assert!(actions.contains(&Action::Read { characteristic: gatt::FTMS_FEATURE }), "{actions:?}");
+        m.take_events();
+        let c = conn(&m);
+        // Machine features, then target setting features (bit 3: power).
+        let feature = |settings: u8| vec![0x83, 0x14, 0, 0, settings, 0x20, 0, 0];
+        for (at, value) in [(3.0, vec![1, 2, 3]), (3.1, feature(0x0C)), (3.2, feature(0x0C)), (3.3, feature(0x04))] {
+            m.handle(s(at), Input::Read { conn: c, characteristic: gatt::FTMS_FEATURE, value });
+        }
+        let said: Vec<Option<bool>> = m
+            .take_events()
+            .iter()
+            .filter_map(|e| if let LinkEvent::Identified { identity, .. } = e { Some(identity.target_power) } else { None })
+            .collect();
+        assert_eq!(said, [Some(true), Some(false)], "too short says nothing, a repeat nothing new");
+    }
+
+    /// Pedals offering the same characteristic are not asked: it is a
+    /// trainer's question.
+    #[test]
+    fn only_a_trainer_is_asked_whether_it_holds_watts() {
+        let mut m = Machine::new(Target::any(Role::Pedals), s(0.0));
+        m.handle(s(0.1), Input::Radio(RadioState::On));
+        let assioma = Advert { address: "P".into(), name: Some("ASSIOMA55430L".into()), services: vec![gatt::CYCLING_POWER] };
+        m.handle(s(1.0), Input::Advertised(assioma));
+        let c = conn(&m);
+        m.handle(s(1.5), Input::Connected { conn: c });
+        let chars = vec![gatt::CYCLING_POWER_MEASUREMENT, gatt::FTMS_FEATURE, gatt::FTMS_CONTROL_POINT];
+        let actions = m.handle(s(2.0), Input::Discovered { conn: c, characteristics: chars });
+        assert!(actions.contains(&Action::Subscribe { characteristic: gatt::CYCLING_POWER_MEASUREMENT }), "discovered: {actions:?}");
+        assert!(!actions.contains(&Action::Read { characteristic: gatt::FTMS_FEATURE }), "{actions:?}");
     }
 
     #[test]

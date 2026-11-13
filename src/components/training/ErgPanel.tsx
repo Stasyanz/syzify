@@ -95,6 +95,32 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
   };
   // A workout sets the target: no steps of one's own, a way out.
   const following = live.workout != null && !live.workout.done;
+  // A trainer without ERG: nothing to set, said why — before the ride
+  // with a way out, during it with the brake being let go if it was on. A
+  // workout picked still guides, and can still be stopped.
+  if (live.erg_unsupported) {
+    return (
+      <section className="dash-card flex flex-col gap-2" aria-label={t("training.erg.title")}>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs uppercase tracking-wide text-faint">{t("training.erg.title")}</span>
+          {following && (
+            <button className={button} disabled={set.isPending} onClick={off}>
+              {t("training.workout.stop")}
+            </button>
+          )}
+        </div>
+        <p className="text-sm px-3 py-2 rounded-field bg-warn-soft" role="status">
+          {t(live.phase === "pairing" ? "training.erg.unsupportedPairing" : "training.erg.unsupported")}
+        </p>
+        {live.erg && (
+          <p className="text-sm" data-state={live.erg.state}>
+            {stateText(live.erg.state, t)}
+          </p>
+        )}
+        {live.workout && <WorkoutProgress workout={live.workout} />}
+      </section>
+    );
+  }
   return (
     <section className="dash-card flex flex-col gap-2" aria-label={t("training.erg.title")}>
       <div className="flex flex-wrap items-center gap-3">

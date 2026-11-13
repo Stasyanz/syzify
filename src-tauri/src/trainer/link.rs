@@ -67,6 +67,10 @@ pub struct Identity {
     /// BLE Device Information: Model Number String.
     pub model: Option<String>,
     pub firmware: Option<String>,
+    /// Whether the trainer says it can hold a target power (ERG): ANT+ FE-C
+    /// page 0x36, BLE FTMS Target Setting Features. None until it said — a
+    /// trainer that never says is taken at its word when it acknowledges.
+    pub target_power: Option<bool>,
 }
 
 impl Identity {
@@ -81,6 +85,7 @@ impl Identity {
             manufacturer: None,
             model: None,
             firmware: None,
+            target_power: None,
         }
     }
 }

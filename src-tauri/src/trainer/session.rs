@@ -53,6 +53,10 @@ pub struct Moment<'a> {
     pub paused: bool,
     /// The trainer's profile (generic until it said who it is).
     pub profile: &'static TrainerProfile,
+    /// Whether the trainer said it can hold a target power (None: not said,
+    /// as a trainer that never does). Said while pairing, before any
+    /// controller was called.
+    pub target_power: Option<bool>,
     /// The ride has pedals…
     pub has_pedals: bool,
     /// …and they were never heard yet.
@@ -146,6 +150,8 @@ pub struct Session {
     pauses: Vec<(u32, u32)>,
     devices: [Option<Device>; 3],
     profile: Option<&'static TrainerProfile>,
+    /// What the trainer said of holding a target power.
+    target_power: Option<bool>,
     /// Readings by the second they fall in, until it closes.
     buckets: BTreeMap<u32, Vec<(Source, Reading)>>,
     /// The first second not closed yet.
@@ -203,6 +209,7 @@ impl Session {
             pauses: Vec::new(),
             devices: [None, None, None],
             profile: None,
+            target_power: None,
             buckets: BTreeMap::new(),
             next_second: 0,
             for_controllers: Vec::new(),
@@ -249,6 +256,11 @@ impl Session {
     /// The profile the trainer's identity picked, once it said.
     pub fn identified_profile(&self) -> Option<&'static TrainerProfile> {
         self.profile
+    }
+
+    /// Whether the trainer said it can hold a target power (None: not said).
+    pub fn target_power(&self) -> Option<bool> {
+        self.target_power
     }
 
     /// The devices this session has: the trainer, then pedals and strap if
@@ -345,6 +357,7 @@ impl Session {
                 ride_s: self.seconds.len() as u32,
                 paused: self.paused(),
                 profile: self.profile(),
+                target_power: self.target_power,
                 has_pedals: self.pedals.is_some(),
                 pedals_awaited: self.pedals.is_some() && self.last_pedals.is_none(),
                 pedals_heard_in: self.last_pedals.map(|(s, _, _)| s),
@@ -408,7 +421,14 @@ impl Session {
     }
 
     fn identified(&mut self, source: Source, identity: &Identity, warnings: &mut Vec<String>) {
+        // An ANT+ trainer says whether it holds watts before it names itself
+        // (0x50, every ~16 s): taken at once, the profile only once it is
+        // known who it is.
+        let unnamed = identity.transport == Transport::Ant && (identity.ant_manufacturer.is_none() || identity.ant_model.is_none());
         if source == Source::Trainer {
+            self.target_power = identity.target_power;
+        }
+        if source == Source::Trainer && !unnamed {
             let profile = profile_for(identity);
             if self.profile.map(|p| p.key) != Some(profile.key) {
                 self.profile = Some(profile);

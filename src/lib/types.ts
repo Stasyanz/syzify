@@ -1155,6 +1155,9 @@ export interface TrainingLive {
   slept_s: number;
   /** ERG while a target is set (or the brake is being let go); null riding free. */
   erg: ErgLive | null;
+  /** The trainer said it cannot hold a target power: ERG is off with it,
+   * whatever the target (said while pairing too). */
+  erg_unsupported: boolean;
   /** Power match, while ERG holds a target on a ride with pedals. */
   power_match: MatchLive | null;
   /** The workout ERG follows, if one. */

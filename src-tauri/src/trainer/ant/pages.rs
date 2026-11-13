@@ -205,6 +205,8 @@ pub fn absorb(identity: &mut Identity, kind: u8, p: &[u8; 8]) -> bool {
             identity.ant_model = Some(u16::from_le_bytes([p[6], p[7]]));
         }
         (_, _, 0x51) => identity.firmware = Some(firmware(p[2], p[3])),
+        // FE-C capabilities: byte 7 bit 1, target power (ERG).
+        (KIND_FEC, _, PAGE_CAPABILITIES) => identity.target_power = Some(p[7] & 0x02 != 0),
         _ => {}
     }
     if let (Some(maker), None) = (identity.ant_manufacturer, &identity.manufacturer) {
@@ -250,6 +252,15 @@ pub fn control_page(control: Control) -> [u8; 8] {
         Control::Resistance(pct) => [0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, pct.min(100) * 2],
         Control::Release => [0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0],
     }
+}
+
+/// FE-C page 0x36: what the trainer can be told to do.
+pub const PAGE_CAPABILITIES: u8 = 0x36;
+
+/// Common page 0x46: ask the device to broadcast `page` four times (four,
+/// because a third of a trainer's packets do not arrive).
+pub fn request_page(page: u8) -> [u8; 8] {
+    [0x46, 0xFF, 0xFF, 0xFF, 0xFF, 0x04, page, 0x01]
 }
 
 #[cfg(test)]
@@ -411,6 +422,14 @@ mod tests {
         assert!(!absorb(&mut avanti, KIND_FEC, &[0x50, 0xFF, 0xFF, 1, 86, 0, 45, 0]), "nothing new");
         assert!(absorb(&mut avanti, KIND_FEC, &[0x51, 0xFF, 5, 37, 1, 2, 3, 4]), "known, and more");
         assert_eq!(avanti.firmware.as_deref(), Some("3.705"));
+        // 0x36 as the Avanti sends it: basic, target power, simulation.
+        assert!(absorb(&mut avanti, KIND_FEC, &[0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07]), "it can hold watts");
+        assert_eq!(avanti.target_power, Some(true));
+        assert!(absorb(&mut avanti, KIND_FEC, &[0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xD0, 0x07, 0x05]), "it cannot");
+        assert_eq!(avanti.target_power, Some(false));
+        let mut pedals = identity_of(Sender { number: 2, kind: KIND_POWER });
+        absorb(&mut pedals, KIND_POWER, &[0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07]);
+        assert_eq!(pedals.target_power, None, "0x36 is a trainer's page only");
 
         let mut strap = identity_of(Sender { number: 7, kind: KIND_HEART });
         assert!(!absorb(&mut strap, KIND_HEART, &[0x82, 1, 0, 0, 0, 0, 0, 120]));
@@ -433,6 +452,7 @@ mod tests {
         assert_eq!(control_page(Control::Resistance(40))[7], 80);
         assert_eq!(control_page(Control::Resistance(250))[7], 200, "above 100 counts as 100");
         assert_eq!(control_page(Control::Release), [0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0]);
+        assert_eq!(request_page(PAGE_CAPABILITIES), [0x46, 0xFF, 0xFF, 0xFF, 0xFF, 0x04, 0x36, 0x01]);
         assert_eq!((period(KIND_FEC), period(KIND_POWER), period(KIND_HEART)), (8192, 8182, 8070));
     }
 }

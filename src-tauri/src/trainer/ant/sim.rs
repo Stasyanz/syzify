@@ -4,6 +4,7 @@
 //! ANT+ link, without a radio.
 
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::frame::*;
@@ -27,6 +28,21 @@ struct Stick {
     events: u8,
     accumulated: u16,
     pages: u32,
+    /// What the trainer answers a request for its capabilities (FE-C 0x36
+    /// byte 7); None: it never answers.
+    capabilities: Option<u8>,
+    /// Pages sent before it first names itself (0x50), then every 16th.
+    names_after: u32,
+    log: Arc<Mutex<StickLog>>,
+}
+
+/// What a fake stick was sent, readable after its link went into a session.
+#[derive(Debug, Default)]
+pub struct StickLog {
+    /// Requests for the trainer's capabilities.
+    pub asked: u32,
+    /// The controls it took, in order.
+    pub taken: Vec<Control>,
 }
 
 impl Stick {
@@ -34,12 +50,21 @@ impl Stick {
     fn take(&mut self, m: Msg) {
         match m.id {
             MSG_RESET => self.out.push(Msg::new(MSG_STARTUP, &[0x20])),
+            // A request for a page: taken, and answered when the trainer can.
+            MSG_ACKNOWLEDGED if m.data[1] == 0x46 => {
+                self.log.lock().unwrap().asked += 1;
+                self.out.push(event(0, EVENT_TRANSFER_TX_COMPLETED));
+                if let Some(modes) = self.capabilities {
+                    self.out.push(data(0, NUMBER, KIND_FEC, [0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, modes]));
+                }
+            }
             MSG_ACKNOWLEDGED => {
                 let control = match (m.data[1], m.data[8]) {
                     (0x31, _) => Control::TargetPower(u16::from_le_bytes([m.data[7], m.data[8]]) / 4),
                     (_, 0) => Control::Release,
                     (_, half) => Control::Resistance(half / 2),
                 };
+                self.log.lock().unwrap().taken.push(control);
                 let id = self.trainer.send(control);
                 self.sent.insert(id);
             }
@@ -54,7 +79,7 @@ impl Stick {
                 LinkEvent::Reading(r) => {
                     self.pages += 1;
                     // The trainer says who it is now and then, like FE-C.
-                    if self.pages % 16 == 1 {
+                    if self.pages > self.names_after && self.pages % 16 == 1 {
                         self.out.push(data(0, NUMBER, KIND_FEC, [0x50, 0xFF, 0xFF, 1, 86, 0, 45, 0]));
                     }
                     let watts = r.watts.unwrap_or(0);
@@ -88,11 +113,40 @@ pub struct AntSim {
 }
 
 impl AntSim {
+    /// A trainer that can hold a target power, as the Avanti says.
     pub fn new(trainer: FakeTrainer) -> AntSim {
+        AntSim::saying(trainer, Some(0x07))
+    }
+
+    /// A trainer that answers a request for its capabilities with `modes`
+    /// (FE-C 0x36 byte 7), or never.
+    pub fn saying(trainer: FakeTrainer, modes: Option<u8>) -> AntSim {
         let (machine, reset) = Machine::new(Duration::ZERO, &[0; 8], &[Wanted { role: SensorRole::Trainer, number: 0 }]);
-        let mut stick = Stick { trainer, out: Vec::new(), sent: HashSet::new(), events: 0, accumulated: 0, pages: 0 };
+        let mut stick = Stick {
+            trainer,
+            out: Vec::new(),
+            sent: HashSet::new(),
+            events: 0,
+            accumulated: 0,
+            pages: 0,
+            capabilities: modes,
+            names_after: 0,
+            log: Arc::default(),
+        };
         stick.take(reset);
         AntSim { machine, stick, now: Duration::ZERO, identity: None, next_id: 0 }
+    }
+
+    /// The trainer names itself (0x50) only after `pages` pages, as a real
+    /// one does every ~16 s: what it can do comes first.
+    pub fn naming_after(mut self, pages: u32) -> AntSim {
+        self.stick.names_after = pages;
+        self
+    }
+
+    /// What the stick was sent, from now on.
+    pub fn log(&self) -> Arc<Mutex<StickLog>> {
+        self.stick.log.clone()
     }
 
     /// Everything the stick has to say goes to the machine, and what the
@@ -161,7 +215,10 @@ mod tests {
     }
 
     fn ride(cfg: FakeConfig, target: u16, until: u64) -> (Session, ErgHandle) {
-        let link = AntSim::new(FakeTrainer::new(cfg));
+        ride_on(AntSim::new(FakeTrainer::new(cfg)), target, until)
+    }
+
+    fn ride_on(link: AntSim, target: u16, until: u64) -> (Session, ErgHandle) {
         let mut session = Session::new(Duration::ZERO, 0, SubSport::IndoorCycling, Box::new(link), None, None, None);
         let erg = ErgHandle::default();
         erg.set_target(Some(target));
@@ -186,6 +243,45 @@ mod tests {
         assert!(held(&session, 15, 90, 180), "{:?}", session.seconds()[15..25].iter().map(|s| s.trainer_watts).collect::<Vec<_>>());
         assert_eq!(session.identified_profile().map(|p| p.key), Some("elite-avanti"));
         assert_eq!(erg.view().map(|v| v.state), Some(crate::models::training::ErgState::Holding));
+    }
+
+    /// What a trainer says it can do, through the stick (#292): one that
+    /// holds watts is asked once and held; one that cannot is never sent a
+    /// target and the screen says so; one that never says is asked six
+    /// times and held as before.
+    #[test]
+    fn a_trainer_says_through_the_stick_whether_it_holds_watts() {
+        use crate::models::training::ErgState;
+        // It names itself only after ~16 s: what it can do counts before.
+        let ride_saying = |modes: Option<u8>| {
+            let link = AntSim::saying(FakeTrainer::new(FakeConfig::elite_avanti(85)), modes).naming_after(63);
+            let log = link.log();
+            let (session, erg) = ride_on(link, 180, 60);
+            let log = log.lock().unwrap();
+            (session, erg.view().map(|v| v.state), log.asked, log.taken.clone())
+        };
+        let (session, state, asked, _) = ride_saying(Some(0x07));
+        assert_eq!((state, asked, session.target_power()), (Some(ErgState::Holding), 1, Some(true)));
+        assert!(held(&session, 15, 60, 180));
+
+        let (session, state, asked, taken) = ride_saying(Some(0x05));
+        assert_eq!((state, asked, session.target_power()), (None, 1, Some(false)), "ridden free");
+        assert!(!taken.iter().any(|c| matches!(c, Control::TargetPower(_))), "never a target: {taken:?}");
+
+        let (session, state, asked, _) = ride_saying(None);
+        assert_eq!((state, asked, session.target_power()), (Some(ErgState::Holding), 6, None));
+
+        // What it can do is taken at once, its profile once it is named.
+        let link = AntSim::new(FakeTrainer::new(FakeConfig::elite_avanti(85))).naming_after(63);
+        let mut session = Session::new(Duration::ZERO, 0, SubSport::IndoorCycling, Box::new(link), None, None, None);
+        for q in 1..=5 * 4 {
+            session.tick(Duration::from_millis(q * 250));
+        }
+        assert_eq!((session.target_power(), session.identified_profile().map(|p| p.key)), (Some(true), None));
+        for q in 5 * 4..=30 * 4 {
+            session.tick(Duration::from_millis(q * 250));
+        }
+        assert_eq!(session.identified_profile().map(|p| p.key), Some("elite-avanti"));
     }
 
     /// A drop: the stick reports it, the trainer comes back by itself, and

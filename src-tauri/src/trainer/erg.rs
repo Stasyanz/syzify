@@ -471,9 +471,12 @@ impl Erg {
         }
     }
 
-    fn wish(&self, paused: bool, target: Option<u16>) -> Option<Control> {
+    /// What the trainer should be doing. One that said it cannot hold a
+    /// target power is never sent one (it may acknowledge it and do
+    /// nothing): let go, if a target went out before it said.
+    fn wish(&self, paused: bool, target: Option<u16>, holds_power: bool) -> Option<Control> {
         match target {
-            Some(t) if !paused && !self.released_low => Some(Control::TargetPower(t)),
+            Some(t) if !paused && !self.released_low && holds_power => Some(Control::TargetPower(t)),
             _ => self.held.then_some(Control::Release),
         }
     }
@@ -557,7 +560,8 @@ impl Controller for Erg {
             });
         }
         let to_trainer = target.map(|t| self.matcher.trainer_target(t));
-        let wish = self.wish(moment.paused, to_trainer);
+        let holds_power = moment.target_power != Some(false);
+        let wish = self.wish(moment.paused, to_trainer, holds_power);
         if wish.map(kind) != self.last_wish.map(kind) {
             self.off = 0;
             self.off_target = false;
@@ -583,7 +587,9 @@ impl Controller for Erg {
             }
         }
         let state = self.state(moment.paused, wish);
-        let view = match target {
+        // A trainer that cannot hold watts is ridden free, whatever the
+        // target (the screen says why).
+        let view = match target.filter(|_| holds_power) {
             Some(target_w) => Some(ErgLive { target_w, state }),
             // Riding free, the brake not confirmed let go yet: say so.
             None if wish == Some(Control::Release) && self.acked != Some(Control::Release) => {
@@ -1054,6 +1060,27 @@ mod tests {
         free.session.pause(free.now());
         free.to(secs(15));
         assert!(free.sent_between(secs(0), secs(15)).is_empty());
+    }
+
+    /// A trainer that says late it cannot hold a target power (#292): the
+    /// targets that went out before are let go — shown until confirmed —
+    /// none goes after, and it is ridden free.
+    #[test]
+    fn a_trainer_that_cannot_hold_watts_is_let_go_and_sent_no_target() {
+        let mut cfg = FakeConfig::elite_avanti(85);
+        cfg.identity.target_power = Some(false);
+        cfg.identify_after = secs(20);
+        let mut r = Ride::fake(cfg, Some(150));
+        r.to(secs(19));
+        assert!(r.sent_between(secs(0), secs(19)).contains(&Control::TargetPower(150)), "not said yet: held");
+        r.to(secs(40));
+        let after = r.sent_between(secs(20), secs(40));
+        assert_eq!(after.first(), Some(&Control::Release), "{after:?}");
+        assert!(!after.iter().any(|c| matches!(c, Control::TargetPower(_))), "{after:?}");
+        let said = r.log.lock().unwrap().states.iter().find(|(at, _)| *at >= secs(20)).map(|(_, v)| *v);
+        assert_eq!(said, Some(Some(ErgLive { target_w: 0, state: ErgState::Releasing })), "the release shown until confirmed");
+        assert_eq!(r.erg.view(), None, "ridden free");
+        assert_eq!(r.erg.matching(), None);
     }
 
     #[test]

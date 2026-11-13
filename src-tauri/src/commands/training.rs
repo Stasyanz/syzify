@@ -1166,6 +1166,7 @@ mod tests {
             warnings: vec![],
             slept_s: 0,
             erg: None,
+            erg_unsupported: false,
             release_unconfirmed: false,
             power_match: None,
             workout: None,

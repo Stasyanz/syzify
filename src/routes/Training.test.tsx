@@ -78,6 +78,7 @@ function live(over: Partial<TrainingLive> = {}): TrainingLive {
     slept_s: 0,
     erg: null,
     release_unconfirmed: false,
+    erg_unsupported: false,
     power_match: null,
     workout: null,
     ...over,
@@ -506,6 +507,39 @@ describe("Training during the ride", () => {
     hook.live = live({ phase: "finishing", release_unconfirmed: true });
     renderPage();
     expect(screen.getByText(/refused to let go: another app may control it/)).toBeTruthy();
+  });
+
+  it("says a trainer cannot hold watts, with nothing to set (#292)", async () => {
+    hook.live = live({ phase: "pairing", erg_unsupported: true });
+    renderPage();
+    expect(screen.getByText(/no ERG with it\. Ride free, or pick another trainer/)).toBeTruthy();
+    expect(screen.queryByText("Hold a power")).toBeNull();
+    cleanup();
+    // Said on the ride: the brake let go if it was on, the workout's
+    // steps still shown as a guide.
+    const workout = {
+      name: "SS",
+      step: 0,
+      steps: 2,
+      elapsed_s: 60,
+      total_s: 600,
+      step_left_s: 240,
+      free: false,
+      cadence: null,
+      next: null,
+      cue: null,
+      done: false,
+    };
+    hook.live = live({ erg_unsupported: true, erg: { target_w: 0, state: "releasing" }, workout });
+    renderPage();
+    expect(screen.getByText(/ERG is off, the ride is free/)).toBeTruthy();
+    expect(screen.getByText("Letting the brake go…")).toBeTruthy();
+    expect(screen.getByText("SS")).toBeTruthy();
+    expect(screen.queryByLabelText("Target power")).toBeNull();
+    expect(screen.queryByText("Hold a power")).toBeNull();
+    // The workout still has a way out.
+    fireEvent.click(screen.getByText("Stop the workout"));
+    await waitFor(() => expect(mocked.trainingSetTarget).toHaveBeenLastCalledWith(null));
   });
 
   it("shows the brake being let go after riding free, ERG off", () => {

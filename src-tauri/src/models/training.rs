@@ -296,6 +296,9 @@ pub struct TrainingLive {
     pub slept_s: u32,
     /// ERG, while a target is set; None riding free.
     pub erg: Option<ErgLive>,
+    /// The trainer said it cannot hold a target power: ERG is off with it,
+    /// whatever the target (said while pairing too).
+    pub erg_unsupported: bool,
     /// Power match, while ERG holds a target on a ride with pedals.
     pub power_match: Option<MatchLive>,
     /// The workout ERG follows, if one.

@@ -20,6 +20,15 @@ pub const HEART_RATE_MEASUREMENT: u16 = 0x2A37;
 pub const MANUFACTURER_NAME: u16 = 0x2A29;
 pub const MODEL_NUMBER: u16 = 0x2A24;
 pub const FIRMWARE_REVISION: u16 = 0x2A26;
+pub const FTMS_FEATURE: u16 = 0x2ACC;
+
+/// FTMS Fitness Machine Feature (0x2ACC): the machine's features (u32),
+/// then its target setting features (u32), whose bit 3 is "power target
+/// setting supported" — ERG. None when the value is too short to say.
+pub fn parse_target_power_supported(value: &[u8]) -> Option<bool> {
+    let settings = value.get(4..8)?;
+    Some(settings[0] & 0x08 != 0)
+}
 
 /// The Bluetooth base UUID with the 16-bit part zeroed.
 const BASE_UUID: u128 = 0x0000_0000_0000_1000_8000_0080_5F9B_34FB;
@@ -287,6 +296,13 @@ mod tests {
         assert_eq!(parse_heart_rate(&[0b100, 80]), None, "a number without contact is not a heart rate");
         assert_eq!(parse_heart_rate(&[0b110, 80]), Some(80), "contact detected");
         assert_eq!(parse_heart_rate(&[0b000, 0]), None, "zero");
+    }
+
+    #[test]
+    fn the_feature_word_says_whether_a_power_target_is_taken() {
+        assert_eq!(parse_target_power_supported(&[0x83, 0x14, 0, 0, 0x0C, 0x20, 0, 0]), Some(true));
+        assert_eq!(parse_target_power_supported(&[0xFF, 0xFF, 0xFF, 0xFF, 0x04, 0, 0, 0]), Some(false), "resistance only");
+        assert_eq!(parse_target_power_supported(&[0x83, 0x14, 0, 0, 0x08]), None, "too short");
     }
 
     #[test]

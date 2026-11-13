@@ -34,6 +34,11 @@ pub const ANT_PLUS_FREQ: u8 = 57;
 const RESET_WAIT: Duration = Duration::from_millis(1000);
 /// A configuration message unanswered this long: the stick is not there.
 const ANSWER_WAIT: Duration = Duration::from_secs(2);
+/// A trainer is asked for its capabilities (FE-C 0x36) this often until
+/// it says…
+const ASK_EVERY: Duration = Duration::from_secs(5);
+/// …this many times at most: one that never answers is taken at its word.
+const MAX_ASKS: u8 = 6;
 
 /// The device type of a role.
 pub fn kind_of(role: SensorRole) -> u8 {
@@ -136,6 +141,15 @@ pub enum Input {
     Gone,
 }
 
+/// The acknowledged page in flight on a channel, since `at`: a control, or
+/// the link's own request for the trainer's capabilities (no one waits
+/// for its outcome: the answer is the page it asks for).
+#[derive(Debug, Clone, Copy)]
+struct Flight {
+    control: Option<(ControlId, Control)>,
+    at: Duration,
+}
+
 #[derive(Debug)]
 struct Channel {
     kind: u8,
@@ -144,18 +158,43 @@ struct Channel {
     lost_at: Option<Duration>,
     identity: Option<Identity>,
     decoder: Decoder,
-    in_flight: Option<(ControlId, Control, Duration)>,
+    in_flight: Option<Flight>,
     /// The control waiting behind the one in flight.
     queued: Option<(ControlId, Control)>,
+    /// Requests for the capabilities sent, and when the last went.
+    asks: u8,
+    asked_at: Option<Duration>,
     profile: &'static TrainerProfile,
     events: Vec<LinkEvent>,
 }
 
 impl Channel {
     fn answer(&mut self, now: Duration, outcome: ControlOutcome) {
-        if let Some((id, control, _)) = self.in_flight.take() {
+        if let Some(Flight { control: Some((id, control)), .. }) = self.in_flight.take() {
             self.events.push(LinkEvent::Control { id, at: now, control, outcome });
         }
+    }
+
+    /// Whether to ask the trainer what it can do: heard, not lost, not
+    /// said yet, not asked too often or too many times, the line free (a
+    /// control waits only behind one in flight, so it is free of those too).
+    fn asking(&self, now: Duration) -> bool {
+        self.kind == KIND_FEC
+            && self.heard
+            && self.lost_at.is_none()
+            && self.in_flight.is_none()
+            && self.identity.as_ref().is_some_and(|i| i.target_power.is_none())
+            && self.asks < MAX_ASKS
+            && self.asked_at.is_none_or(|at| now.saturating_sub(at) >= ASK_EVERY)
+    }
+
+    /// The request goes on channel `ch`, in flight from `now`.
+    fn ask(&mut self, now: Duration, ch: usize) -> Msg {
+        self.asks += 1;
+        self.asked_at = Some(now);
+        self.in_flight = Some(Flight { control: None, at: now });
+        let page = pages::request_page(pages::PAGE_CAPABILITIES);
+        Msg::new(MSG_ACKNOWLEDGED, &[&[ch as u8][..], &page].concat())
     }
 
     /// The one in flight went out unconfirmed; the one waiting never went.
@@ -179,7 +218,7 @@ impl Channel {
 
     /// The page for `control` goes on channel `ch`, in flight from `now`.
     fn go(&mut self, now: Duration, ch: usize, id: ControlId, control: Control) -> Msg {
-        self.in_flight = Some((id, control, now));
+        self.in_flight = Some(Flight { control: Some((id, control)), at: now });
         Msg::new(MSG_ACKNOWLEDGED, &[&[ch as u8][..], &pages::control_page(control)].concat())
     }
 }
@@ -234,6 +273,8 @@ impl Machine {
                 decoder: Decoder::default(),
                 in_flight: None,
                 queued: None,
+                asks: 0,
+                asked_at: None,
                 profile: &GENERIC,
                 events: Vec::new(),
             })
@@ -298,7 +339,7 @@ impl Machine {
             }
             (Phase::Running, Input::Tick) => {
                 for c in &mut self.channels {
-                    if c.in_flight.is_some_and(|(_, _, at)| now.saturating_sub(at) >= c.profile.control_answer_timeout) {
+                    if c.in_flight.is_some_and(|f| now.saturating_sub(f.at) >= c.profile.control_answer_timeout) {
                         c.answer(now, ControlOutcome::TimedOut);
                     }
                 }
@@ -308,7 +349,9 @@ impl Machine {
         }
     }
 
-    /// A control waiting behind one in flight goes once the line is free.
+    /// A control waiting behind one in flight goes once the line is free;
+    /// with nothing waiting, a trainer that has not said what it can do is
+    /// asked.
     fn flush(&mut self, now: Duration) -> Vec<Msg> {
         let mut out = Vec::new();
         for (ch, c) in self.channels.iter_mut().enumerate() {
@@ -316,6 +359,9 @@ impl Machine {
                 if let Some((id, control)) = c.queued.take() {
                     out.push(c.go(now, ch, id, control));
                 }
+            }
+            if c.asking(now) {
+                out.push(c.ask(now, ch));
             }
         }
         out
@@ -338,7 +384,11 @@ impl Machine {
                     pages::identity_of(sender)
                 });
                 // Known, and something new: said (a firmware heard later too).
-                if pages::absorb(identity, c.kind, &p.page) {
+                // Whether it holds watts is said at once, maker known or
+                // not: it answers in a quarter second, names itself every
+                // ~16 s, and ERG must not send it targets meanwhile.
+                let said = identity.target_power;
+                if pages::absorb(identity, c.kind, &p.page) || identity.target_power != said {
                     let maker = identity.manufacturer.clone().unwrap_or_else(|| "ANT+".into());
                     identity.name = identity.ant_device_number.map(|n| format!("{maker} {n}"));
                     c.events.push(LinkEvent::Identified { at: now, identity: identity.clone() });
@@ -440,6 +490,9 @@ pub(crate) mod tests {
     }
 
     const FEC: [u8; 8] = [0x19, 1, 85, 0, 0, 150, 0x30, 0x30];
+    /// FE-C 0x36 as the Avanti sends it: basic, target power, simulation.
+    /// Heard first, the trainer needs no asking: the line stays the test's.
+    const CAPS: [u8; 8] = [0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07];
 
     #[test]
     fn the_stick_is_reset_keyed_and_given_a_low_priority_channel_each() {
@@ -554,7 +607,7 @@ pub(crate) mod tests {
         assert!(control(&mut m, 0, 1).is_empty(), "the stick is not up");
         set_up(&mut m, first);
         assert!(control(&mut m, 50, 2).is_empty(), "not heard yet");
-        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC)));
+        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, CAPS)));
         let page = Msg::new(MSG_ACKNOWLEDGED, &[0, 0x31, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x58, 0x02]);
         assert_eq!(control(&mut m, 200, 3), vec![page.clone()]);
         // One in flight: the next waits behind it, a newer one in its place.
@@ -606,7 +659,7 @@ pub(crate) mod tests {
     fn the_one_waiting_goes_only_when_the_line_is_free() {
         let (mut m, first) = trainer_and_strap();
         set_up(&mut m, first);
-        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC)));
+        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, CAPS)));
         let target = |w| Msg::new(MSG_ACKNOWLEDGED, &[&[0u8][..], &pages::control_page(Control::TargetPower(w))].concat());
         assert_eq!(m.send(ms(200), 0, ControlId(1), Control::TargetPower(150)), vec![target(150)]);
         assert!(m.send(ms(210), 0, ControlId(2), Control::TargetPower(160)).is_empty());
@@ -627,11 +680,80 @@ pub(crate) mod tests {
         assert_eq!(outcomes, vec![(1, ControlOutcome::Acknowledged), (2, ControlOutcome::TimedOut)], "one each, 3 in flight");
     }
 
+    /// A trainer that has not said what it can do is asked (0x46 for 0x36)
+    /// on the line its controls use: a control waits behind the request
+    /// and goes when it is answered; no one hears of the request itself.
+    /// Again every 5 s, six times at most; never once it said; a strap
+    /// never.
+    #[test]
+    fn a_trainer_is_asked_what_it_can_do_until_it_says() {
+        let (mut m, first) = trainer_and_strap();
+        set_up(&mut m, first);
+        let on0 = |page: [u8; 8]| Msg::new(MSG_ACKNOWLEDGED, &[&[0u8][..], &page].concat());
+        let ask = on0(pages::request_page(pages::PAGE_CAPABILITIES));
+        let target = on0(pages::control_page(Control::TargetPower(150)));
+        assert_eq!(m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC))), vec![ask.clone()], "heard: asked");
+        assert!(m.handle(ms(100), Input::Message(data(1, 7, KIND_HEART, [0x84, 0, 0, 0, 0, 0, 0, 120]))).is_empty());
+        assert!(m.send(ms(150), 0, ControlId(1), Control::TargetPower(150)).is_empty(), "behind the request");
+        assert_eq!(m.handle(ms(200), Input::Message(event(0, EVENT_TRANSFER_TX_COMPLETED))), vec![target]);
+        assert!(m.handle(ms(300), Input::Message(event(0, EVENT_TRANSFER_TX_COMPLETED))).is_empty(), "not within 5 s");
+        // Unanswered: again every 5 s (each one timing out frees the line),
+        // six times in all.
+        let mut asks = 1;
+        for s in 1..=8u64 {
+            asks += m.handle(ms(100 + s * 5000), Input::Tick).iter().filter(|o| **o == ask).count();
+        }
+        assert_eq!(asks, 6);
+        let outcomes: Vec<LinkEvent> = m.take_events(0).into_iter().filter(|e| matches!(e, LinkEvent::Control { .. })).collect();
+        assert_eq!(
+            outcomes,
+            vec![LinkEvent::Control { id: ControlId(1), at: ms(300), control: Control::TargetPower(150), outcome: ControlOutcome::Acknowledged }],
+            "the requests have no outcome"
+        );
+
+        // Said: on the trainer's identity, and never asked again; a drop
+        // with a request in flight leaves no outcome behind.
+        let (mut m, first) = trainer_and_strap();
+        set_up(&mut m, first);
+        assert_eq!(m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC))), vec![ask.clone()]);
+        m.handle(ms(200), Input::Message(event(0, EVENT_RX_FAIL_GO_TO_SEARCH)));
+        assert_eq!(m.take_events(0).last(), Some(&LinkEvent::Lost { at: ms(200) }));
+        assert!(m.handle(ms(6000), Input::Tick).is_empty(), "lost: not asked");
+        assert_eq!(m.handle(ms(7000), Input::Message(data(0, 1, KIND_FEC, FEC))), vec![ask], "back: asked");
+        m.handle(ms(7100), Input::Message(event(0, EVENT_TRANSFER_TX_COMPLETED)));
+        let no_erg = [0x36, 0xFF, 0xFF, 0xFF, 0xFF, 0xD0, 0x07, 0x05];
+        m.handle(ms(7200), Input::Message(data(0, 1, KIND_FEC, no_erg)));
+        m.handle(ms(7300), Input::Message(data(0, 1, KIND_FEC, [0x50, 0xFF, 0xFF, 1, 86, 0, 45, 0])));
+        let said = m.take_events(0);
+        assert!(said.iter().any(|e| matches!(e, LinkEvent::Identified { identity, .. } if identity.target_power == Some(false))), "{said:?}");
+        assert!(!said.iter().any(|e| matches!(e, LinkEvent::Control { .. })));
+        assert!(m.handle(ms(20_000), Input::Tick).is_empty(), "said: never asked again");
+    }
+
+    /// The next request waits a full 5 s, and for a control in flight to
+    /// be answered: two acknowledged pages at once, and the stick would
+    /// refuse one and lose the control's outcome.
+    #[test]
+    fn a_request_waits_five_seconds_and_for_the_line() {
+        let (mut m, first) = trainer_and_strap();
+        set_up(&mut m, first);
+        let on0 = |page: [u8; 8]| Msg::new(MSG_ACKNOWLEDGED, &[&[0u8][..], &page].concat());
+        let ask = on0(pages::request_page(pages::PAGE_CAPABILITIES));
+        assert_eq!(m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC))), vec![ask.clone()]);
+        m.handle(ms(150), Input::Message(event(0, EVENT_TRANSFER_TX_FAILED)));
+        assert!(m.handle(ms(5099), Input::Tick).is_empty(), "4.999 s: not yet");
+        let target = on0(pages::control_page(Control::TargetPower(150)));
+        assert_eq!(m.send(ms(5100), 0, ControlId(1), Control::TargetPower(150)), vec![target]);
+        assert!(m.handle(ms(5200), Input::Message(data(0, 1, KIND_FEC, FEC))).is_empty(), "a control in flight");
+        assert!(m.handle(ms(5250), Input::Tick).is_empty(), "a control in flight");
+        assert_eq!(m.handle(ms(5300), Input::Message(event(0, EVENT_TRANSFER_TX_COMPLETED))), vec![ask], "the line free");
+    }
+
     #[test]
     fn a_stick_pulled_fails_every_channel_after_settling_what_was_in_flight() {
         let (mut m, first) = trainer_and_strap();
         set_up(&mut m, first);
-        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, FEC)));
+        m.handle(ms(100), Input::Message(data(0, 1, KIND_FEC, CAPS)));
         m.send(ms(200), 0, ControlId(1), Control::Release);
         m.take_events(0);
         m.handle(ms(300), Input::Gone);

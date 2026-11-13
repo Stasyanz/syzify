@@ -107,6 +107,8 @@ impl FakeConfig {
                 ant_manufacturer: Some(86),
                 ant_model: Some(45),
                 firmware: Some("3.7".into()),
+                // Its 0x36: basic resistance, target power, simulation.
+                target_power: Some(true),
                 ..Identity::new(Transport::Ant)
             },
             control_timeout: Some(Duration::from_secs(18)),
