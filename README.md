@@ -275,9 +275,12 @@ Riding through an ANT+ USB stick needs the ANT+ network key, which Garmin
 publishes at <https://developer.garmin.com/ant-program/ant-ant-plus/network-keys/>
 subject to its ANT+ Adopter Agreement; it is not in these sources, only its
 SHA-256 (`src-tauri/src/trainer/ant/key_rules.rs`). Give it to a build as the
-`SYZIFY_ANT_KEY` environment variable (16 hex digits), or type it in on the
-training screen; either is checked against the hash, and a build given a
-value that is not the key stops. Official releases have it built in. The
+`SYZIFY_ANT_KEY` environment variable (16 hex digits), or put
+`SYZIFY_ANT_KEY=…` in the repository's `.env`, which git ignores (the
+environment wins; a `.env` made after a first build is read once you
+`touch src-tauri/build.rs`), or type it in on the training screen. Every
+one is checked against the hash, and a build given a value that is not the
+key stops. Official releases have it built in. The
 ANT+ key permission, [LICENSE-ANT-KEY.md](LICENSE-ANT-KEY.md), lets builds made with
 the key be conveyed without it. ANT+ is a trademark of Garmin Canada Inc.;
 Syzify is not affiliated with or endorsed by Garmin.
