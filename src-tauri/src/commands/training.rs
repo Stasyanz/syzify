@@ -1105,6 +1105,9 @@ mod tests {
         assert_eq!(encrypt.unwrap_err().code, ride, "the vault names the ride that holds it");
 
         clock.stop_at.store(u64::MAX, Ordering::SeqCst);
+        // A ride with seconds in it (an empty one is not imported): the
+        // clock runs before the quit, however slow the machine.
+        wait_for(&app, |l| l.ride_s >= 3);
         assert!(!hold_exit(&handle, Some(tauri::RESTART_EXIT_CODE), quitter()), "a restart cannot be held");
         assert!(hold_exit(&handle, Some(0), quitter()), "the quit waits for the ride");
         assert!(!finish_before_exit(&handle, quitter()), "asked again: quit at once");
