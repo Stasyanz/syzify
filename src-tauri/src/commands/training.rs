@@ -332,6 +332,28 @@ fn ant_key(state: &AppState) -> Result<Option<[u8; 8]>, CommandError> {
     Ok(ant_key::network_key(entered.as_deref()))
 }
 
+/// Trainers, power meters and straps advertising now (a few seconds' scan),
+/// over Bluetooth and an ANT+ stick at once.
+#[tauri::command]
+pub async fn training_scan<R: Runtime>(seconds: Option<u32>, app: AppHandle<R>) -> Result<Found, CommandError> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = std::time::Duration::from_secs(u64::from(seconds.unwrap_or(6).clamp(2, 20)));
+        // A key that cannot be read is none: Bluetooth searches anyway.
+        let key = ant_key(&app.state::<AppState>()).ok().flatten();
+        let (ble, ant) = tokio::join!(
+            crate::trainer::ble::driver::find_devices(window),
+            crate::trainer::ant::driver::find_devices(window, key)
+        );
+        merge_found(ble.map_err(link_failure), ant)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (seconds, app);
+        Err(unsupported())
+    }
+}
+
 /// Whether ANT+ can be used: the key built in, or typed in.
 #[tauri::command]
 pub fn training_ant_key(state: State<'_, AppState>) -> Result<AntKeyStatus, CommandError> {
@@ -361,28 +383,6 @@ fn set_ant_key(state: &AppState, key: Option<String>, sha: &str) -> Result<(), C
         None => crate::db::settings::delete_setting(&conn, ant_key::SETTING),
     };
     Ok(result.map_err(|e| e.to_string())?)
-}
-
-/// Trainers, power meters and straps advertising now (a few seconds' scan),
-/// over Bluetooth and an ANT+ stick at once.
-#[tauri::command]
-pub async fn training_scan<R: Runtime>(seconds: Option<u32>, app: AppHandle<R>) -> Result<Found, CommandError> {
-    #[cfg(target_os = "macos")]
-    {
-        let window = std::time::Duration::from_secs(u64::from(seconds.unwrap_or(6).clamp(2, 20)));
-        // A key that cannot be read is none: Bluetooth searches anyway.
-        let key = ant_key(&app.state::<AppState>()).ok().flatten();
-        let (ble, ant) = tokio::join!(
-            crate::trainer::ble::driver::find_devices(window),
-            crate::trainer::ant::driver::find_devices(window, key)
-        );
-        merge_found(ble.map_err(link_failure), ant)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (seconds, app);
-        Err(unsupported())
-    }
 }
 
 /// Links the picked devices (BLE addresses from `training_scan`) and starts
