@@ -1175,7 +1175,7 @@ mod tests {
     fn other_systems_have_no_training() {
         let vault = ScratchDir::new("training_elsewhere");
         let app = app_at(&vault);
-        assert_eq!(block_on(training_scan(None)).unwrap_err(), unsupported());
+        assert_eq!(block_on(training_scan(None, app.handle().clone())).unwrap_err(), unsupported());
         let connect = training_connect("T".into(), vec![], None, app.handle().clone());
         assert_eq!(connect.unwrap_err(), unsupported());
         let nameless = training_connect("".into(), vec![], None, app.handle().clone());
