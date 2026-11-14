@@ -37,6 +37,13 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // 4. serve nothing of `src-tauri` (#305): a build given the ANT+ key
+    // keeps it in its target/ (the binary, the build script's output), and
+    // the dev server serves any file of the root it does not deny. A deny
+    // list replaces Vite's own, so those come first.
+    fs: {
+      deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/src-tauri/**"],
+    },
   },
 
   test: {
@@ -45,9 +52,8 @@ export default defineConfig(async () => ({
     exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
     coverage: {
       provider: "v8" as const,
-      // Count every source file, not only the ones imported by tests —
-      // otherwise untested modules are invisible in the percentage.
-      all: true,
+      // Every source file counts, not only the ones imported by tests
+      // (vitest 4 does so for whatever `include` names).
       include: ["src/**"],
       reporter: ["text-summary", "lcov"],
     },
