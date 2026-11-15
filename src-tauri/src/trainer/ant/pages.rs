@@ -32,8 +32,9 @@ const MAX_GAP: Duration = Duration::from_secs(20);
 const MAX_WATTS: u16 = 4000;
 /// …and more rpm than this.
 const MAX_RPM: f32 = 200.0;
-/// Pedals whose event count has not moved this long stand still (their
-/// page may go on saying the last watts).
+/// Pedals or a trainer whose event count has not moved this long stand
+/// still (their page may go on saying the last watts and cadence: an Avanti
+/// says 89 W at 93 rpm for 5 s after the rider stops, #308).
 const IDLE: Duration = Duration::from_secs(3);
 
 /// Who sent a data message: the 20-bit device number (16 bits plus the
@@ -76,17 +77,27 @@ fn comparable(before_at: Duration, at: Duration, events: u8) -> bool {
 struct Still {
     events: Option<u8>,
     moved: Duration,
+    /// The count was seen to move: one that never does says nothing (a
+    /// firmware that does not count would read 0 W for good, #308).
+    counts: bool,
 }
 
 impl Still {
-    /// True when `events` has not moved for `IDLE`.
+    /// True when `events`, seen to move before, has not for `IDLE`.
     fn still(&mut self, events: u8, at: Duration) -> bool {
         if self.events != Some(events) {
+            self.counts |= self.events.is_some();
             self.events = Some(events);
             self.moved = at;
             return false;
         }
-        at.saturating_sub(self.moved) >= IDLE
+        self.counts && at.saturating_sub(self.moved) >= IDLE
+    }
+
+    /// The count is not to be compared with what follows; that it counts
+    /// stays.
+    fn restart(&mut self) {
+        self.events = None;
     }
 }
 
@@ -103,19 +114,39 @@ pub struct Decoder {
     crank: Option<(u8, u8, u16, u16, Duration)>,
     power_still: Still,
     crank_still: Still,
+    trainer_still: Still,
     /// The pedals send crank torque: their watts come from it.
     torque: bool,
 }
 
 impl Decoder {
+    /// After a lost link: no counter is compared with what went before, but
+    /// what the device was seen to do — count its events, send crank torque
+    /// — stays (pedals back while the rider coasts must still stand still).
+    pub fn restart(&mut self) {
+        // Every field named: one added later is to be thought of here.
+        let Decoder { power, crank, power_still, crank_still, trainer_still, torque: _ } = self;
+        *power = None;
+        *crank = None;
+        for still in [power_still, crank_still, trainer_still] {
+            still.restart();
+        }
+    }
+
     /// The reading in `page` from a device of type `kind`, if any.
     pub fn reading(&mut self, kind: u8, at: Duration, p: &[u8; 8]) -> Option<Reading> {
         let mut r = Reading { at, ..Reading::default() };
         match (kind, p[0]) {
             (KIND_FEC, 0x19) => {
                 let instant = u16::from(p[5]) | (u16::from(p[6] & 0x0F) << 8);
-                r.watts = self.watts(p[1], u16::from_le_bytes([p[3], p[4]]), at, (instant != 0xFFF).then_some(instant));
-                r.cadence_rpm = (p[2] != 0xFF).then_some(p[2]);
+                let watts = self.watts(p[1], u16::from_le_bytes([p[3], p[4]]), at, (instant != 0xFFF).then_some(instant));
+                let cadence = (p[2] != 0xFF).then_some(p[2]);
+                // Standing still: no watts, and no turning for a trainer that
+                // tells its cadence (one that does not stays blind, #285).
+                (r.watts, r.cadence_rpm) = match self.trainer_still.still(p[1], at) {
+                    true => (Some(0), cadence.map(|_| 0)),
+                    false => (watts, cadence),
+                };
                 r.reports_on_target = Some(p[7] & 0x0F == 0);
             }
             (KIND_FEC, 0x10) => {
@@ -153,7 +184,8 @@ impl Decoder {
 
     /// Δ accumulated power / Δ events since the last page, when the two are
     /// comparable and the result is a sane one; the instantaneous value
-    /// otherwise (the first page, a long gap, a counter reset).
+    /// otherwise (the first page, a long gap, a counter reset, no event
+    /// between — until the count has stood still for `IDLE`, see `Still`).
     fn watts(&mut self, events: u8, accumulated: u16, at: Duration, instant: Option<u16>) -> Option<u16> {
         let counted = match self.power.replace((events, accumulated, at)) {
             Some((e, a, then)) if comparable(then, at, events.wrapping_sub(e)) => {
@@ -303,7 +335,7 @@ mod tests {
         let mut w = Decoder::default();
         w.reading(KIND_FEC, at(1), &fec(255, 85, 65500, 150, 0));
         assert_eq!(w.reading(KIND_FEC, at(2), &fec(1, 85, 264, 150, 0)).unwrap().watts, Some(150));
-        // A long gap or standing still: the page's value; none known: none.
+        // A long gap: the page's value; none known: none.
         assert_eq!(w.reading(KIND_FEC, at(9), &fec(60, 0xFF, 9000, 0xFFF, 0)).unwrap(), Reading {
             at: at(9),
             reports_on_target: Some(true),
@@ -344,6 +376,76 @@ mod tests {
         assert_eq!(d.reading(KIND_FEC, at(3), &[0x10, 25, 0, 0, 0xFF, 0xFF, 0, 0]).unwrap().speed_kmh, None);
         assert_eq!(d.reading(KIND_FEC, at(3), &control_page(Control::TargetPower(150))).unwrap().reported_target, Some(150));
         assert_eq!(d.reading(KIND_FEC, at(3), &[0x36; 8]), None, "a page with no reading");
+    }
+
+    /// #308: a trainer the rider stopped turning goes on sending its last
+    /// page — the same event count, its last watts and cadence — for
+    /// seconds. Still for 3 s, it stands still.
+    #[test]
+    fn a_trainer_whose_count_stands_still_stands_still() {
+        let mut d = Decoder::default();
+        let read = |d: &mut Decoder, ms: u64, page: [u8; 8]| {
+            let r = d.reading(KIND_FEC, Duration::from_millis(ms), &page).unwrap();
+            (r.watts, r.cadence_rpm)
+        };
+        assert_eq!(read(&mut d, 0, fec(40, 93, 4000, 89, 0)), (Some(89), Some(93)));
+        assert_eq!(read(&mut d, 250, fec(41, 93, 4089, 89, 0)), (Some(89), Some(93)), "the last event");
+        assert_eq!(read(&mut d, 1_250, fec(41, 93, 4089, 89, 0)), (Some(89), Some(93)), "a second on: not yet");
+        assert_eq!(read(&mut d, 3_249, fec(41, 0, 4089, 89, 0)), (Some(89), Some(0)), "just under 3 s");
+        assert_eq!(read(&mut d, 3_250, fec(41, 93, 4089, 89, 0)), (Some(0), Some(0)), "3 s still");
+        assert_eq!(read(&mut d, 8_000, fec(41, 93, 4089, 89, 0)), (Some(0), Some(0)), "and on");
+        // Turning again: the count moves, counted from the page before
+        // (120 W more in one event; the page itself says 130).
+        assert_eq!(read(&mut d, 8_250, fec(42, 60, 4209, 130, 0)), (Some(120), Some(60)));
+
+        // A trainer that tells no cadence stays without one, still or not;
+        // standing, it is 0 W even with no watts of its own on the page.
+        let mut blind = Decoder::default();
+        assert_eq!(read(&mut blind, 0, fec(1, 0xFF, 150, 150, 0)), (Some(150), None));
+        assert_eq!(read(&mut blind, 250, fec(2, 0xFF, 300, 150, 0)), (Some(150), None));
+        assert_eq!(read(&mut blind, 3_250, fec(2, 0xFF, 300, 150, 0)), (Some(0), None));
+        assert_eq!(read(&mut blind, 3_500, fec(2, 0xFF, 300, 0xFFF, 0)), (Some(0), None));
+        // The target flags still count while it stands.
+        let flagged = blind.reading(KIND_FEC, at(4), &fec(2, 0xFF, 300, 150, 0x31)).unwrap();
+        assert_eq!((flagged.watts, flagged.reports_on_target), (Some(0), Some(false)));
+    }
+
+    /// A trainer whose count never moves (not as FE-C has it, but a
+    /// firmware may) is read by its pages as before #308: never still.
+    #[test]
+    fn a_count_that_never_moves_says_nothing() {
+        let mut d = Decoder::default();
+        for s in 0..10 {
+            let r = d.reading(KIND_FEC, at(s), &fec(7, 80, 0, 150, 0)).unwrap();
+            assert_eq!((r.watts, r.cadence_rpm), (Some(150), Some(80)), "{s} s");
+        }
+        // After a lost link it still says nothing…
+        d.restart();
+        assert_eq!(d.reading(KIND_FEC, at(20), &fec(9, 80, 300, 150, 0)).unwrap().watts, Some(150));
+        assert_eq!(d.reading(KIND_FEC, at(24), &fec(9, 80, 300, 150, 0)).unwrap().watts, Some(150));
+    }
+
+    /// A lost link restarts the counters, not what the device was seen to
+    /// do: one that counted stands still 3 s after it is back, and pedals
+    /// that send crank torque are counted by it still.
+    #[test]
+    fn a_restart_forgets_the_counts_not_that_they_count() {
+        let mut d = Decoder::default();
+        d.reading(KIND_FEC, at(1), &fec(10, 85, 1000, 150, 0));
+        d.reading(KIND_FEC, at(2), &fec(11, 85, 1150, 150, 0));
+        d.restart();
+        // Not compared with before (10 events, 1000 W more would be 100 W).
+        let first = d.reading(KIND_FEC, at(30), &fec(21, 0, 2150, 89, 0)).unwrap();
+        assert_eq!((first.watts, first.cadence_rpm), (Some(89), Some(0)));
+        assert_eq!(d.reading(KIND_FEC, at(33), &fec(21, 0, 2150, 89, 0)).unwrap().watts, Some(0), "3 s still");
+
+        let mut crank = Decoder::default();
+        crank.reading(KIND_POWER, at(1), &torque(1, 1, 0, 0));
+        crank.reading(KIND_POWER, at(2), &torque(2, 2, 1536, 1200));
+        crank.restart();
+        let power_page = [0x10, 9, 0x80 | 50, 81, 0, 0, 44, 1];
+        assert_eq!(crank.reading(KIND_POWER, at(10), &power_page).unwrap().watts, None, "the torque still counts");
+        assert_eq!(crank.reading(KIND_POWER, at(10), &torque(3, 3, 3072, 2400)), None, "nothing to compare yet");
     }
 
     #[test]

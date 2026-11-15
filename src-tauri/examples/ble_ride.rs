@@ -6,8 +6,11 @@
 //!   cargo run --manifest-path src-tauri/Cargo.toml --example ble_ride -- \
 //!     [--trainer NAME] [--pedals NAME [--pedals NAME]] [--erg WATTS] [--secs N]
 //!
-//! An Assioma Duo is two pedals over BLE, each its own leg: name both
-//! (`--pedals ASSIOMA55430L --pedals ASSIOMA55430R`) and their power is summed.
+//! An Assioma Duo is two pedals over BLE, each its own leg and its own
+//! serial: name both (`--pedals ASSIOMA55430L --pedals ASSIOMA61026R`, as
+//! each advertises itself) and their power is summed. A pair whose other
+//! side never connects gives no watts; one `--pedals` alone gives its
+//! leg's half.
 //!
 //! Run it from your own terminal, in a debug build: macOS asks the terminal
 //! for Bluetooth, and the debug build carries the app's Info.plist (the

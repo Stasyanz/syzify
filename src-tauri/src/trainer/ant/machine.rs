@@ -206,11 +206,12 @@ impl Channel {
     }
 
     /// The device is not heard any more: lost, once, until heard again.
-    /// What follows its counters is not to be compared with what went before.
+    /// What follows its counters is not to be compared with what went before
+    /// (what the device was seen to do stays: `Decoder::restart`).
     fn lose(&mut self, now: Duration) {
         if self.heard && self.lost_at.is_none() {
             self.lost_at = Some(now);
-            self.decoder = Decoder::default();
+            self.decoder.restart();
             self.settle(now);
             self.events.push(LinkEvent::Lost { at: now });
         }
@@ -598,6 +599,35 @@ pub(crate) mod tests {
         // lost meanwhile.
         assert_eq!(m.handle(ms(9500), Input::Message(event(0, EVENT_CHANNEL_CLOSED))), vec![Msg::new(MSG_OPEN, &[0])]);
         assert_eq!(m.take_events(0), vec![LinkEvent::Lost { at: ms(9500) }]);
+    }
+
+    /// #308: pedals lost while the rider coasts come back with the count
+    /// standing and the last watts on the page. That they count was seen
+    /// before the drop: 3 s after they are back, they stand still.
+    #[test]
+    fn pedals_back_while_coasting_stand_still() {
+        let (mut m, first) = Machine::new(ms(0), &KEY, &[Wanted { role: SensorRole::Pedals, number: 55430 }]);
+        set_up(&mut m, first);
+        let page = |events: u8, acc: u16, cadence: u8| {
+            let [a0, a1] = acc.to_le_bytes();
+            data(0, 55430, KIND_POWER, [0x10, events, 0xFF, cadence, a0, a1, 199, 0])
+        };
+        let watts = |m: &mut Machine| {
+            m.take_events(0).into_iter().filter_map(|e| if let LinkEvent::Reading(r) = e { Some(r.watts) } else { None }).collect::<Vec<_>>()
+        };
+        m.handle(ms(100), Input::Message(page(5, 500, 80)));
+        m.handle(ms(350), Input::Message(page(6, 699, 80)));
+        assert_eq!(watts(&mut m), [Some(199), Some(199)]);
+        m.handle(ms(1000), Input::Message(event(0, EVENT_RX_FAIL_GO_TO_SEARCH)));
+        assert_eq!(m.take_events(0), vec![LinkEvent::Lost { at: ms(1000) }]);
+        // Back, still coasting: the page's watts at first, not compared
+        // with before the drop…
+        m.handle(ms(6000), Input::Message(page(6, 699, 0)));
+        m.handle(ms(8999), Input::Message(page(6, 699, 0)));
+        assert_eq!(watts(&mut m), [Some(199), Some(199)]);
+        // …then standing still, as before the drop.
+        m.handle(ms(9000), Input::Message(page(6, 699, 0)));
+        assert_eq!(watts(&mut m), [Some(0)]);
     }
 
     #[test]
