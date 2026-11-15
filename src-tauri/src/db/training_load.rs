@@ -7,11 +7,12 @@
 //! equivalent of each Garmin bucket (0 = below Z1 … 6 = above max). On the
 //! five rides that carry a device TSS the two agree within ~15%.
 //!
-//! An activity whose file carries no HR zones (Zwift, Syzify's own indoor
-//! rides) but has a heart-rate stream gets its time in zone from the
-//! stream, with the zone boundaries the athlete's device last recorded
-//! (#294). Worked out on every read, never stored, so stored HR rows are
-//! always a device's; the Time in Zones card gets the same buckets from the
+//! A ride or a run whose file carries no HR zones (Zwift, Syzify's own
+//! indoor rides) but has a heart-rate stream gets its time in zone from the
+//! stream, with the zone boundaries the athlete's device last recorded for
+//! a ride or a run (#294, #313); any other sport, a multisport file too,
+//! counts only by its device's zones. Worked out on every read, never
+//! stored, so stored HR rows are always a device's; the Time in Zones card gets the same buckets from the
 //! same tops ([`hr_zones_from_stream`], #298), fitted to the timer — they
 //! differ from the load by the short stops. A ride is often recorded
 //! twice (Zwift and the bike computer, Syzify and Zwift): stream time that
@@ -160,17 +161,30 @@ fn recorded_bounds(conn: &Connection) -> Result<Vec<Bounds>> {
         .collect())
 }
 
-/// The boundaries to read an activity of `sport` at `at` with: the last
-/// recorded at or before it in its family of sports, else in any sport.
-/// None before it: not counted (a rider who had Zwift before a watch with
+/// Whether an activity of `sport` with no HR zones of its own is read by
+/// its heart rate stream, for the load and the Time in Zones card alike:
+/// a ride or a run. Any other sport is not — a swim's wrist heart rate, or
+/// a walk's, on a rider's or a runner's tops says little (#313).
+fn read_by_stream(sport: &str) -> bool {
+    !SportType::family(sport).is_empty()
+}
+
+/// The boundaries to read a ride or a run (`sport`) at `at` with: the last
+/// recorded at or before it in its family of sports, else in the other
+/// one — never a swim's or another sport's. None before it, or for any
+/// other sport: not counted (a rider who had Zwift before a watch with
 /// zones gets no load for those early rides).
 fn bounds_for<'a>(all: &'a [Bounds], sport: &str, at: f64) -> Option<&'a [f64]> {
+    if !read_by_stream(sport) {
+        return None;
+    }
     let family = SportType::family(sport);
-    let kin = |b: &Bounds| if family.is_empty() { b.sport == sport } else { family.contains(&b.sport.as_str()) };
+    let kin = |b: &Bounds| family.contains(&b.sport.as_str());
+    let land = |b: &Bounds| read_by_stream(&b.sport);
     let latest = |pick: &dyn Fn(&Bounds) -> bool| {
         all.iter().filter(|b| b.at <= at && pick(b)).max_by(|x, y| x.at.total_cmp(&y.at))
     };
-    latest(&kin).or_else(|| latest(&|_| true)).map(|b| b.high.as_slice())
+    latest(&kin).or_else(|| latest(&land)).map(|b| b.high.as_slice())
 }
 
 /// The bucket of `hr` under zone tops `high`: 0 below the first top, one
@@ -203,9 +217,8 @@ fn zones_of(stream: &[(f64, Option<f64>)], high: &[f64], covered: &[(f64, f64)])
 /// every stored kind but a naive one), as rows shaped like a device's, for
 /// the Time in Zones card and the charts of a ride or a run with none of
 /// its own (#298): the same tops and buckets as its load. Empty for any
-/// other sport (a swim's wrist heart rate on a runner's tops says little),
-/// with no heart rate, or with no tops at or before it. Never stored, so
-/// stored HR rows stay the device's.
+/// other sport ([`read_by_stream`]), with no heart rate, or with no tops at
+/// or before it. Never stored, so stored HR rows stay the device's.
 ///
 /// The card reads the zones against the timer (`duration_s`), a device's
 /// own way; the stream holds a heart rate through short stops, so the
@@ -221,7 +234,7 @@ pub(crate) fn hr_zones_from_stream(
     hr: &[Option<i32>],
 ) -> Result<Vec<TimeInZone>> {
     let has_hr = hr.iter().any(|h| h.is_some_and(|h| h > 0));
-    if !has_hr || SportType::family(sport).is_empty() {
+    if !has_hr || !read_by_stream(sport) {
         return Ok(Vec::new());
     }
     let Some(at) = instant(start) else { return Ok(Vec::new()) };
@@ -278,9 +291,10 @@ fn device_spans(conn: &Connection, day: &str) -> Result<Vec<(f64, f64)>> {
     Ok(spans)
 }
 
-/// Seconds per HR bucket, by day, of every activity with no HR zones of
+/// Seconds per HR bucket, by day, of every ride or run with no HR zones of
 /// its own but a heart-rate stream and boundaries to read it with — less
 /// the time another recording counts: a device's, or an earlier stream's.
+/// Another sport counts only by the zones of its device ([`read_by_stream`]).
 fn stream_zone_seconds(conn: &Connection) -> Result<Vec<(String, [f64; 7])>> {
     let bounds = recorded_bounds(conn)?;
     let mut stmt = conn.prepare(&format!(
@@ -300,6 +314,7 @@ fn stream_zone_seconds(conn: &Connection) -> Result<Vec<(String, [f64; 7])>> {
     let mut streamed: Vec<(f64, f64)> = Vec::new();
     let mut out = Vec::new();
     for (at, id, day, sport) in activities {
+        // None for another sport too ([`read_by_stream`]).
         let Some(high) = bounds_for(&bounds, &sport, at) else { continue };
         let mut stream = points
             .query_map(params![id], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<f64>>(1)?)))?
@@ -477,9 +492,20 @@ mod tests {
         stream(&conn, "zwift", "2026-11-12T18:00:00+03:00", 150, 3600);
         conn.execute("INSERT INTO trackpoint (activity_id, t, hr) VALUES ('zwift', 'garbage', 150), ('zwift', NULL, 150)", [])
             .unwrap();
-        // No boundaries of its own kind: any sport's are taken.
-        activity_sport(&conn, "swim", "2026-11-13T08:00:00+03:00", "swim");
-        stream(&conn, "swim", "2026-11-13T08:00:00+03:00", 170, 1800);
+        // No boundaries of its own kind: the other family's (a ride's).
+        activity_sport(&conn, "run", "2026-11-13T08:00:00+03:00", "run");
+        stream(&conn, "run", "2026-11-13T08:00:00+03:00", 170, 1800);
+        // Not a ride or a run: its stream is not read (#313)…
+        activity_sport(&conn, "swim", "2026-11-14T08:00:00+03:00", "swim");
+        stream(&conn, "swim", "2026-11-14T08:00:00+03:00", 170, 1800);
+        // …but its device's zones count, as they always did.
+        activity_sport(&conn, "pool", "2026-11-15T08:00:00+03:00", "swim");
+        zones_with_tops(&conn, "pool", &TOPS, &[0.0, 0.0, 0.0, 3600.0, 0.0, 0.0, 0.0]);
+        stream(&conn, "pool", "2026-11-15T08:00:00+03:00", 170, 3600);
+        // A triathlon file in one piece, with no zones of its device: not a
+        // ride or a run, so not counted, its ride and run legs neither.
+        activity_sport(&conn, "tri", "2026-11-16T08:00:00+03:00", "triathlon");
+        stream(&conn, "tri", "2026-11-16T08:00:00+03:00", 160, 3600);
         // Before any boundaries, or at a time that does not read: not counted.
         activity_sport(&conn, "early", "2026-01-01T08:00:00+03:00", "ride");
         stream(&conn, "early", "2026-01-01T08:00:00+03:00", 150, 3600);
@@ -490,8 +516,11 @@ mod tests {
         assert!((daily["2026-11-01"] - 64.0).abs() < 0.01, "counted once: {}", daily["2026-11-01"]);
         assert!((daily["2026-11-12"] - 64.0).abs() < 0.01, "{}", daily["2026-11-12"]);
         assert!((daily["2026-11-13"] - 0.95 * 0.95 * 50.0).abs() < 0.01, "{}", daily["2026-11-13"]);
+        assert!(!daily.contains_key("2026-11-14"), "a swim's stream: {daily:?}");
+        assert!(!daily.contains_key("2026-11-16"), "a triathlon's stream: {daily:?}");
+        assert!((daily["2026-11-15"] - 64.0).abs() < 0.01, "a swim's device zones: {}", daily["2026-11-15"]);
         assert!(!daily.contains_key("2026-01-01"));
-        assert!(!daily.contains_key("someday") && daily.len() == 3, "{daily:?}");
+        assert!(!daily.contains_key("someday") && daily.len() == 4, "{daily:?}");
     }
 
     fn bounds(at: f64, sport: &str, first: f64) -> Bounds {
@@ -499,13 +528,31 @@ mod tests {
     }
 
     #[test]
-    fn the_boundaries_are_the_last_before_in_the_family_else_any() {
+    fn the_boundaries_are_the_last_before_in_the_family_else_the_other_family() {
         let all = [bounds(10.0, "ride", 100.0), bounds(20.0, "run", 90.0), bounds(30.0, "strength", 80.0), bounds(40.0, "ride", 110.0)];
         assert_eq!(bounds_for(&all, "virtual_ride", 35.0), Some(&[100.0, 120.0][..]), "the family, though a run is later");
         assert_eq!(bounds_for(&all, "ride", 40.0), Some(&[110.0, 130.0][..]), "at the same time counts");
-        assert_eq!(bounds_for(&all, "strength", 45.0), Some(&[80.0, 100.0][..]), "a sport alone: its own");
-        assert_eq!(bounds_for(&all, "swim", 25.0), Some(&[90.0, 110.0][..]), "none of its kind: the last of any");
+        assert_eq!(bounds_for(&all, "trail_run", 35.0), Some(&[90.0, 110.0][..]), "a run's family");
+        assert_eq!(bounds_for(&all, "run", 15.0), Some(&[100.0, 120.0][..]), "none of its kind yet: the ride's");
         assert_eq!(bounds_for(&all, "ride", 5.0), None, "nothing before");
+        // Never another sport's tops, nor tops for another sport (#313).
+        let after_strength = [bounds(10.0, "ride", 100.0), bounds(30.0, "strength", 80.0)];
+        assert_eq!(bounds_for(&after_strength, "run", 35.0), Some(&[100.0, 120.0][..]), "not the later strength's");
+        assert_eq!(bounds_for(&[bounds(10.0, "swim", 70.0)], "run", 35.0), None, "a swim's only: none");
+        assert_eq!(bounds_for(&all, "swim", 35.0), None);
+        assert_eq!(bounds_for(&all, "strength", 45.0), None, "not even its own");
+    }
+
+    /// #313: only a ride or a run is read by its stream; the load and the
+    /// card share the rule.
+    #[test]
+    fn only_rides_and_runs_are_read_by_their_stream() {
+        for sport in ["ride", "mountain_bike", "indoor_ride", "virtual_ride", "run", "trail_run", "treadmill", "virtual_run"] {
+            assert!(read_by_stream(sport), "{sport}");
+        }
+        for sport in ["swim", "walk", "hike", "strength", "other", ""] {
+            assert!(!read_by_stream(sport), "{sport}");
+        }
     }
 
     #[test]

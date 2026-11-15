@@ -52,12 +52,14 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   latest activity of any sport.
 
 ### Fixed
-- Zwift rides, Syzify's own indoor rides and any other activity with a heart
-  rate but no heart rate zones from its device count in the recovery index's
-  load, past ones included (#294). Yesterday's TSS and CTL left them out, so
-  CTL may come out higher. Their load is worked out from their heart rate. The
-  time a ride was recorded twice, by Zwift and a bike computer for instance,
-  counts once.
+- Zwift rides, Syzify's own indoor rides and any other ride or run with a
+  heart rate but no heart rate zones from its device count in the recovery
+  index's load, past ones included (#294, #313). Yesterday's TSS and CTL left
+  them out, so CTL may come out higher. Their load is worked out from their
+  heart rate, on the same zone tops as Time in Zones. Another sport, a swim, a
+  walk or a triathlon file in one piece, counts only by the zones its device
+  recorded. The time a ride was recorded twice, by Zwift and a bike computer
+  for instance, counts once.
 - A Zwift activity no longer shows a garbled device name such as "t[$" (#267).
   Zwift fills the device name field of its FIT files with random bytes, and now
   and then they read as text; they are ignored now, and so is a FIT device name
