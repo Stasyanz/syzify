@@ -242,6 +242,37 @@ mod tests {
         assert!(matches!(import_ride(&conn, &vault, &ride, None).unwrap(), Finished::Imported(ImportOutcome::Skipped)));
     }
 
+    /// #307: a second short ride begun 30 s after the first had ended —
+    /// starts 130 s apart, the same distance and time — is a ride of its
+    /// own, through the real import (its timer reaching the dedup).
+    #[test]
+    fn a_ride_after_a_ride_is_not_its_copy() {
+        let vault = ScratchDir::new("ride_after_ride");
+        let conn = crate::db::test_db();
+        let ride_at = |start_unix: i64| {
+            let trainer = Box::new(FakeTrainer::new(FakeConfig::elite_avanti(85)));
+            let mut s = Session::new(Duration::ZERO, start_unix, SubSport::IndoorCycling, trainer, None, None, None);
+            for t in 1..=100 {
+                s.tick(Duration::from_secs(t));
+            }
+            s.finish(Duration::from_secs(100)).0
+        };
+        let (first, second) = (ride_at(START), ride_at(START + 130));
+        assert!(matches!(import_ride(&conn, &vault, &first, None).unwrap(), Finished::Imported(ImportOutcome::Imported)));
+        let finished = import_ride(&conn, &vault, &second, None).unwrap();
+        assert!(matches!(finished, Finished::Imported(ImportOutcome::Imported)), "{finished:?}");
+
+        let rides: Vec<(Option<f64>, Option<f64>)> = conn
+            .prepare("SELECT distance_m, duration_s FROM activity ORDER BY start_time")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rides.len(), 2);
+        assert_eq!(rides[0], rides[1], "alike in all but their time: a copy before #307");
+    }
+
     #[test]
     fn a_ride_without_a_value_imports_nothing_and_drops_its_journal() {
         let vault = ScratchDir::new("ride_empty");

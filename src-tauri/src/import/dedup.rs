@@ -2,16 +2,26 @@ use rusqlite::{Connection, OptionalExtension, Result};
 
 /// Check if an activity with similar start_time and metrics already exists.
 ///
-/// Two strategies:
+/// Three strategies:
 /// 1. With distance: start_time ±5min AND distance ±5% (and sport_type if
 ///    `require_sport` — used for CSV rows where two different sports can share a
 ///    distance/time and must not be collapsed; the GPX pipeline passes false so
 ///    a GPX+CSV pair of the same activity can still dedup across sport labels).
 /// 2. Without distance (indoor/strength): start_time ±5min AND sport_type match AND duration ±10%
+/// 3. Neither distance nor duration: start_time ±5min AND sport_type match,
+///    against activities that have neither either.
 ///
 /// A sport_type match is a match within the sport's family (`SportType::family`):
 /// a ride that came in as plain `ride` from a TCX and again as `indoor_ride`
 /// from the FIT that names the trainer is one workout (#189).
+///
+/// Copies of one workout are recorded at the same time: with both durations
+/// known, two activities whose spans `[start, start + duration_s]` do not
+/// overlap are two workouts, however close their starts (#307: a second
+/// short ride on the trainer, begun after the first had ended). Durations
+/// are timer times (pauses out), so a copy whose start comes later than the
+/// other's whole timer time — under 5 min of riding, one device started
+/// early and left paused — is no longer caught: accepted (#307).
 pub fn is_content_duplicate(
     conn: &Connection,
     start_time: &str,
@@ -36,6 +46,14 @@ pub fn find_content_duplicate(
     require_sport: bool,
 ) -> Result<Option<String>> {
     const TIME_TOLERANCE_S: i64 = 300; // 5 minutes
+    // Not two workouts one after the other: the file's start is `?3`, its
+    // duration `?5`. A duration unknown on either side says nothing; a
+    // span that ends where the other begins does not overlap it. Seconds
+    // apart, with half a second to spare: FIT times are whole seconds, and
+    // a julian day sum is not exact enough to say "equal".
+    const OVERLAPS: &str = "NOT (COALESCE(duration_s, 0) > 0 AND COALESCE(?5, 0) > 0
+                 AND ((julianday(?3) - julianday(start_time)) * 86400 > duration_s - 0.5
+                      OR (julianday(start_time) - julianday(?3)) * 86400 > ?5 - 0.5))";
 
     // The sport's family, or the sport alone, as `sport_type IN (?N, …)`
     // starting at placeholder `first` — the params follow the fixed ones.
@@ -57,11 +75,12 @@ pub fn find_content_duplicate(
             let dist_min = d * 0.95;
             let dist_max = d * 1.05;
 
-            let sport_clause = if require_sport { format!("AND {}", sport_in(5)) } else { String::new() };
+            let sport_clause = if require_sport { format!("AND {}", sport_in(6)) } else { String::new() };
             let sql = format!(
                 "SELECT id FROM activity
                  WHERE distance_m BETWEEN ?1 AND ?2
-                 AND abs(julianday(start_time) - julianday(?3)) * 86400 < ?4 {sport_clause}
+                 AND abs(julianday(start_time) - julianday(?3)) * 86400 < ?4
+                 AND {OVERLAPS} {sport_clause}
                  LIMIT 1"
             );
             let fixed: Vec<Box<dyn rusqlite::ToSql>> = vec![
@@ -69,6 +88,7 @@ pub fn find_content_duplicate(
                 Box::new(dist_max),
                 Box::new(start_time.to_string()),
                 Box::new(TIME_TOLERANCE_S),
+                Box::new(duration_s),
             ];
             let params = if require_sport { with_sports(fixed) } else { fixed };
             let id: Option<String> = conn
@@ -89,15 +109,17 @@ pub fn find_content_duplicate(
                 "SELECT id FROM activity
                  WHERE duration_s BETWEEN ?1 AND ?2
                  AND abs(julianday(start_time) - julianday(?3)) * 86400 < ?4
+                 AND {OVERLAPS}
                  AND {}
                  LIMIT 1",
-                sport_in(5)
+                sport_in(6)
             );
             let params = with_sports(vec![
                 Box::new(dur_min),
                 Box::new(dur_max),
                 Box::new(start_time.to_string()),
                 Box::new(TIME_TOLERANCE_S),
+                Box::new(dur),
             ]);
             let id: Option<String> = conn
                 .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
@@ -284,6 +306,120 @@ mod tests {
             find_content_duplicate(&conn, "2025-06-04T07:01:00", "treadmill", None, Some(1800.0), false).unwrap().as_deref(),
             Some("belt")
         );
+    }
+
+    /// #307: two rides on the trainer, the second begun 37 s after the
+    /// first had ended — starts 151 s apart, distances 4.6 % apart.
+    #[test]
+    fn rides_one_after_the_other_are_two_workouts() {
+        let conn = db::test_db();
+        insert_activity(&conn, "first", "2026-11-14T15:13:22+03:00", "indoor_ride", Some(575.26), Some(114.0));
+
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-14T15:15:53+03:00", "indoor_ride", Some(601.6), Some(91.0), false).unwrap(),
+            None,
+            "by distance"
+        );
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-14T15:15:53+03:00", "indoor_ride", None, Some(110.0), false).unwrap(),
+            None,
+            "by duration"
+        );
+        // The same span in UTC is the same span: apart…
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-14T12:15:53Z", "indoor_ride", Some(601.6), Some(91.0), true).unwrap(),
+            None,
+            "with the sport required"
+        );
+        // …and a copy inside it, one second after its start.
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-14T12:13:23Z", "indoor_ride", Some(580.0), Some(110.0), true)
+                .unwrap()
+                .as_deref(),
+            Some("first"),
+            "an offset is not ignored"
+        );
+        // A second ride begun before the first: it ends before the first starts.
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-14T15:10:00+03:00", "indoor_ride", Some(580.0), Some(110.0), false).unwrap(),
+            None,
+            "the earlier one"
+        );
+    }
+
+    /// A span that ends where the other begins does not overlap it; one
+    /// second into it does.
+    #[test]
+    fn touching_spans_are_two_workouts_and_overlapping_ones_a_copy() {
+        let conn = db::test_db();
+        insert_activity(&conn, "a1", "2025-06-01T08:00:00", "ride", Some(1000.0), Some(120.0));
+
+        assert_eq!(find_content_duplicate(&conn, "2025-06-01T08:02:00", "ride", Some(1000.0), Some(120.0), false).unwrap(), None);
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-01T08:01:59", "ride", Some(1000.0), Some(120.0), false).unwrap().as_deref(),
+            Some("a1")
+        );
+        // From the other side: the file ends at 08:00:00, where a1 begins.
+        assert_eq!(find_content_duplicate(&conn, "2025-06-01T07:58:00", "ride", Some(1000.0), Some(120.0), false).unwrap(), None);
+        assert_eq!(
+            find_content_duplicate(&conn, "2025-06-01T07:58:01", "ride", Some(1000.0), Some(120.0), false).unwrap().as_deref(),
+            Some("a1")
+        );
+    }
+
+    /// Each side's span ends at its own duration: a short file inside a long
+    /// activity, and a long file around a short one, overlap. (By distance,
+    /// where durations need not be alike.)
+    #[test]
+    fn each_span_is_as_long_as_its_own_duration() {
+        let conn = db::test_db();
+        insert_activity(&conn, "long", "2025-06-01T08:00:00", "ride", Some(1000.0), Some(3600.0));
+        insert_activity(&conn, "short", "2025-06-02T08:03:00", "ride", Some(1000.0), Some(60.0));
+
+        let find = |start: &str, dur: f64| find_content_duplicate(&conn, start, "ride", Some(1000.0), Some(dur), false).unwrap();
+        assert_eq!(find("2025-06-01T08:03:00", 60.0).as_deref(), Some("long"), "the file inside the activity");
+        assert_eq!(find("2025-06-02T08:00:00", 3600.0).as_deref(), Some("short"), "the activity inside the file");
+        // And apart by the side's own duration, not the other's.
+        assert_eq!(find("2025-06-02T08:04:01", 3600.0), None, "after the short one's end");
+        assert_eq!(find("2025-06-02T08:01:00", 60.0), None, "before the short one's start");
+    }
+
+    /// The copies dedup is for still collapse: an Edge started two minutes
+    /// before Zwift records the same hour.
+    #[test]
+    fn copies_recorded_at_the_same_time_still_collapse() {
+        let conn = db::test_db();
+        insert_activity(&conn, "edge", "2026-11-12T18:20:39+03:00", "indoor_ride", Some(30000.0), Some(3900.0));
+
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-12T18:22:40+03:00", "virtual_ride", Some(30500.0), Some(3780.0), false)
+                .unwrap()
+                .as_deref(),
+            Some("edge")
+        );
+        assert_eq!(
+            find_content_duplicate(&conn, "2026-11-12T18:22:40+03:00", "virtual_ride", None, Some(3780.0), false)
+                .unwrap()
+                .as_deref(),
+            Some("edge")
+        );
+    }
+
+    /// A duration unknown on either side says nothing about the spans: the
+    /// match is the start and distance alone, as before #307.
+    #[test]
+    fn an_unknown_duration_matches_as_before() {
+        let conn = db::test_db();
+        insert_activity(&conn, "no-time", "2025-06-01T08:00:00", "run", Some(5000.0), None);
+        insert_activity(&conn, "zero-time", "2025-06-02T08:00:00", "run", Some(5000.0), Some(0.0));
+        insert_activity(&conn, "timed", "2025-06-03T08:00:00", "run", Some(5000.0), Some(60.0));
+
+        let find = |start: &str, dur: Option<f64>| find_content_duplicate(&conn, start, "run", Some(5000.0), dur, false).unwrap();
+        assert_eq!(find("2025-06-01T08:04:00", Some(60.0)).as_deref(), Some("no-time"), "the stored one has none");
+        assert_eq!(find("2025-06-02T08:04:00", Some(60.0)).as_deref(), Some("zero-time"), "nor a zero one");
+        assert_eq!(find("2025-06-03T08:04:00", None).as_deref(), Some("timed"), "the file has none");
+        assert_eq!(find("2025-06-03T08:04:00", Some(0.0)).as_deref(), Some("timed"), "or a zero one");
+        assert_eq!(find("2025-06-03T08:04:00", Some(60.0)), None, "both known and apart");
     }
 
     #[test]

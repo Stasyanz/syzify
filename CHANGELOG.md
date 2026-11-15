@@ -21,6 +21,11 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   and then they read as text; they are ignored now, and so is a FIT device name
   with a control character in it. Zwift activities already named that way read
   "Zwift" after the next launch.
+- Two activities recorded one after the other within 5 minutes are no longer
+  imported as one (#307). A second short ride, begun after the first had ended
+  and about as long, was taken for a copy of the first and did not show up.
+  Two activities are a copy of each other only if they were recorded at the
+  same time.
 
 ## [0.13.1] - 2026-11-02
 
