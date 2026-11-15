@@ -14,8 +14,50 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   guess and can cut a corner, and nothing else changes: an exported GPX, the
   distance and the "no GPS" notice stay as they were. Activities already in the
   vault get it too, without a re-import.
+- Indoor rides on a smart trainer, on macOS (#269). The new Indoor ride screen
+  finds the trainer, power pedals and a heart rate strap over Bluetooth or an
+  ANT+ USB stick (#271, #277) and records the ride, with laps and a pause
+  (#272, #273). The ride lands in the library as an indoor ride through the
+  normal import, with all its analytics. The Mac stays awake during a ride.
+  - ERG mode (#274, #285): the trainer holds a target power whatever your
+    cadence, down to about 40 rpm. The target waits until you pedal, at the
+    start and after a pause. Syzify keeps sending it and checks by the
+    trainer's watts that it is held, since a trainer may say it is while it is
+    not. Below that, or when the ride is paused, the brake is let go.
+  - With power pedals, ERG holds the target by the pedals' watts (power match,
+    #275): an Elite Avanti read up to about 25 W below its pedals at a high
+    cadence, and the correction is at most 30 W. An Assioma Duo's two
+    Bluetooth pedals are one power source (#284).
+  - Zwift workouts (.zwo) from a folder you choose ride in ERG, interval by
+    interval and with their messages (#276). The watts are set from the FTP of
+    your latest ride; without one a workout cannot start. Running workouts and
+    workouts by distance are not supported.
+  - A dropped link is ridden through (#271, #277): the trainer is reconnected
+    by itself and the target sent again. A trainer that says it cannot hold a
+    target power is ridden free (#292).
+  - A ride cut short by a crash, a force quit, a quit from the Dock or a Mac
+    that shut down is kept on disk, and the Indoor ride screen can finish or
+    discard it later (#272). Quitting with Cmd+Q or closing the window during
+    a ride finishes the ride first; a restart, an update, a backup or a
+    restore is refused until the ride is finished or discarded (#281).
+  - Only an Elite Avanti has been tried. Another trainer that speaks Bluetooth
+    FTMS or ANT+ FE-C gets cautious generic settings and has not been tried.
+  - The downloaded app comes with the ANT+ network key; a build from source
+    asks for it once. Windows and Linux do not show the screen.
+- A ride or run with a heart rate but no heart rate zones from its device (a
+  Zwift ride, Syzify's own indoor ride, a GPX) shows them in Time in Zones, and
+  its charts colour the heart rate by zone (#298). Activities already in the
+  vault get them too. The zones are worked out from the heart rate, on the zone
+  tops of your latest ride (for a run, run) at or before it, else of your
+  latest activity of any sport.
 
 ### Fixed
+- Zwift rides, Syzify's own indoor rides and any other activity with a heart
+  rate but no heart rate zones from its device count in the recovery index's
+  load, past ones included (#294). Yesterday's TSS and CTL left them out, so
+  CTL may come out higher. Their load is worked out from their heart rate. The
+  time a ride was recorded twice, by Zwift and a bike computer for instance,
+  counts once.
 - A Zwift activity no longer shows a garbled device name such as "t[$" (#267).
   Zwift fills the device name field of its FIT files with random bytes, and now
   and then they read as text; they are ignored now, and so is a FIT device name
