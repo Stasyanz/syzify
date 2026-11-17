@@ -52,6 +52,9 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   latest activity of any sport.
 
 ### Fixed
+- On macOS 27, a file dropped on the window was not taken: no import, no
+  overlay (#316). The app is built on Tauri 2.12 now, whose WebView reads the
+  dropped files the way macOS hands them out today.
 - Zwift rides, Syzify's own indoor rides and any other ride or run with a
   heart rate but no heart rate zones from its device count in the recovery
   index's load, past ones included (#294, #313). Yesterday's TSS and CTL left

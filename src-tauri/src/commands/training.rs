@@ -985,13 +985,25 @@ mod tests {
         cmd: &str,
         body: serde_json::Value,
     ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        // The app's own origin off Windows: tauri ≥ 2.11 checks the ACL
+        // for a command from any origin it does not take as local,
+        // `http://tauri.localhost` (Windows') among them.
+        invoke_from(webview, "tauri://localhost", cmd, body)
+    }
+
+    fn invoke_from(
+        webview: &MockWebview,
+        origin: &str,
+        cmd: &str,
+        body: serde_json::Value,
+    ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
         tauri::test::get_ipc_response(
             webview,
             tauri::webview::InvokeRequest {
                 cmd: cmd.into(),
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
-                url: "http://tauri.localhost".parse().unwrap(),
+                url: origin.parse().unwrap(),
                 body: tauri::ipc::InvokeBody::Json(body),
                 headers: Default::default(),
                 invoke_key: tauri::test::INVOKE_KEY.to_string(),
@@ -1009,6 +1021,9 @@ mod tests {
         assert_eq!(list, serde_json::json!({ "dir": null, "missing": false, "workouts": [] }));
         let refused = call("training_start_workout", serde_json::json!({ "path": "a.zwo" })).unwrap_err();
         assert!(refused.to_string().contains("training.noWorkoutsDir"), "{refused}");
+        // A page from elsewhere is not let in (#316: tauri ≥ 2.11).
+        let foreign = invoke_from(&webview, "https://evil.example", "training_workouts", serde_json::json!({})).unwrap_err();
+        assert!(foreign.to_string().contains("not allowed"), "{foreign}");
     }
 
     fn found(role: SensorRole, radio: crate::models::training::Radio, address: &str) -> FoundDevice {
