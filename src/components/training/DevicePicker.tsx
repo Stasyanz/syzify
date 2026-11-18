@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Bluetooth } from "lucide-react";
+import { Ban, Bike, Bluetooth, Check, HeartPulse, Usb, Zap, type LucideIcon } from "lucide-react";
 import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
 import { useT } from "../../lib/i18n";
@@ -10,6 +10,51 @@ import type { FoundDevice, SensorRole, StickProblem } from "../../lib/types";
 type Picks = Record<SensorRole, string | null>;
 
 const NONE: Picks = { trainer: null, pedals: null, strap: null };
+
+const ROLE_ICONS: Record<SensorRole, LucideIcon> = { trainer: Bike, pedals: Zap, strap: HeartPulse };
+
+/** One choice of a role as a tile of its own, the way Zwift lays devices
+ * out (#315). A native radio covers the tile, unseen: the arrow keys,
+ * VoiceOver (its cursor on the whole tile) and a click anywhere on it work
+ * as on a plain radio. Keyboard focus draws an outline set off the tile, so
+ * it is not taken for the picked tile's border, as Checkbox does. */
+function Tile({
+  name,
+  checked,
+  onPick,
+  icon: Icon,
+  none = false,
+  children,
+}: {
+  name: SensorRole;
+  checked: boolean;
+  onPick: () => void;
+  icon: LucideIcon;
+  /** "None": drawn lighter than a device, its icon never the accent's (a
+   * no-entry sign in the accent reads as "forbidden"). */
+  none?: boolean;
+  children: ReactNode;
+}) {
+  const look = checked
+    ? "border-accent bg-accent-soft"
+    : `${none ? "border-dashed text-muted" : ""} border-border-2 hover:bg-card-2`;
+  return (
+    <label
+      className={`relative flex flex-col gap-1.5 min-h-24 p-3 rounded-card border cursor-pointer transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent ${look}`}
+    >
+      <input
+        type="radio"
+        className="absolute inset-0 m-0 opacity-0 appearance-none cursor-pointer"
+        name={name}
+        checked={checked}
+        onChange={onPick}
+      />
+      {checked && <Check size={16} className="absolute top-3 right-3 text-accent" aria-hidden />}
+      <Icon size={20} className={checked && !none ? "text-accent" : "text-muted"} aria-hidden />
+      {children}
+    </label>
+  );
+}
 
 /** Search for devices, pick a trainer (and pedals and a strap, if there are
  * any), connect. */
@@ -63,42 +108,52 @@ export function DevicePicker() {
           {ROLES.map((role) => {
             const devices = devicesFor(found, role);
             return (
-              <fieldset key={role} className="flex flex-col gap-1">
-                <legend className="text-xs uppercase tracking-wide text-faint mb-1">{roleLabel[role]}</legend>
-                {role !== "trainer" && (
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name={role}
-                      checked={picks[role] == null}
-                      onChange={() => setPicks({ ...picks, [role]: null })}
-                    />
-                    {t("training.setup.none")}
-                  </label>
-                )}
+              <fieldset key={role} className="flex flex-col">
+                <legend className="text-xs uppercase tracking-wide text-faint mb-2">{roleLabel[role]}</legend>
                 {devices.length === 0 && role === "trainer" && (
                   <p className="text-sm text-muted">{t("training.setup.noTrainer")}</p>
                 )}
-                {devices.map((d) => (
-                  <label key={d.address} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
+                  {devices.map((d) => {
+                    const ChannelIcon = d.radio === "ant" ? Usb : Bluetooth;
+                    return (
+                      <Tile
+                        key={d.address}
+                        name={role}
+                        icon={ROLE_ICONS[role]}
+                        checked={picks[role] === d.address}
+                        onPick={() => setPicks({ ...picks, [role]: d.address })}
+                      >
+                        <span className="text-sm font-medium break-words">
+                          {d.name ? <span translate="no">{d.name}</span> : t("training.setup.unnamed")}
+                        </span>
+                        {/* The same trainer may be found both ways: the user picks. */}
+                        <span className="inline-flex items-center gap-1 text-xs text-muted">
+                          <ChannelIcon size={12} aria-hidden />
+                          {d.radio === "ant" ? t("training.setup.viaAnt") : t("training.setup.viaBle")}
+                        </span>
+                        {d.other_side && <span className="text-xs text-muted">{t("training.setup.bothPedals")}</span>}
+                        {/* Picked alone it records one leg: say so plainly. (Not
+                            searched for by name: a one-sided pedal may be named
+                            the same way and would get no power at all.) */}
+                        {d.lone_side && (
+                          <span className="text-xs px-2 py-0.5 rounded-field bg-warn-soft">{t("training.setup.lonePedal")}</span>
+                        )}
+                      </Tile>
+                    );
+                  })}
+                  {role !== "trainer" && (
+                    <Tile
                       name={role}
-                      checked={picks[role] === d.address}
-                      onChange={() => setPicks({ ...picks, [role]: d.address })}
-                    />
-                    {d.name ? <span translate="no">{d.name}</span> : t("training.setup.unnamed")}
-                    {/* The same trainer may be found both ways: the user picks. */}
-                    <span className="text-xs text-faint">{d.radio === "ant" ? t("training.setup.viaAnt") : t("training.setup.viaBle")}</span>
-                    {d.other_side && <span className="text-xs text-faint">{t("training.setup.bothPedals")}</span>}
-                    {/* Picked alone it records one leg: say so plainly. (Not
-                        searched for by name: a one-sided pedal may be named
-                        the same way and would get no power at all.) */}
-                    {d.lone_side && (
-                        <span className="text-xs px-2 py-0.5 rounded-field bg-warn-soft">{t("training.setup.lonePedal")}</span>
-                    )}
-                  </label>
-                ))}
+                      icon={Ban}
+                      none
+                      checked={picks[role] == null}
+                      onPick={() => setPicks({ ...picks, [role]: null })}
+                    >
+                      <span className="text-sm font-medium">{t("training.setup.none")}</span>
+                    </Tile>
+                  )}
+                </div>
               </fieldset>
             );
           })}

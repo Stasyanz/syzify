@@ -268,6 +268,49 @@ describe("Training before a session", () => {
     await waitFor(() => expect(mocked.trainingConnect).toHaveBeenCalledWith("T1", ["PL", "PR"], null));
   });
 
+  it("shows each device as a tile of its own, the picked one marked, a radio under each (#315)", async () => {
+    scanned([
+      { role: "trainer", radio: "ble", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
+      { role: "trainer", radio: "ant", address: "ant:17:14830", name: "Elite 14830", other_side: null, lone_side: false },
+      { role: "pedals", radio: "ble", address: "P1", name: "ASSIOMA55430L", other_side: null, lone_side: false },
+    ]);
+    renderPage();
+    fireEvent.click(screen.getByText("Search for devices"));
+    const avanti = (await screen.findByRole("radio", { name: /AVANTI COG/ })) as HTMLInputElement;
+    const elite = screen.getByRole("radio", { name: /Elite 14830/ }) as HTMLInputElement;
+    const [noPedals] = screen.getAllByRole("radio", { name: "None" }) as HTMLInputElement[];
+    const tile = (radio: HTMLElement) => radio.closest("label")!;
+    const has = (radio: HTMLElement, cls: string) => tile(radio).classList.contains(cls);
+    const icon = (radio: HTMLElement, name: string) => tile(radio).querySelector(`svg.lucide-${name}`);
+    /** Picked as it looks: the accent border and the check. */
+    const looksPicked = (radio: HTMLElement) =>
+      has(radio, "border-accent") && icon(radio, "check") != null;
+    // The first trainer and no pedals, to begin with: each tile says so.
+    expect([avanti.checked, elite.checked, noPedals.checked]).toEqual([true, false, true]);
+    expect([looksPicked(avanti), looksPicked(elite), looksPicked(noPedals)]).toEqual([true, false, true]);
+    expect(icon(avanti, "bike")!.classList.contains("text-accent")).toBe(true);
+    expect(icon(elite, "bike")!.classList.contains("text-accent")).toBe(false);
+    // The radio covers its tile, unseen.
+    expect(avanti.classList.contains("opacity-0") && avanti.classList.contains("inset-0")).toBe(true);
+    // Each says how it is linked.
+    expect([icon(avanti, "bluetooth") != null, icon(avanti, "usb") != null]).toEqual([true, false]);
+    expect([icon(elite, "bluetooth") != null, icon(elite, "usb") != null]).toEqual([false, true]);
+    // A click anywhere on another tile picks it.
+    fireEvent.click(screen.getByText("Elite 14830"));
+    expect([avanti.checked, elite.checked]).toEqual([false, true]);
+    expect([looksPicked(avanti), looksPicked(elite)]).toEqual([false, true]);
+    // "None" is drawn lighter than a device while not picked, and its
+    // no-entry sign never in the accent; a device is never dashed.
+    expect(has(noPedals, "border-dashed")).toBe(false);
+    expect(icon(noPedals, "ban")!.classList.contains("text-accent")).toBe(false);
+    const pedals = screen.getByRole("radio", { name: /ASSIOMA55430L/ });
+    expect(icon(pedals, "zap")).not.toBeNull();
+    fireEvent.click(screen.getByText("ASSIOMA55430L"));
+    expect(has(noPedals, "border-dashed")).toBe(true);
+    expect(looksPicked(noPedals)).toBe(false);
+    expect([avanti, elite, pedals].some((r) => has(r, "border-dashed"))).toBe(false);
+  });
+
   it("lets pedals and a strap be left out again", async () => {
     scanned([
       { role: "trainer", radio: "ble", address: "T1", name: "AVANTI COG", other_side: null, lone_side: false },
