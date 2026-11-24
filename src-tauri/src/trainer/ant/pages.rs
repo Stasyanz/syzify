@@ -157,15 +157,26 @@ impl Decoder {
             (KIND_POWER, 0x10) => {
                 let instant = u16::from_le_bytes([p[6], p[7]]);
                 let watts = self.watts(p[1], u16::from_le_bytes([p[4], p[5]]), at, Some(instant));
+                let still = self.power_still.still(p[1], at);
                 // Pedals that send crank torque are counted by it alone (it
                 // says standing still too).
-                r.watts = match (self.torque, self.power_still.still(p[1], at)) {
+                r.watts = match (self.torque, still) {
                     (true, _) => None,
                     (false, true) => Some(0),
                     (false, false) => watts,
                 };
-                r.cadence_rpm = (p[3] != 0xFF).then_some(p[3]);
-                r.balance_right = (p[2] != 0xFF && p[2] & 0x80 != 0).then_some(p[2] & 0x7F);
+                // Pedals that send crank torque take their cadence from it
+                // too: an Assioma's power page went on saying 82 rpm between
+                // the torque page's 0s, and its count stands still on its
+                // own clock (#319). Standing still, a power-only page goes on
+                // with its last cadence and balance: no turning, and no
+                // balance of no power.
+                let cadence = (p[3] != 0xFF && !self.torque).then_some(p[3]);
+                let balance = (p[2] != 0xFF && p[2] & 0x80 != 0).then_some(p[2] & 0x7F);
+                (r.cadence_rpm, r.balance_right) = match still {
+                    true => (cadence.map(|_| 0), None),
+                    false => (cadence, balance),
+                };
             }
             (KIND_POWER, 0x12) => {
                 self.torque = true;
@@ -464,6 +475,13 @@ mod tests {
         // little while, then none.
         assert_eq!(d.reading(KIND_POWER, at(4), &power(6, 700, 199, 0xFF, 0)).unwrap().watts, Some(199));
         assert_eq!(d.reading(KIND_POWER, at(5), &power(6, 700, 199, 0xFF, 0)).unwrap().watts, Some(0), "3 s still");
+        // …and its last cadence and balance, which the page may keep too
+        // (#319): no turning, no balance; a page with no cadence, none.
+        let r = d.reading(KIND_POWER, at(6), &power(6, 700, 199, 0x80 | 52, 90)).unwrap();
+        assert_eq!((r.watts, r.cadence_rpm, r.balance_right), (Some(0), Some(0), None));
+        assert_eq!(d.reading(KIND_POWER, at(7), &power(6, 700, 199, 0x80 | 52, 0xFF)).unwrap().cadence_rpm, None);
+        let r = d.reading(KIND_POWER, at(8), &power(7, 900, 200, 0x80 | 52, 90)).unwrap();
+        assert_eq!((r.cadence_rpm, r.balance_right), (Some(90), Some(52)), "turning again");
     }
 
     /// Crank torque: events, revolutions, period (1/2048 s), torque (1/32 N·m).
@@ -474,6 +492,31 @@ mod tests {
     }
 
     #[test]
+    fn pedals_standing_still_have_no_cadence_on_either_page() {
+        // #319, an Assioma on the stick: torque and power pages in turn. The
+        // rider stops after 1 s; the power page went on saying 82 rpm and a
+        // balance between the torque page's 0s — a ride's cadence went 0/82.
+        let mut d = Decoder::default();
+        let page = |events: u8| [0x10, events, 0x80 | 51, 82, 0, 0, 160, 0];
+        let read = |d: &mut Decoder, ms: u64, p: [u8; 8]| {
+            let r = d.reading(KIND_POWER, Duration::from_millis(ms), &p).unwrap();
+            (r.watts, r.cadence_rpm, r.balance_right)
+        };
+        d.reading(KIND_POWER, at(0), &torque(1, 1, 0, 0));
+        d.reading(KIND_POWER, at(1), &torque(2, 2, 1536, 1200));
+        // Its cadence is the torque page's alone, still or not: the power
+        // page says only the balance.
+        assert_eq!(read(&mut d, 1_000, page(10)), (None, None, Some(51)));
+        assert_eq!(read(&mut d, 2_000, page(11)), (None, None, Some(51)), "the power page's count moved last here");
+        assert_eq!(read(&mut d, 4_000, torque(2, 2, 1536, 1200)), (Some(0), Some(0), None), "the torque page stands");
+        assert_eq!(read(&mut d, 4_500, page(11)), (None, None, Some(51)), "no 82 between the 0s");
+        assert_eq!(read(&mut d, 5_000, page(11)), (None, None, None), "3 s still: no balance either");
+        assert_eq!(read(&mut d, 9_000, page(11)), (None, None, None), "and on");
+        // Turning again.
+        assert_eq!(read(&mut d, 10_000, page(12)), (None, None, Some(51)));
+    }
+
+    #[test]
     fn pedals_that_send_crank_torque_are_counted_by_it() {
         let mut d = Decoder::default();
         assert_eq!(d.reading(KIND_POWER, at(1), &torque(1, 1, 0, 0)), None, "nothing to compare yet");
@@ -481,10 +524,10 @@ mod tests {
         // 128π · 1200 / 1536 ≈ 314 W at 80 rpm.
         let r = d.reading(KIND_POWER, at(2), &torque(2, 2, 1536, 1200)).unwrap();
         assert_eq!((r.watts, r.cadence_rpm), (Some(314), Some(80)));
-        // The power page now says the balance and cadence, not the watts —
-        // not even a still count's 0 (the torque says standing still).
+        // The power page now says the balance only, not the watts nor the
+        // cadence — the torque says them, standing still too (#319).
         let p = d.reading(KIND_POWER, at(2), &[0x10, 9, 0x80 | 50, 81, 0, 0, 44, 1]).unwrap();
-        assert_eq!((p.watts, p.balance_right, p.cadence_rpm), (None, Some(50), Some(81)));
+        assert_eq!((p.watts, p.balance_right, p.cadence_rpm), (None, Some(50), None));
         assert_eq!(d.reading(KIND_POWER, at(6), &[0x10, 9, 0x80 | 50, 81, 0, 0, 44, 1]).unwrap().watts, None);
         // A torque no rider makes is no watts; the cadence stands.
         let wild = d.reading(KIND_POWER, at(3), &torque(3, 3, 3072, 60000)).unwrap();
