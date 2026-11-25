@@ -106,6 +106,11 @@ pub struct Sample {
     pub speed_mps: Option<f32>,
     /// Metres since the start.
     pub distance_m: Option<f32>,
+    /// The share of the power from the right pedal, in % (#320): the
+    /// pedals' own, while their watts are the second's. A journal from
+    /// before it has none, and a second with none writes none to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_right: Option<u8>,
 }
 
 /// What the encoder writes.
@@ -243,6 +248,8 @@ struct Totals {
     max_cadence: Option<u8>,
     avg_power: Option<u16>,
     max_power: Option<u16>,
+    /// Power-weighted share of the right pedal, in %, as a device averages it.
+    balance_right: Option<f64>,
 }
 
 fn mean<T: Copy + Into<f64>>(values: &[T]) -> Option<f64> {
@@ -274,7 +281,24 @@ fn totals(samples: &[Sample], base: f32) -> Totals {
         max_cadence: cadence.iter().copied().max(),
         avg_power: mean(&watts).map(|v| v.round() as u16),
         max_power: watts.iter().copied().max(),
+        balance_right: balance(samples),
     }
+}
+
+/// The right pedal's share of the power over `samples`, weighted by the
+/// watts of each second that has a balance (a second at 0 W has none).
+fn balance(samples: &[Sample]) -> Option<f64> {
+    let (right, total) = samples
+        .iter()
+        .filter_map(|s| s.watts.filter(|&w| w > 0 && w != u16::MAX).zip(s.balance_right.filter(|&b| b <= 100)))
+        .fold((0.0, 0.0), |(r, t), (w, b)| (r + f64::from(w) * f64::from(b), t + f64::from(w)));
+    (total > 0.0).then(|| right / total)
+}
+
+/// A balance as FIT's `left_right_balance_100`: the right's share × 100,
+/// flagged as the right's.
+fn balance_100(right: Option<f64>) -> Option<u16> {
+    right.map(|r| 0x8000 | ((r * 100.0).round() as u16).min(10_000))
 }
 
 /// The ride as a FIT activity file.
@@ -340,7 +364,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
     let pauses: Vec<(u32, u32)> = ride.pauses.iter().copied().filter(|&(a, b)| a < b && a > first && b < end).collect();
     let mut pending = pauses.iter().peekable();
 
-    w.define(3, RECORD, &[(253, 4, UINT32), (7, 2, UINT16), (4, 1, UINT8), (3, 1, UINT8), (6, 2, UINT16), (5, 4, UINT32)]);
+    w.define(3, RECORD, &[(253, 4, UINT32), (7, 2, UINT16), (4, 1, UINT8), (3, 1, UINT8), (6, 2, UINT16), (5, 4, UINT32), (30, 1, UINT8)]);
     for s in &ride.samples {
         while let Some(&&(stop, start)) = pending.peek() {
             if start > s.t {
@@ -359,6 +383,8 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
                 V::U8(s.heart_rate.filter(|&h| h != u8::MAX)),
                 V::U16(scaled(s.speed_mps, 1000.0, 0xFFFE).map(|v| v as u16)),
                 V::U32(scaled(s.distance_m, 100.0, 0xFFFF_FFFE)),
+                // FIT's `left_right_balance`: the right's share, flagged so.
+                V::U8(s.balance_right.filter(|&b| b <= 100).map(|b| 0x80 | b)),
             ],
         );
     }
@@ -418,6 +444,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
             (24, 1, ENUM),
             (25, 1, ENUM),
             (39, 1, ENUM),
+            (34, 2, UINT16),
         ],
     );
     let mut base = 0.0;
@@ -436,6 +463,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
                 V::U8(Some(trigger)),
                 V::U8(Some(SPORT_CYCLING)),
                 V::U8(Some(ride.sub_sport as u8)),
+                V::U16(balance_100(t.balance_right)),
             ],
         );
     }
@@ -464,12 +492,14 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
             (6, 1, ENUM),
             (25, 2, UINT16),
             (26, 2, UINT16),
+            (37, 2, UINT16),
         ],
     );
+    let session = totals(&ride.samples, 0.0);
     summary(
         &mut w,
         5,
-        &totals(&ride.samples, 0.0),
+        &session,
         vec![
             V::U16(Some(0)),
             V::U8(Some(EVENT_SESSION)),
@@ -478,6 +508,7 @@ pub fn encode(ride: &Ride) -> Vec<u8> {
             V::U8(Some(ride.sub_sport as u8)),
             V::U16(Some(0)),
             V::U16(Some(laps.len() as u16)),
+            V::U16(balance_100(session.balance_right)),
         ],
     );
 
@@ -526,6 +557,7 @@ mod tests {
                 heart_rate: Some(120 + (t / 60) as u8),
                 speed_mps: Some(8.5),
                 distance_m: Some(8.5 * t as f32),
+                balance_right: None,
             })
             .collect();
         Ride {
@@ -560,6 +592,8 @@ mod tests {
             Value::UInt8(x) => Some(*x as f64),
             Value::UInt16(x) => Some(*x as f64),
             Value::UInt32(x) => Some(*x as f64),
+            // fitparser reads a balance as a signed 64-bit number.
+            Value::SInt64(x) => Some(*x as f64),
             Value::Float64(x) => Some(*x),
             Value::Float32(x) => Some(*x as f64),
             _ => None,
@@ -647,6 +681,57 @@ mod tests {
         let records = fitparser::from_bytes(&encode(&r)).expect("valid");
         assert_eq!(of(&records, MesgNum::Record).len(), 0);
         assert_eq!(of(&records, MesgNum::Session).len(), 1);
+    }
+
+    /// #320: each second's balance as FIT's `left_right_balance` (the
+    /// right's share, flagged so); each lap's and the session's weighted by
+    /// the watts, a second at 0 W, at no power, over 100 % or with no
+    /// balance left out.
+    #[test]
+    fn the_pedals_balance_is_recorded_and_averaged_by_power() {
+        let mut r = ride(8);
+        let set = [
+            (Some(100), Some(40)),
+            (Some(300), Some(60)),
+            (Some(0), Some(90)),
+            (Some(500), None),
+            (Some(u16::MAX), Some(10)),
+            (Some(200), Some(101)),
+            // The second lap: 70 %.
+            (Some(200), Some(70)),
+            (Some(200), Some(70)),
+        ];
+        for (sample, (w, b)) in r.samples.iter_mut().zip(set) {
+            (sample.watts, sample.balance_right) = (w, b);
+        }
+        r.lap_starts = vec![6];
+        let data = encode(&r);
+        let messages = fitparser::from_bytes(&data).unwrap();
+        let of = |kind: MesgNum| messages.iter().filter(|m| m.kind() == kind).collect::<Vec<_>>();
+        let raw = |m: &FitDataRecord| number(field(m, "left_right_balance"));
+        let records: Vec<Option<f64>> = of(MesgNum::Record).iter().map(|m| raw(m)).collect();
+        let flagged = |b: u16| Some(f64::from(0x80 | b));
+        assert_eq!(records, [flagged(40), flagged(60), flagged(90), None, flagged(10), None, flagged(70), flagged(70)]);
+        // Lap 1: (100·40 + 300·60) / 400 = 55 %; lap 2: 70 %; the ride:
+        // (4000 + 18000 + 28000) / 800 = 62.5 %.
+        let laps = of(MesgNum::Lap);
+        assert_eq!(laps.iter().map(|m| raw(m)).collect::<Vec<_>>(), [Some(f64::from(0x8000 + 5500)), Some(f64::from(0x8000 + 7000))]);
+        assert_eq!(raw(of(MesgNum::Session)[0]), Some(f64::from(0x8000 + 6250)));
+        // A share that is not whole keeps its hundredths, rounded:
+        // (100·50 + 200·51) / 300 = 50.67 % → 5067.
+        let mut odd = ride(2);
+        for (sample, (w, b)) in odd.samples.iter_mut().zip([(100, 50), (200, 51)]) {
+            (sample.watts, sample.balance_right) = (Some(w), Some(b));
+        }
+        let odd = fitparser::from_bytes(&encode(&odd)).unwrap();
+        let session = odd.iter().find(|m| m.kind() == MesgNum::Session).unwrap();
+        assert_eq!(raw(session), Some(f64::from(0x8000 + 5067)));
+        // None at all: the field is left out (invalid) — not 0x8000, which
+        // fitparser reads as "right" and a viewer as L100/R0.
+        let none = fitparser::from_bytes(&encode(&ride(3))).unwrap();
+        for m in none.iter().filter(|m| matches!(m.kind(), MesgNum::Session | MesgNum::Lap | MesgNum::Record)) {
+            assert!(field(m, "left_right_balance").is_none(), "{:?}", m.kind());
+        }
     }
 
     #[test]

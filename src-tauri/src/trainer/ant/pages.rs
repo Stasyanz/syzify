@@ -172,7 +172,7 @@ impl Decoder {
                 // with its last cadence and balance: no turning, and no
                 // balance of no power.
                 let cadence = (p[3] != 0xFF && !self.torque).then_some(p[3]);
-                let balance = (p[2] != 0xFF && p[2] & 0x80 != 0).then_some(p[2] & 0x7F);
+                let balance = (p[2] != 0xFF && p[2] & 0x80 != 0).then_some(p[2] & 0x7F).filter(|&b| b <= 100);
                 (r.cadence_rpm, r.balance_right) = match still {
                     true => (cadence.map(|_| 0), None),
                     false => (cadence, balance),
@@ -469,6 +469,10 @@ mod tests {
         };
         let r = d.reading(KIND_POWER, at(1), &power(5, 500, 210, 0x80 | 52, 90)).unwrap();
         assert_eq!((r.watts, r.cadence_rpm, r.balance_right), (Some(210), Some(90), Some(52)));
+        // A right's share over 100 % is none (#320).
+        let mut wild = Decoder::default();
+        assert_eq!(wild.reading(KIND_POWER, at(1), &power(5, 500, 210, 0x80 | 101, 90)).unwrap().balance_right, None);
+        assert_eq!(wild.reading(KIND_POWER, at(2), &power(6, 700, 210, 0x80 | 100, 90)).unwrap().balance_right, Some(100));
         let r = d.reading(KIND_POWER, at(2), &power(6, 700, 199, 52, 0xFF)).unwrap();
         assert_eq!((r.watts, r.cadence_rpm, r.balance_right), (Some(200), None, None), "one leg's share: not the right's");
         // Coasting: the count stays and the page may keep its last watts; a

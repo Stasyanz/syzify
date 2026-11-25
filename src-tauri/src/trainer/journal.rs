@@ -343,6 +343,20 @@ mod tests {
     const KEY: [u8; 32] = [7; 32];
     const START: i64 = 1_794_420_000;
 
+    /// #320: a second written before the balance was recorded still reads,
+    /// with none; one written since keeps it.
+    #[test]
+    fn a_second_from_before_the_balance_reads_with_none() {
+        let old = r#"{"second":{"t":3,"watts":150,"cadence_rpm":85,"heart_rate":null,"speed_mps":null,"distance_m":12.5,"power_from":"pedals","cadence_from":"pedals","trainer_watts":148}}"#;
+        let Entry::Second(second) = serde_json::from_str::<Entry>(old).unwrap() else { panic!("not a second") };
+        assert_eq!((second.sample.watts, second.sample.balance_right), (Some(150), None));
+        let new = Entry::Second(Second { sample: Sample { t: 4, balance_right: Some(52), ..Sample::default() }, ..Second::default() });
+        let back: Entry = serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
+        assert_eq!(back, new);
+        // A second with none writes none: a journal line a second, all ride.
+        assert!(!serde_json::to_string(&Entry::Second(Second::default())).unwrap().contains("balance_right"));
+    }
+
     fn avanti() -> Device {
         Device {
             kind: DeviceKind::FitnessEquipment,

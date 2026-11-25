@@ -27,7 +27,9 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   - With power pedals, ERG holds the target by the pedals' watts (power match,
     #275): an Elite Avanti read up to about 25 W below its pedals at a high
     cadence, and the correction is at most 30 W. An Assioma Duo's two
-    Bluetooth pedals are one power source (#284).
+    Bluetooth pedals are one power source (#284). The pedals' left/right
+    balance is recorded too: the ride's shows in Cycling Dynamics, each
+    second's is kept in the ride's file (#320).
   - Zwift workouts (.zwo) from a folder you choose ride in ERG, interval by
     interval and with their messages (#276). The watts are set from the FTP of
     your latest ride; without one a workout cannot start. Running workouts and

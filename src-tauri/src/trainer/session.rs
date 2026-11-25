@@ -160,6 +160,9 @@ pub struct Session {
     for_controllers: Vec<LinkEvent>,
     /// The pedals' last second with power: (second, watts, cadence).
     last_pedals: Option<(u32, u16, Option<u8>)>,
+    /// The pedals' last balance: (second, right %). Its own hold: an ANT+
+    /// pedal tells it on another page than its watts (#320).
+    last_balance: Option<(u32, u8)>,
     pedals_lost: bool,
     /// The strap's last second with a heart rate: (second, bpm).
     last_heart_rate: Option<(u32, u8)>,
@@ -214,6 +217,7 @@ impl Session {
             next_second: 0,
             for_controllers: Vec::new(),
             last_pedals: None,
+            last_balance: None,
             pedals_lost: false,
             last_heart_rate: None,
             strap_lost: false,
@@ -481,6 +485,17 @@ impl Session {
             (None, Some(w)) => (Some(w), Some(Source::Trainer)),
             _ => (None, None),
         };
+        // The pedals' balance, while their watts are the second's and not
+        // 0: held as their watts are, on its own clock — an ANT+ pedal tells
+        // it on its power page, its watts on the torque page (#320).
+        if let Some(b) = from(Source::Pedals).filter_map(|r| r.balance_right).next_back() {
+            self.last_balance = Some((s, b));
+        }
+        let balance_right = self
+            .last_balance
+            .filter(|&(at, _)| !self.pedals_lost && s.saturating_sub(at) <= PEDALS_HOLD)
+            .map(|(_, b)| b)
+            .filter(|_| power_from == Some(Source::Pedals) && watts.is_some_and(|w| w > 0));
         let (cadence_rpm, cadence_from) = match (pedal_cadence.or(held.and_then(|h| h.2)), cadence(Source::Trainer)) {
             (Some(c), _) => (Some(c), Some(Source::Pedals)),
             (None, Some(c)) => (Some(c), Some(Source::Trainer)),
@@ -500,7 +515,15 @@ impl Session {
         // A second at this second's speed; no speed adds nothing.
         self.distance_m += speed_mps.unwrap_or(0.0);
         Second {
-            sample: Sample { t: s, watts, cadence_rpm, heart_rate, speed_mps, distance_m: Some(self.distance_m) },
+            sample: Sample {
+                t: s,
+                watts,
+                cadence_rpm,
+                heart_rate,
+                speed_mps,
+                distance_m: Some(self.distance_m),
+                balance_right,
+            },
             power_from,
             cadence_from,
             trainer_watts,
@@ -773,6 +796,56 @@ mod tests {
         let mut s = session(avanti(), Some(p), None);
         ride(&mut s, 15);
         assert_eq!(s.seconds()[11].power_from, Some(Source::Trainer), "no hold once lost");
+    }
+
+    /// #320: the pedals' balance is a second's while their watts are, held
+    /// on its own clock (an ANT+ pedal tells it on another page than its
+    /// watts), and none of 0 W, of the trainer's watts or of lost pedals —
+    /// each checked with a fresh balance at hand.
+    #[test]
+    fn the_pedals_balance_goes_with_their_watts() {
+        struct Losing(Scripted);
+        impl SensorLink for Losing {
+            fn identity(&self) -> Option<&Identity> {
+                self.0.identity()
+            }
+            fn poll(&mut self, now: Duration) -> Vec<LinkEvent> {
+                let mut out = self.0.poll(now);
+                if now == secs(31) {
+                    out.push(LinkEvent::Lost { at: secs(30) });
+                }
+                out
+            }
+        }
+        // 0–9 s: 200 W, the balance at 0 s (53 %) and at 5 s (53 % then
+        // 55 % in the same second). 10–14 s: 0 W, a balance every second.
+        // 15–19 s: nothing. 20–29 s: a balance only, no watts (a power
+        // page with a torque page lost). From 30 s: lost, its readings
+        // still come.
+        // Two readings a second.
+        let p = Box::new(Losing(scripted("P", 500, |t| {
+            let s = t as u32;
+            let reading = |watts, balance| Some(Reading { watts, balance_right: Some(balance), ..Reading::default() });
+            match s {
+                0 | 5 => reading(Some(200), if s == 5 && t.fract() > 0.4 { 55 } else { 53 }),
+                0..=9 => Some(Reading { watts: Some(200), ..Reading::default() }),
+                10..=14 => reading(Some(0), 54),
+                15..=19 => None,
+                _ => reading(if s >= 30 { Some(210) } else { None }, 56),
+            }
+        })));
+        assert!(p.identity().is_some());
+        let mut s = session(avanti(), Some(p), None);
+        ride(&mut s, 35);
+        let at = |i: usize| (s.seconds()[i].power_from, s.seconds()[i].sample.balance_right);
+        assert_eq!(at(3), (Some(Source::Pedals), Some(53)), "held 3 s past it");
+        assert_eq!(at(4), (Some(Source::Pedals), None), "then none");
+        assert_eq!(at(5).1, Some(55), "the second's last");
+        assert_eq!(at(11), (Some(Source::Pedals), None), "0 W, a balance at hand: none");
+        assert_eq!(at(25), (Some(Source::Trainer), None), "the trainer's watts, a balance at hand: none");
+        // Lost, its readings still come (a link that says so late): the
+        // watts are taken as they come, a balance is not trusted.
+        assert_eq!(at(33), (Some(Source::Pedals), None), "lost, a balance at hand: none");
     }
 
     #[test]

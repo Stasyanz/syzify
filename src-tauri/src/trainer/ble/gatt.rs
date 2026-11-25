@@ -117,7 +117,8 @@ pub fn parse_cycling_power(v: &[u8]) -> Option<CyclingPower> {
         // In half percent, of the left pedal when bit 1 says so; with an
         // unknown reference it is nobody's share.
         let share = *v.get(i)? as f32 / 2.0;
-        if has(1) {
+        // Over 100 % is no share (it would read as the right's 0 %).
+        if has(1) && share <= 100.0 {
             balance_right = Some(100.0 - share);
         }
         i += 1;
@@ -268,6 +269,11 @@ mod tests {
         // A balance with no reference says nothing about the right leg.
         let v = [0x21, 0x00, 0xFA, 0x00, 0x64, 0x0A, 0x00, 0x00, 0x04];
         assert_eq!(parse_cycling_power(&v).unwrap().balance_right, None);
+        // Over 100 % of the left is no share at all (#320): not the right's 0 %.
+        let v = [0x23, 0x00, 0xFA, 0x00, 202, 0x0A, 0x00, 0x00, 0x04];
+        assert_eq!(parse_cycling_power(&v).unwrap().balance_right, None);
+        let v = [0x23, 0x00, 0xFA, 0x00, 200, 0x0A, 0x00, 0x00, 0x04];
+        assert_eq!(parse_cycling_power(&v).unwrap().balance_right, Some(0.0), "all from the left");
     }
 
     #[test]

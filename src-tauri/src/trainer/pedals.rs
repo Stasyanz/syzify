@@ -129,7 +129,9 @@ impl PedalPair {
             balance_right: total
                 .filter(|&t| t > 0)
                 .zip(right)
-                .map(|(t, r)| (u32::from(r) * 100 / u32::from(t)) as u8),
+                // Rounded, not cut: cut, an even pair read half a point to
+                // the left on average, once it is recorded (#320).
+                .map(|(t, r)| ((u32::from(r) * 100 + u32::from(t) / 2) / u32::from(t)) as u8),
             ..Reading::default()
         }
     }
@@ -416,6 +418,11 @@ mod tests {
         assert_eq!((on_left.watts, on_left.balance_right), (Some(200), Some(45)), "summed on the left's reading too");
         let on_right = at(ms(5500));
         assert_eq!(on_right.cadence_rpm, Some(88), "the right says none: the left's");
+        // Rounded, not cut (#320): 99 of 200 is 49.5 % → 50.
+        let mut even = pair(leg("ASSIOMA55430L", "AL", 101, 0), leg("ASSIOMA61026R", "AR", 99, 500));
+        let events = ride(&mut even, 0, 6);
+        let last = events.iter().rev().find_map(|e| if let LinkEvent::Reading(r) = e { r.balance_right } else { None });
+        assert_eq!(last, Some(50));
     }
 
     /// The left came, went, and the right came meanwhile: not connected

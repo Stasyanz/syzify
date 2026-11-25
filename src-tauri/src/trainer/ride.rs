@@ -242,6 +242,60 @@ mod tests {
         assert!(matches!(import_ride(&conn, &vault, &ride, None).unwrap(), Finished::Imported(ImportOutcome::Skipped)));
     }
 
+    /// Pedals at 200 W, 52 % from the right, every second; they stop for
+    /// the last 20 s (0 W, no balance).
+    struct Pedals(u64, Identity);
+    impl SensorLink for Pedals {
+        fn identity(&self) -> Option<&Identity> {
+            Some(&self.1)
+        }
+        fn poll(&mut self, now: Duration) -> Vec<LinkEvent> {
+            let mut out = Vec::new();
+            if self.0 == 0 {
+                out.push(LinkEvent::Identified { at: Duration::ZERO, identity: self.1.clone() });
+            }
+            while self.0 <= now.as_secs() {
+                let riding = self.0 < 100;
+                out.push(LinkEvent::Reading(Reading {
+                    at: Duration::from_secs(self.0),
+                    watts: Some(if riding { 200 } else { 0 }),
+                    cadence_rpm: Some(if riding { 85 } else { 0 }),
+                    balance_right: riding.then_some(52),
+                    ..Reading::default()
+                }));
+                self.0 += 1;
+            }
+            out
+        }
+    }
+
+    /// #320: the pedals' balance reaches the vault through the real import:
+    /// each second's, and the ride's average.
+    #[test]
+    fn a_ride_records_the_pedals_balance() {
+        let vault = ScratchDir::new("ride_balance");
+        let conn = crate::db::test_db();
+        let trainer = Box::new(FakeTrainer::new(FakeConfig::elite_avanti(85)));
+        let pedals = Pedals(0, Identity { name: Some("ASSIOMA55430".into()), ble_address: Some("P1".into()), ..Identity::new(Transport::Ble) });
+        assert!(pedals.identity().is_some());
+        let mut s = Session::new(Duration::ZERO, START, SubSport::IndoorCycling, trainer, Some(Box::new(pedals)), None, None);
+        for t in 1..=120 {
+            s.tick(Duration::from_secs(t));
+        }
+        let (ride, _, _) = s.finish(Duration::from_secs(120));
+        assert!(matches!(import_ride(&conn, &vault, &ride, None).unwrap(), Finished::Imported(ImportOutcome::Imported)));
+        let (with, at_52): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(left_right_balance), SUM(left_right_balance = 52) FROM trackpoint",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(with >= 95 && with == at_52, "{with} seconds with a balance, {at_52} of them 52 %");
+        let average: Option<f64> = conn.query_row("SELECT avg_left_right_balance FROM activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(average, Some(52.0));
+    }
+
     /// #307: a second short ride begun 30 s after the first had ended —
     /// starts 130 s apart, the same distance and time — is a ride of its
     /// own, through the real import (its timer reaching the dedup).
