@@ -6,6 +6,8 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-25
+
 ### Added
 - Where the GPS was lost, the map and the share image draw a dashed straight
   line across a gap when the way is plain (#262): no longer than 5 km, ridden at

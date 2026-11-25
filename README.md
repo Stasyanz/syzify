@@ -51,6 +51,17 @@ No account, no server, no telemetry.
   with five map styles and a local tile cache.
 - **Records and trends.** Personal bests per sport and distance, a training
   calendar and weekly volume, all computed locally.
+- **Indoor rides on a smart trainer** (macOS). Connect the trainer, power
+  pedals and a heart rate strap over Bluetooth or an ANT+ USB stick, then ride
+  free or in ERG mode: the trainer holds the watts you set, whatever your
+  cadence, and with power pedals it holds them by the pedals' own watts. Zwift
+  workouts (`.zwo`) ride interval by interval from your FTP. Dropped links
+  reconnect by themselves, and the ride lands in the library like any other,
+  with power, heart rate and left/right balance. Tested on an Elite Avanti;
+  other trainers that speak Bluetooth FTMS or ANT+ FE-C get generic settings.
+- **Virtual rides and runs** from Zwift and other apps import as such: their
+  virtual course is drawn on its own, not on a world map, and a ride recorded
+  twice (Zwift and a bike computer) counts once in your training load.
 - **Share images** composed from your own photo inside the app. Nothing is
   uploaded anywhere.
 - **Plugins** run in a WebAssembly sandbox, are signed, and get only the

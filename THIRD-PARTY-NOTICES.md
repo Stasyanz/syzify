@@ -38,7 +38,7 @@ by hand.
 - **rusqlite_migration 1.2.0** (crates.io) — Copyright the rusqlite_migration authors (Clément Joly <foss@131719.xyz>)
 - **ryu 1.0.23** (crates.io) — licensed `Apache-2.0 OR BSL-1.0` — Copyright the ryu authors (David Tolnay <dtolnay@gmail.com>)
 - **sync_wrapper 1.0.2** (crates.io) — Copyright the sync_wrapper authors (Actyx AG <developer@actyx.io>)
-- **tao 0.34.6** (crates.io) — Copyright the tao authors (Tauri Programme within The Commons Conservancy, The winit contributors)
+- **tao 0.37.2** (crates.io) — Copyright the tao authors (Tauri Programme within The Commons Conservancy, The winit contributors)
 - **witx 0.9.1** (crates.io) — Copyright 2019 WebAssembly Community Group participants
 - **zopfli 0.8.3** (crates.io) — Copyright 2011 Google Inc.
 
@@ -96,8 +96,8 @@ by hand.
 
 ## BSD-3-Clause (13)
 
-- **alloc-no-stdlib 2.0.4** (crates.io) — Copyright (c) 2016 Dropbox, Inc.
-- **alloc-stdlib 0.2.2** (crates.io) — Copyright the alloc-stdlib authors (Daniel Reiter Horn <danielrh@dropbox.com>)
+- **alloc-no-stdlib 3.0.0** (crates.io) — Copyright (c) 2016 Dropbox, Inc.
+- **alloc-stdlib 0.3.0** (crates.io) — Copyright the alloc-stdlib authors (Daniel Reiter Horn <danielrh@dropbox.com>)
 - **curve25519-dalek 4.1.3** (crates.io) — Copyright (c) 2016-2021 isis agora lovecruft. All rights reserved.; Copyright (c) 2016-2021 Henry de Valence. All rights reserved.; Copyright (c) 2012 The Go Authors. All rights reserved.
 - **ed25519-dalek 2.2.0** (crates.io) — Copyright (c) 2017-2019 isis agora lovecruft. All rights reserved.
 - **extism 1.21.0** (crates.io) — Copyright the extism authors (The Extism Authors, oss@extism.org)
@@ -112,7 +112,7 @@ by hand.
 
 ## BSD-3-Clause AND MIT (1)
 
-- **brotli 8.0.2** (crates.io) — Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+- **brotli 9.1.3** (crates.io) — Copyright (c) 2016 Dropbox, Inc.; Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
 
 ## CC0-1.0 (1)
 
@@ -132,14 +132,14 @@ by hand.
 - **rustls-webpki 0.103.9** (crates.io) — Copyright 2015 Brian Smith.
 - **untrusted 0.9.0** (crates.io) — Copyright 2015-2016 Brian Smith.
 
-## MIT (670)
+## MIT (662)
 
 - **@kurkle/color 0.3.4** (npm) — Copyright (c) 2018-2024 Jukka Kurkela
 - **@tanstack/query-core 5.90.20** (npm) — Copyright (c) 2021-present Tanner Linsley
 - **@tanstack/react-query 5.90.21** (npm) — Copyright (c) 2021-present Tanner Linsley
-- **@tauri-apps/api 2.10.1** (npm) — licensed `Apache-2.0 OR MIT` — Copyright the @tauri-apps/api authors
-- **@tauri-apps/plugin-dialog 2.6.0** (npm) — licensed `MIT OR Apache-2.0` — Copyright the @tauri-apps/plugin-dialog authors
-- **@tauri-apps/plugin-opener 2.5.3** (npm) — licensed `MIT OR Apache-2.0` — Copyright the @tauri-apps/plugin-opener authors
+- **@tauri-apps/api 2.12.5** (npm) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **@tauri-apps/plugin-dialog 2.8.4** (npm) — licensed `MIT OR Apache-2.0` — Copyright the @tauri-apps/plugin-dialog authors
+- **@tauri-apps/plugin-opener 2.7.3** (npm) — licensed `MIT OR Apache-2.0` — Copyright the @tauri-apps/plugin-opener authors
 - **@types/react 19.2.14** (npm) — Copyright (c) Microsoft Corporation.
 - **addr2line 0.25.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2016-2018 The gimli Developers
 - **adler2 2.0.1** (crates.io) — licensed `0BSD OR MIT OR Apache-2.0` — Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -168,18 +168,22 @@ by hand.
 - **atomic-waker 1.1.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
 - **base64 0.21.7** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 Alice Maz
 - **base64 0.22.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 Alice Maz
+- **base64 0.23.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2025 Alice Maz, Marshall Pierce
 - **base64ct 1.8.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2014 Steve "Sc00bz" Thomas (steve at tobtu dot com); Copyright (c) 2021-2025 The RustCrypto Project Developers
+- **bit-set 0.11.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2023 The Rust Project Developers
 - **bit-set 0.8.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2023 The Rust Project Developers
+- **bit-vec 0.10.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2023 The Rust Project Developers
 - **bit-vec 0.8.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2023 The Rust Project Developers
 - **bitflags 1.3.2** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2014 The Rust Project Developers
 - **bitflags 2.11.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The Rust Project Developers
 - **block-buffer 0.10.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2019 The RustCrypto Project Developers
+- **block-buffer 0.12.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2025 The RustCrypto Project Developers
 - **block2 0.5.1** (crates.io) — Copyright the block2 authors (Steven Sheldon, Mads Marquart <mads@marquart.dk>)
 - **block2 0.6.2** (crates.io) — Copyright the block2 authors (Mads Marquart <mads@marquart.dk>)
 - **blocking 1.6.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the blocking authors (Stjepan Glavina <stjepang@gmail.com>)
 - **bluez-async 0.8.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the bluez-async authors (Andrew Walbran <qwandor@google.com>, David Laban <alsuren@gmail.com>)
 - **bluez-generated 0.4.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the bluez-generated authors (Andrew Walbran <qwandor@google.com>, David Laban <alsuren@gmail.com>)
-- **brotli-decompressor 5.0.0** (crates.io) — licensed `BSD-3-Clause/MIT` — Copyright (c) 2016 Dropbox, Inc.
+- **brotli-decompressor 6.3.2** (crates.io) — licensed `BSD-3-Clause/MIT` — Copyright (c) 2016 Dropbox, Inc.
 - **btleplug 0.11.8** (crates.io) — licensed `MIT/Apache-2.0/BSD-3-Clause` — Copyright (c) 2020-2021, Nonpolynomial; Copyright (c) 2014 The Rust Project Developers; Copyright (c) 2017 Akos Kiss. All rights reserved.
 - **bumpalo 3.20.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2019 Nick Fitzgerald
 - **bytemuck 1.25.0** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright (c) 2019 Daniel "Lokathor" Gee.
@@ -199,7 +203,7 @@ by hand.
 - **cargo_metadata 0.19.2** (crates.io) — Copyright the cargo_metadata authors (Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>)
 - **cargo-platform 0.1.9** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the cargo-platform authors
 - **cesu8 1.1.0** (crates.io) — licensed `Apache-2.0/MIT` — Copyright the cesu8 authors (Eric Kidd <git@randomhacks.net>)
-- **cfb 0.7.3** (crates.io) — Copyright (c) 2017 Matthew D. Steele
+- **cfb 0.14.0** (crates.io) — Copyright (c) 2017 Matthew D. Steele
 - **cfg-if 1.0.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 Alex Crichton
 - **chart.js 4.5.1** (npm) — Copyright (c) 2014-2024 Chart.js Contributors
 - **chrono 0.4.44** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014, Kang Seonghoon.
@@ -207,8 +211,8 @@ by hand.
 - **cobs 0.3.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The cobs.rs Developers
 - **combine 4.6.7** (crates.io) — Copyright (c) 2015 Markus Westerlind
 - **concurrent-queue 2.5.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the concurrent-queue authors (Stjepan Glavina <stjepang@gmail.com>, Taiki Endo <te316e89@gmail.com>, John Nunley <dev@notgull.net>)
+- **const-oid 0.10.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2026 The RustCrypto Project Developers
 - **const-oid 0.9.6** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2022 The RustCrypto Project Developers
-- **convert_case 0.4.0** (crates.io) — Copyright the convert_case authors (David Purdum <purdum41@gmail.com>)
 - **cookie 0.18.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2017 Sergio Benitez; Copyright 2014 Alex Chricton; Copyright (c) 2017 Sergio Benitez
 - **cookie 1.1.1** (npm) — Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com>; Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 - **core-foundation 0.10.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2012-2013 Mozilla Foundation
@@ -218,6 +222,7 @@ by hand.
 - **core-graphics-types 0.2.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2012-2013 Mozilla Foundation
 - **cpp_demangle 0.4.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The Rust Project Developers
 - **cpufeatures 0.2.17** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2020-2025 The RustCrypto Project Developers
+- **cpufeatures 0.3.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2020-2026 The RustCrypto Project Developers
 - **crc 3.4.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 crc-rs Developers
 - **crc-catalog 2.4.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the crc-catalog authors (Akhil Velagapudi <akhilvelagapudi@gmail.com>)
 - **crc32fast 1.5.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018 Sam Rijs, Alex Crichton and contributors
@@ -226,8 +231,9 @@ by hand.
 - **crossbeam-epoch 0.9.18** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2019 The Crossbeam Project Developers
 - **crossbeam-utils 0.8.21** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2019 The Crossbeam Project Developers
 - **crypto-common 0.1.7** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2021 RustCrypto Developers
+- **crypto-common 0.2.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2021-2026 RustCrypto Developers
 - **csstype 3.2.3** (npm) — Copyright (c) 2017-2018 Fredrik Nicol
-- **ctor 0.2.9** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the ctor authors (Matt Mastracci <matthew@mastracci.com>)
+- **ctor 1.0.14** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the ctor authors (Matt Mastracci <matthew@mastracci.com>)
 - **ctr 0.9.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2022 RustCrypto Developers; Copyright (c) 2018 Artyom Pavlov
 - **curve25519-dalek-derive 0.1.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the curve25519-dalek-derive authors
 - **darling 0.23.0** (crates.io) — Copyright (c) 2017 Ted Driggs
@@ -242,19 +248,20 @@ by hand.
 - **der 0.7.10** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2023 The RustCrypto Project Developers
 - **deranged 0.5.8** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2024 Jacob Pratt et al.; Copyright (c) 2024 Jacob Pratt et al.
 - **derive_arbitrary 1.4.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2019 Manish Goregaokar
-- **derive_more 0.99.20** (crates.io) — Copyright (c) 2016 Jelte Fennema
 - **derive_more 2.1.1** (crates.io) — Copyright (c) 2016 Jelte Fennema
 - **derive_more-impl 2.1.1** (crates.io) — Copyright (c) 2016 Jelte Fennema
 - **digest 0.10.7** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Artyom Pavlov
+- **digest 0.11.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017-2025 RustCrypto Developers; Copyright (c) 2017 Artyom Pavlov
 - **directories-next 2.0.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018 directories-rs contributors
-- **dirs 6.0.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2019 dirs-rs contributors
+- **dirs 7.0.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2019 dirs-rs contributors
 - **dirs-sys 0.5.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2019 dirs-rs contributors
 - **dirs-sys-next 0.1.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018-2019 dirs-rs contributors
 - **dispatch2 0.3.1** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the dispatch2 authors (Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>)
 - **displaydoc 0.2.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the displaydoc authors (Jane Lusby <jlusby@yaah.dev>)
 - **dlopen2 0.8.2** (crates.io) — Copyright the dlopen2 authors (Szymon Wieloch <szymon.wieloch@gmail.com>, Ahmed Masud <ahmed.masud@saf.ai>, OpenByte <development.openbyte@gmail.com>)
 - **dlopen2_derive 0.4.3** (crates.io) — Copyright the dlopen2_derive authors (Szymon Wieloch <szymon.wieloch@gmail.com>, OpenByte <development.openbyte@gmail.com>)
-- **dom_query 0.25.1** (crates.io) — Copyright (c) 2023 Mykola Humanov
+- **dom_query 0.28.0** (crates.io) — Copyright (c) 2023 Mykola Humanov
+- **dom_query 0.29.0** (crates.io) — Copyright (c) 2023 Mykola Humanov
 - **dtoa 1.0.11** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the dtoa authors (David Tolnay <dtolnay@gmail.com>)
 - **dyn-clone 1.0.20** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the dyn-clone authors (David Tolnay <dtolnay@gmail.com>)
 - **ed25519 2.2.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright 2018-2022 RustCrypto Developers; Copyright (c) 2018-2023 RustCrypto Developers
@@ -290,7 +297,6 @@ by hand.
 - **form_urlencoded 1.2.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2013-2016 The rust-url developers
 - **fs-set-times 0.20.3** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the fs-set-times authors (Dan Gohman <dev@sunfishcode.online>)
 - **fsevent-sys 4.1.0** (crates.io) — Copyright (c) 2015 Pierre Baillet
-- **futf 0.1.5** (crates.io) — licensed `MIT / Apache-2.0` — Copyright (c) 2015 Keegan McAllister
 - **futures 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
 - **futures-channel 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
 - **futures-core 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
@@ -301,7 +307,6 @@ by hand.
 - **futures-sink 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
 - **futures-task 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
 - **futures-util 0.3.32** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alex Crichton; Copyright (c) 2017 The Tokio Authors
-- **fxhash 0.2.1** (crates.io) — licensed `Apache-2.0/MIT` — Copyright the fxhash authors (cbreeden <github@u.breeden.cc>)
 - **fxprof-processed-profile 0.8.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the fxprof-processed-profile authors (Markus Stange <mstange.moz@gmail.com>)
 - **gdk 0.18.2** (crates.io) — Copyright the gdk authors (The gtk-rs Project Developers)
 - **gdk-pixbuf 0.18.5** (crates.io) — Copyright the gdk-pixbuf authors (The gtk-rs Project Developers)
@@ -340,19 +345,20 @@ by hand.
 - **hex 0.4.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2013-2014 The Rust Project Developers.; Copyright (c) 2015-2020 The rust-hex Developers
 - **hmac 0.12.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Artyom Pavlov
 - **html-to-image 1.11.13** (npm) — Copyright (c) 2017-2025 W.Y.
-- **html5ever 0.29.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
-- **html5ever 0.36.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
+- **html5ever 0.39.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
+- **html5ever 0.40.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
 - **http 1.4.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2017 http-rs authors; Copyright (c) 2017 http-rs authors
 - **http-body 1.0.1** (crates.io) — Copyright (c) 2019-2024 Sean McArthur & Hyper Contributors
 - **http-body-util 0.1.3** (crates.io) — Copyright (c) 2019-2025 Sean McArthur & Hyper Contributors
 - **httparse 1.10.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015-2025 Sean McArthur
+- **hybrid-array 0.4.10** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022-2026 The RustCrypto Project Developers
 - **hyper 1.8.1** (crates.io) — Copyright (c) 2014-2025 Sean McArthur
 - **hyper-rustls 0.27.7** (crates.io) — licensed `Apache-2.0 OR ISC OR MIT` — Copyright (c) 2016, Joseph Birr-Pixton <jpixton@gmail.com>; Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
 - **hyper-tls 0.6.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2017 Sean McArthur
 - **hyper-util 0.1.20** (crates.io) — Copyright (c) 2023-2025 Sean McArthur
 - **iana-time-zone 0.1.65** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2020 Andrew Straw; Copyright (c) 2020 Andrew D. Straw
 - **iana-time-zone-haiku 0.1.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2020 Andrew Straw; Copyright (c) 2020 Andrew D. Straw
-- **ico 0.5.0** (crates.io) — Copyright (c) 2018 Matthew D. Steele
+- **ico 0.6.0** (crates.io) — Copyright (c) 2018 Matthew D. Steele
 - **id-arena 2.3.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2014 Alex Crichton
 - **ident_case 1.0.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the ident_case authors (Ted Driggs <ted.driggs@outlook.com>)
 - **idna 1.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2013-2025 The rust-url developers
@@ -361,7 +367,7 @@ by hand.
 - **image-webp 0.2.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the image-webp authors
 - **indexmap 1.9.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2016--2017
 - **indexmap 2.13.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2016--2017
-- **infer 0.19.0** (crates.io) — Copyright (c) 2019 Bojan
+- **infer 0.22.0** (crates.io) — Copyright (c) 2019 Bojan
 - **inout 0.1.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022 The RustCrypto Project Developers; Copyright (c) 2022 Artyom Pavlov
 - **io-extras 0.18.4** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the io-extras authors (Dan Gohman <dev@sunfishcode.online>)
 - **io-kit-sys 0.4.1** (crates.io) — licensed `MIT / Apache-2.0` — Copyright (c) 2017-2018 Junji Takakura
@@ -378,12 +384,11 @@ by hand.
 - **jni 0.21.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2016 Prevoty, Inc. and jni-rs contributors
 - **jni-sys 0.3.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2015 The rust-jni-sys Developers
 - **js-sys 0.3.91** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 Alex Crichton
-- **json-patch 3.0.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2017 Ivan Dubrov
-- **jsonptr 0.6.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2024 Chance Dinkins; Copyright (c) 2022 Chance Dinkins
-- **keyboard-types 0.7.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Pyfisch
+- **json-patch 4.2.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2017 Ivan Dubrov
+- **jsonptr 0.7.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2024 Chance Dinkins; Copyright (c) 2022 Chance Dinkins
+- **keyboard-types 0.8.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Pyfisch
 - **kqueue 1.1.1** (crates.io) — Copyright (c) 2016 William Orr <will@worrbase.com>
 - **kqueue-sys 1.0.4** (crates.io) — Copyright (c) 2016 William Orr <will@worrbase.com>
-- **kuchikiki 0.8.8-speedreader** (crates.io) — Copyright the kuchikiki authors (Brave Authors, Ralph Giles <rgiles@brave.com>, Simon Sapin <simon.sapin@exyr.org>)
 - **lazy_static 1.5.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2010 The Rust Project Developers
 - **leb128 0.2.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The Rust Project Developers
 - **leb128fmt 0.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the leb128fmt authors (Bryant Luk <code@bryantluk.com>)
@@ -394,37 +399,34 @@ by hand.
 - **libm 0.2.16** (crates.io) — Copyright (c) 2018 Jorge Aparicio; Copyright © 2005-2020 Rich Felker, et al.; Copyright © 1993,2004 Sun Microsystems or
 - **libredox 0.1.14** (crates.io) — Copyright (c) 2023 4lDO2
 - **libsqlite3-sys 0.28.0** (crates.io) — Copyright (c) 2014-2021 The rusqlite developers
+- **link-section 0.19.4** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the link-section authors (Matt Mastracci <matthew@mastracci.com>)
 - **linux-raw-sys 0.12.1** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the linux-raw-sys authors (Dan Gohman <dev@sunfishcode.online>)
 - **linux-raw-sys 0.4.15** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the linux-raw-sys authors (Dan Gohman <dev@sunfishcode.online>)
 - **lock_api 0.4.14** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 The Rust Project Developers
 - **log 0.4.29** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The Rust Project Developers
 - **lzma-rs 0.3.0** (crates.io) — Copyright (c) 2017 - 2018  Guillaume Endignoux
 - **lzma-sys 0.1.20** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2016 Alex Crichton
-- **mac 0.1.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the mac authors (Jonathan Reem <jonathan.reem@gmail.com>)
 - **mach2 0.4.3** (crates.io) — licensed `BSD-2-Clause OR MIT OR Apache-2.0` — Copyright (c) 2019 Nick Fitzgerald, 2021 Yuki Okushi
 - **manyhow 0.11.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2023 Roland Fredenhagen
 - **manyhow-macros 0.11.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022 Roland Fredenhagen
-- **markup5ever 0.14.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
-- **markup5ever 0.36.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
-- **match_token 0.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the match_token authors
+- **markup5ever 0.39.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
+- **markup5ever 0.40.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
 - **matchers 0.2.0** (crates.io) — Copyright (c) 2019 Eliza Weisman
-- **matches 0.1.10** (crates.io) — Copyright (c) 2014-2016 Simon Sapin
 - **maybe-owned 0.3.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2016 Philipp Korber; Copyright (c) 2016 Philipp Korber
 - **memchr 2.8.0** (crates.io) — licensed `Unlicense OR MIT` — Copyright (c) 2015 Andrew Gallant
 - **memfd 0.6.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the memfd authors (Luca Bruno <lucab@lucabruno.net>, Simonas Kazlauskas <memfd@kazlauskas.me>)
 - **memoffset 0.9.1** (crates.io) — Copyright (c) 2017 Gilad Naaman
 - **mime 0.3.17** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 Sean McArthur
 - **minimal-lexical 0.2.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2009 The Go Authors. All rights reserved.
-- **minisign-verify 0.2.5** (crates.io) — Copyright (c) 2019-2025 Frank Denis; Copyright (c) 2006-2009 Graydon Hoare; Copyright (c) 2009-2013 Mozilla Foundation
+- **minisign-verify 0.3.0** (crates.io) — Copyright (c) 2019-2025 Frank Denis; Copyright (c) 2006-2009 Graydon Hoare; Copyright (c) 2009-2013 Mozilla Foundation
 - **miniz_oxide 0.8.9** (crates.io) — licensed `MIT OR Zlib OR Apache-2.0` — Copyright 2013-2014 RAD Game Tools and Valve Software; Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC; Copyright (c) 2017 Frommi
 - **mio 1.1.1** (crates.io) — Copyright (c) 2014 Carl Lerche and other MIO contributors
-- **muda 0.17.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
+- **muda 0.20.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
 - **native-tls 0.2.18** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 The rust-native-tls Developers
 - **ndk 0.9.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the ndk authors (The Rust Mobile contributors)
 - **ndk-context 0.1.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the ndk-context authors (The Rust Windowing contributors)
 - **ndk-sys 0.6.0+11769913** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the ndk-sys authors (The Rust Windowing contributors)
 - **new_debug_unreachable 1.0.6** (crates.io) — Copyright (c) 2015 Jonathan Reem
-- **nodrop 0.1.14** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) Ulrik Sverdrup "bluss" 2015-2017
 - **nom 7.1.3** (crates.io) — Copyright (c) 2014-2019 Geoffroy Couprie
 - **notify-types 1.0.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2023 Notify Contributors; Copyright (c) 2023 Notify Contributors
 - **nu-ansi-term 0.50.3** (crates.io) — Copyright (c) 2014 Benjamin Sago; Copyright (c) 2021-2022 The Nushell Project Developers
@@ -437,9 +439,14 @@ by hand.
 - **objc2 0.5.3** (crates.io) — Copyright the objc2 authors (Steven Sheldon, Mads Marquart <mads@marquart.dk>)
 - **objc2 0.6.4** (crates.io) — Copyright the objc2 authors (Mads Marquart <mads@marquart.dk>)
 - **objc2-app-kit 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-app-kit authors
+- **objc2-cloud-kit 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-cloud-kit authors
 - **objc2-core-bluetooth 0.2.2** (crates.io) — Copyright the objc2-core-bluetooth authors
+- **objc2-core-data 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-data authors
 - **objc2-core-foundation 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-foundation authors
 - **objc2-core-graphics 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-graphics authors
+- **objc2-core-image 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-image authors
+- **objc2-core-location 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-location authors
+- **objc2-core-text 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-core-text authors
 - **objc2-encode 4.1.0** (crates.io) — Copyright the objc2-encode authors (Mads Marquart <mads@marquart.dk>)
 - **objc2-exception-helper 0.1.1** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-exception-helper authors (Mads Marquart <mads@marquart.dk>)
 - **objc2-foundation 0.2.2** (crates.io) — Copyright the objc2-foundation authors
@@ -448,6 +455,7 @@ by hand.
 - **objc2-osa-kit 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-osa-kit authors
 - **objc2-quartz-core 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-quartz-core authors
 - **objc2-ui-kit 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-ui-kit authors
+- **objc2-user-notifications 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-user-notifications authors
 - **objc2-web-kit 0.3.2** (crates.io) — licensed `Zlib OR Apache-2.0 OR MIT` — Copyright the objc2-web-kit authors
 - **object 0.37.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2015 The Gimli Developers
 - **once_cell 1.21.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the once_cell authors (Aleksey Kladov <aleksey.kladov@gmail.com>)
@@ -468,27 +476,20 @@ by hand.
 - **pbkdf2 0.12.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Artyom Pavlov; Copyright (c) 2018-2023 The RustCrypto Project Developers
 - **percent-encoding 2.3.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2013-2025 The rust-url developers
 - **petgraph 0.6.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015
-- **phf 0.10.1** (crates.io) — Copyright the phf authors (Steven Fackler <sfackler@gmail.com>)
-- **phf 0.11.3** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
 - **phf 0.13.1** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
-- **phf 0.8.0** (crates.io) — Copyright the phf authors (Steven Fackler <sfackler@gmail.com>)
-- **phf_generator 0.10.0** (crates.io) — Copyright the phf_generator authors (Steven Fackler <sfackler@gmail.com>)
-- **phf_generator 0.11.3** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
+- **phf 0.14.0** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
 - **phf_generator 0.13.1** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
-- **phf_macros 0.10.0** (crates.io) — Copyright the phf_macros authors (Steven Fackler <sfackler@gmail.com>)
-- **phf_macros 0.11.3** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
+- **phf_generator 0.14.0** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
 - **phf_macros 0.13.1** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
-- **phf_shared 0.10.0** (crates.io) — Copyright the phf_shared authors (Steven Fackler <sfackler@gmail.com>)
-- **phf_shared 0.11.3** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
+- **phf_macros 0.14.0** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
 - **phf_shared 0.13.1** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
-- **phf_shared 0.8.0** (crates.io) — Copyright the phf_shared authors (Steven Fackler <sfackler@gmail.com>)
+- **phf_shared 0.14.0** (crates.io) — Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
 - **pin-project-lite 0.2.17** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the pin-project-lite authors
 - **pin-utils 0.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2018 The pin-utils authors; Copyright (c) 2018 The pin-utils authors
 - **piper 0.2.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the piper authors (Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>)
 - **pkcs8 0.10.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2023 The RustCrypto Project Developers
 - **plain 0.2.3** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2017 Plain contributors
 - **plist 1.8.0** (crates.io) — Copyright (c) 2015 Edward Barnard
-- **png 0.17.16** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 nwin
 - **png 0.18.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 nwin
 - **polling 3.11.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the polling authors (Stjepan Glavina <stjepang@gmail.com>, John Nunley <dev@notgull.net>)
 - **polyval 0.6.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2019-2023 RustCrypto Developers
@@ -502,7 +503,6 @@ by hand.
 - **proc-macro-crate 3.5.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the proc-macro-crate authors (Bastian Köcher <git@kchr.de>)
 - **proc-macro-error 1.0.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2019-2020 CreepySkeleton <creepy-skeleton@yandex.ru>; Copyright (c) 2019-2020 CreepySkeleton
 - **proc-macro-error-attr 1.0.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2019-2020 CreepySkeleton <creepy-skeleton@yandex.ru>; Copyright (c) 2019-2020 CreepySkeleton
-- **proc-macro-hack 0.5.20+deprecated** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018 David Tolnay
 - **proc-macro-utils 0.10.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2023 Roland Fredenhagen
 - **proc-macro2 1.0.106** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the proc-macro2 authors (David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com>)
 - **quick-error 2.0.1** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2015 The quick-error Developers
@@ -521,7 +521,7 @@ by hand.
 - **react 19.2.4** (npm) — Copyright (c) Meta Platforms, Inc. and affiliates.
 - **react-chartjs-2 5.3.1** (npm) — Copyright 2020 Jeremy Ayerst
 - **react-dom 19.2.4** (npm) — Copyright (c) Meta Platforms, Inc. and affiliates.
-- **react-router 7.13.0** (npm) — Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023
+- **react-router 7.18.5** (npm) — Copyright (c) React Training LLC 2015-2019; Copyright (c) Remix Software Inc. 2020-2021; Copyright (c) Shopify Inc. 2022-2023
 - **redox_syscall 0.5.18** (crates.io) — Copyright (c) 2017 Redox OS Developers
 - **redox_syscall 0.7.3** (crates.io) — Copyright (c) 2017 Redox OS Developers
 - **redox_users 0.4.6** (crates.io) — Copyright (c) 2017 Jose Narvaez
@@ -533,7 +533,7 @@ by hand.
 - **regex-syntax 0.8.10** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The Rust Project Developers
 - **reqwest 0.12.28** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2016 Sean McArthur; Copyright (c) 2016-2025 Sean McArthur
 - **reqwest 0.13.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2016 Sean McArthur; Copyright (c) 2016-2026 Sean McArthur
-- **rfd 0.16.0** (crates.io) — Copyright (c) 2022 Bartłomiej Maryńczak
+- **rfd 0.17.2** (crates.io) — Copyright (c) 2022 Bartłomiej Maryńczak
 - **rmp 0.8.15** (crates.io) — Copyright (c) 2017 Evgeny Safronov
 - **rmp-serde 1.3.1** (crates.io) — Copyright (c) 2017 Evgeny Safronov
 - **rusqlite 0.31.0** (crates.io) — Copyright (c) 2014-2021 The rusqlite developers
@@ -575,16 +575,16 @@ by hand.
 - **serde-xml-rs 0.8.2** (crates.io) — Copyright (c) 2017 Ingvar Stepanyan
 - **serialize-to-javascript 0.1.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2021 Chip Reed
 - **serialize-to-javascript-impl 0.1.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2021 Chip Reed
-- **servo_arc 0.2.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the servo_arc authors (The Servo Project Developers)
 - **servo_arc 0.4.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the servo_arc authors (The Servo Project Developers)
+- **servo_arc 0.5.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the servo_arc authors (The Servo Project Developers)
 - **set-cookie-parser 2.7.2** (npm) — Copyright (c) 2015 Nathan Friedly <nathan@nfriedly.com> (http://nfriedly.com/)
 - **sha1 0.10.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2006-2009 Graydon Hoare; Copyright (c) 2009-2013 Mozilla Foundation; Copyright (c) 2016 Artyom Pavlov
 - **sha2 0.10.9** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2006-2009 Graydon Hoare; Copyright (c) 2009-2013 Mozilla Foundation; Copyright (c) 2016 Artyom Pavlov
+- **sha2 0.11.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016-2026 The RustCrypto Project Developers; Copyright (c) 2016 Artyom Pavlov; Copyright (c) 2009-2013 Mozilla Foundation
 - **sharded-slab 0.1.7** (crates.io) — Copyright (c) 2019 Eliza Weisman
 - **signal-hook-registry 1.4.8** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 tokio-jsonrpc developers
 - **signature 2.2.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2018-2023 RustCrypto Developers
 - **simd-adler32 0.3.8** (crates.io) — Copyright (c) [2021] [Marvin Countryman]
-- **siphasher 0.3.11** (crates.io) — licensed `MIT/Apache-2.0` — Copyright 2012-2016 The Rust Project Developers.; Copyright 2016-2023 Frank Denis.
 - **siphasher 1.0.2** (crates.io) — licensed `MIT/Apache-2.0` — Copyright 2012-2016 The Rust Project Developers.; Copyright 2016-2026 Frank Denis.
 - **slab 0.4.12** (crates.io) — Copyright (c) 2019 Carl Lerche
 - **smallvec 1.15.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2018 The Servo Project Developers
@@ -595,30 +595,30 @@ by hand.
 - **spki 0.7.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2021-2023 The RustCrypto Project Developers
 - **stable_deref_trait 1.2.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Robert Grosse
 - **static_assertions 1.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2017 Nikolai Vazquez
-- **string_cache 0.8.9** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2012-2013 Mozilla Foundation
+- **string_cache 0.11.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2012-2013 Mozilla Foundation
 - **string_cache 0.9.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2012-2013 Mozilla Foundation
 - **strsim 0.11.1** (crates.io) — Copyright (c) 2015 Danny Guo; Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>; Copyright (c) 2018 Akash Kurdekar
-- **swift-rs 1.0.7** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2023 The swift-rs developers; Copyright (c) 2023 The swift-rs Developers
+- **swift-rs 1.0.9** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2023 The swift-rs developers; Copyright (c) 2023 The swift-rs Developers
 - **syn 1.0.109** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the syn authors (David Tolnay <dtolnay@gmail.com>)
 - **syn 2.0.117** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the syn authors (David Tolnay <dtolnay@gmail.com>)
 - **synstructure 0.13.2** (crates.io) — Copyright 2016 Nika Layzell
 - **system-configuration 0.7.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2024 Mullvad VPN AB
 - **system-configuration-sys 0.6.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2024 Mullvad VPN AB
 - **system-interface 0.27.3** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the system-interface authors (Dan Gohman <dev@sunfishcode.online>)
-- **tao-macros 0.1.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the tao-macros authors (Tauri Programme within The Commons Conservancy)
+- **tao-macros 0.1.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022 - Present Tauri Apps Contributors
 - **tar 0.4.46** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) The tar-rs Project Contributors
-- **tauri 2.10.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-codegen 2.5.5** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-macros 2.5.5** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-plugin-dialog 2.6.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-plugin-fs 2.4.5** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-plugin-opener 2.5.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-plugin-updater 2.10.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-runtime 2.10.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-runtime-wry 2.10.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
-- **tauri-utils 2.8.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri 2.12.6** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-codegen 2.7.5** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-macros 2.7.5** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-plugin-dialog 2.8.4** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-plugin-fs 2.7.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-plugin-opener 2.7.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-plugin-updater 2.14.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-runtime 2.12.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-runtime-wry 2.12.4** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
+- **tauri-utils 2.10.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2017 - Present Tauri Apps Contributors
 - **tempfile 3.27.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 Steven Allen
-- **tendril 0.4.3** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2015 Keegan McAllister
+- **tendril 0.5.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 Keegan McAllister
 - **termcolor 1.4.1** (crates.io) — licensed `Unlicense OR MIT` — Copyright (c) 2015 Andrew Gallant
 - **thiserror 1.0.69** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the thiserror authors (David Tolnay <dtolnay@gmail.com>)
 - **thiserror 2.0.18** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the thiserror authors (David Tolnay <dtolnay@gmail.com>)
@@ -652,16 +652,12 @@ by hand.
 - **tracing-core 0.1.36** (crates.io) — Copyright (c) 2019 Tokio Contributors
 - **tracing-log 0.2.0** (crates.io) — Copyright (c) 2019 Tokio Contributors
 - **tracing-subscriber 0.3.23** (crates.io) — Copyright (c) 2019 Tokio Contributors
-- **tray-icon 0.21.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
+- **tray-icon 0.25.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
 - **try-lock 0.2.5** (crates.io) — Copyright (c) 2018-2023 Sean McArthur; Copyright (c) 2016 Alex Crichton
+- **typed-path 0.12.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the typed-path authors (Chip Senkbeil <chip@senkbeil.org>)
 - **typeid 1.0.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the typeid authors (David Tolnay <dtolnay@gmail.com>)
 - **typenum 1.19.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2014 Paho Lurie-Gregg; Copyright (c) 2014 Paho Lurie-Gregg
 - **uds_windows 1.2.1** (crates.io) — Copyright (c) Microsoft Corporation. All rights reserved.
-- **unic-char-property 0.9.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the unic-char-property authors (The UNIC Project Developers)
-- **unic-char-range 0.9.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the unic-char-range authors (The UNIC Project Developers)
-- **unic-common 0.9.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the unic-common authors (The UNIC Project Developers)
-- **unic-ucd-ident 0.9.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the unic-ucd-ident authors (The UNIC Project Developers)
-- **unic-ucd-version 0.9.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the unic-ucd-version authors (The UNIC Project Developers)
 - **unicode-segmentation 1.12.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The Rust Project Developers
 - **unicode-width 0.2.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The Rust Project Developers
 - **unicode-xid 0.2.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 The Rust Project Developers
@@ -672,8 +668,7 @@ by hand.
 - **ureq 3.3.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2019 Martin Algesten
 - **ureq-proto 0.6.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2022 Martin Algesten
 - **url 2.5.8** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2013-2025 The rust-url developers
-- **urlpattern 0.3.0** (crates.io) — Copyright (c) 2021 the Deno authors
-- **utf-8 0.7.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the utf-8 authors (Simon Sapin <simon.sapin@exyr.org>)
+- **urlpattern 0.6.0** (crates.io) — Copyright (c) 2021 the Deno authors
 - **utf8_iter 1.0.4** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright the utf8_iter authors (Henri Sivonen <hsivonen@hsivonen.fi>)
 - **utf8-zero 0.8.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright the utf8-zero authors (Simon Sapin <simon.sapin@exyr.org>, Martin Algesten <martin@algesten.se>)
 - **uuid 1.22.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2014 The Rust Project Developers; Copyright (c) 2018 Ashley Mannix, Christopher Armstrong, Dylan DPC, Hunar Roop Kahlon
@@ -701,57 +696,55 @@ by hand.
 - **wast 246.0.2** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the wast authors (Alex Crichton <alex@alexcrichton.com>)
 - **wat 1.246.2** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the wat authors (Alex Crichton <alex@alexcrichton.com>)
 - **web_atoms 0.2.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
+- **web_atoms 0.3.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 The html5ever Project Developers
 - **web-sys 0.3.91** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2014 Alex Crichton
+- **web-time 1.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright 2023 dAxpeDDa; Copyright (c) 2023 dAxpeDDa
 - **webkit2gtk 2.0.2** (crates.io) — Copyright (c) 2016 Boucher, Antoni <bouanto@zoho.com>; Copyright (c) 2017-2021, The Gtk-rs Project Developers.; Copyright (c) 2021, Tauri Programme within The Commons Conservancy
 - **webkit2gtk-sys 2.0.2** (crates.io) — Copyright (c) 2016 Boucher, Antoni <bouanto@zoho.com>
-- **webview2-com 0.38.2** (crates.io) — Copyright the webview2-com authors
+- **webview2-com 0.39.1** (crates.io) — Copyright the webview2-com authors
 - **webview2-com-macros 0.8.1** (crates.io) — Copyright the webview2-com-macros authors
-- **webview2-com-sys 0.38.2** (crates.io) — Copyright the webview2-com-sys authors
+- **webview2-com-sys 0.39.1** (crates.io) — Copyright the webview2-com-sys authors
 - **winapi 0.3.9** (crates.io) — licensed `MIT/Apache-2.0` — Copyright (c) 2015-2018 The winapi-rs Developers
 - **winapi-i686-pc-windows-gnu 0.4.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the winapi-i686-pc-windows-gnu authors (Peter Atashian <retep998@gmail.com>)
 - **winapi-util 0.1.11** (crates.io) — licensed `Unlicense OR MIT` — Copyright (c) 2017 Andrew Gallant
 - **winapi-x86_64-pc-windows-gnu 0.4.0** (crates.io) — licensed `MIT/Apache-2.0` — Copyright the winapi-x86_64-pc-windows-gnu authors (Peter Atashian <retep998@gmail.com>)
-- **window-vibrancy 0.6.0** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
+- **window-vibrancy 0.8.1** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
 - **windows 0.61.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
+- **windows 0.62.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_gnullvm 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_gnullvm 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_gnullvm 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_aarch64_gnullvm 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_msvc 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_msvc 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_aarch64_msvc 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_aarch64_msvc 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_gnu 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_gnu 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_gnu 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_i686_gnu 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_gnullvm 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_i686_gnullvm 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_msvc 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_msvc 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_i686_msvc 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_i686_msvc 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnu 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnu 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnu 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_x86_64_gnu 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnullvm 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnullvm 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_gnullvm 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_x86_64_gnullvm 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_msvc 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_msvc 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows_x86_64_msvc 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows_x86_64_msvc 0.53.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-collections 0.2.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
+- **windows-collections 0.3.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-core 0.61.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-core 0.62.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-future 0.2.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
+- **windows-future 0.3.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-implement 0.60.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-interface 0.59.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-link 0.1.3** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-link 0.2.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-numerics 0.2.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
+- **windows-numerics 0.3.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-registry 0.6.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-result 0.3.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-result 0.4.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
@@ -761,13 +754,12 @@ by hand.
 - **windows-sys 0.48.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-sys 0.52.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-sys 0.59.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows-sys 0.60.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-sys 0.61.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-targets 0.42.2** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-targets 0.48.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-targets 0.52.6** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
-- **windows-targets 0.53.5** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-threading 0.1.0** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
+- **windows-threading 0.2.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **windows-version 0.1.7** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) Microsoft Corporation.
 - **winnow 0.5.40** (crates.io) — Copyright the winnow authors
 - **winnow 0.7.15** (crates.io) — Copyright the winnow authors
@@ -778,7 +770,7 @@ by hand.
 - **wit-component 0.244.0** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the wit-component authors (Peter Huene <peter@huene.dev>)
 - **wit-parser 0.243.0** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the wit-parser authors (Alex Crichton <alex@alexcrichton.com>)
 - **wit-parser 0.244.0** (crates.io) — licensed `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — Copyright the wit-parser authors (Alex Crichton <alex@alexcrichton.com>)
-- **wry 0.54.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
+- **wry 0.57.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
 - **x11 2.21.0** (crates.io) — Copyright the x11 authors (daggerbot <daggerbot@gmail.com>, Erle Pereira <erle@erlepereira.com>, AltF02 <contact@altf2.dev>)
 - **x11-dl 2.21.0** (crates.io) — Copyright the x11-dl authors (daggerbot <daggerbot@gmail.com>, Erle Pereira <erle@erlepereira.com>, AltF02 <contact@altf2.dev>)
 - **xattr 1.6.1** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2015 Steven Allen
@@ -793,7 +785,7 @@ by hand.
 - **zeroize 1.8.2** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2018-2021 The RustCrypto Project Developers
 - **zeroize_derive 1.4.3** (crates.io) — licensed `Apache-2.0 OR MIT` — Copyright (c) 2019-2023 The RustCrypto Project Developers
 - **zip 2.4.2** (crates.io) — Copyright (c) 2014 Mathijs van de Nes
-- **zip 4.6.1** (crates.io) — Copyright (c) 2014 Mathijs van de Nes
+- **zip 9.0.0** (crates.io) — Copyright (c) 2014 Mathijs van de Nes
 - **zmij 1.0.21** (crates.io) — Copyright the zmij authors (David Tolnay <dtolnay@gmail.com>)
 - **zstd 0.13.3** (crates.io) — Copyright (c) 2016 Alexandre Bury
 - **zstd-safe 7.2.4** (crates.io) — licensed `MIT OR Apache-2.0` — Copyright (c) 2016 Alexandre Bury
@@ -808,14 +800,14 @@ by hand.
 ## MPL-2.0 (10)
 
 - **bitmaps 2.1.0** (crates.io) — licensed `MPL-2.0+` — Copyright the bitmaps authors (Bodil Stokke <bodil@bodil.org>)
-- **cssparser 0.29.6** (crates.io) — Copyright the cssparser authors (Simon Sapin <simon.sapin@exyr.org>)
-- **cssparser 0.36.0** (crates.io) — Copyright the cssparser authors (Simon Sapin <simon.sapin@exyr.org>)
-- **cssparser-macros 0.6.1** (crates.io) — Copyright the cssparser-macros authors (Simon Sapin <simon.sapin@exyr.org>)
+- **cssparser 0.37.0** (crates.io) — Copyright the cssparser authors (Simon Sapin <simon.sapin@exyr.org>)
+- **cssparser 0.38.0** (crates.io) — Copyright the cssparser authors (Simon Sapin <simon.sapin@exyr.org>)
+- **cssparser-macros 0.7.1** (crates.io) — Copyright the cssparser-macros authors (Simon Sapin <simon.sapin@exyr.org>)
 - **dtoa-short 0.3.5** (crates.io) — Copyright the dtoa-short authors (Xidorn Quan <me@upsuper.org>)
 - **im-rc 15.1.0** (crates.io) — licensed `MPL-2.0+` — Copyright the im-rc authors (Bodil Stokke <bodil@bodil.org>)
 - **option-ext 0.2.0** (crates.io) — Copyright the option-ext authors (Simon Ochsenreither <simon@ochsenreither.de>)
-- **selectors 0.24.0** (crates.io) — Copyright the selectors authors (The Servo Project Developers)
-- **selectors 0.35.0** (crates.io) — Copyright the selectors authors (The Servo Project Developers)
+- **selectors 0.38.0** (crates.io) — Copyright the selectors authors (The Servo Project Developers)
+- **selectors 0.41.0** (crates.io) — Copyright the selectors authors (The Servo Project Developers)
 - **sized-chunks 0.6.5** (crates.io) — licensed `MPL-2.0+` — Copyright the sized-chunks authors (Bodil Stokke <bodil@bodil.org>)
 
 ## OFL-1.1 (1)
@@ -1930,7 +1922,7 @@ SUCH DAMAGE.
 
 ## BSD-3-Clause
 
-_Text as included with alloc-no-stdlib 2.0.4; the same terms apply to every component listed under this license (with the respective copyright holders)._
+_Text as included with alloc-no-stdlib 3.0.0; the same terms apply to every component listed under this license (with the respective copyright holders)._
 
 ```
 Copyright (c) 2016 Dropbox, Inc.
@@ -1949,28 +1941,21 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ## BSD-3-Clause AND MIT
 
-_Text as included with brotli 8.0.2; the same terms apply to every component listed under this license (with the respective copyright holders)._
+_Text as included with brotli 9.1.3; the same terms apply to every component listed under this license (with the respective copyright holders)._
 
 ```
-Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+Copyright (c) 2016 Dropbox, Inc.
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## CC0-1.0
