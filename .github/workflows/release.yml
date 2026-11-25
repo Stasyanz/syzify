@@ -185,6 +185,19 @@ jobs:
               echo "updater: no signature for ${key} (${sigglob})" >&2
               continue
             fi
+            # The app requires the signature to name the version the
+            # manifest announces (requireSignedVersion, #322): a signature
+            # for another version, or for none, would fail every update —
+            # nothing is published then.
+            decoded=$(base64 -d < "$sig") || {
+              echo "updater: ${key}: signature is not base64 — aborting release" >&2
+              exit 1
+            }
+            signed=$(sed -n 's/^trusted comment: //p' <<<"$decoded" | tr '\t' '\n' | sed -n 's/^version://p')
+            if [ "$signed" != "${GITHUB_REF_NAME#v}" ]; then
+              echo "updater: ${key} is signed for version '${signed}', not ${GITHUB_REF_NAME#v} — aborting release" >&2
+              exit 1
+            fi
             platforms=$(jq --arg k "$key" --arg sig "$(cat "$sig")" \
               --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${asset}" \
               '.[$k] = {signature: $sig, url: $url}' <<<"$platforms")

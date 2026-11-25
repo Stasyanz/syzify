@@ -74,6 +74,13 @@ Pre-1.0: `minor` = new feature, `patch` = fix.
   Two activities are a copy of each other only if they were recorded at the
   same time.
 
+### Security
+- From this version on, an update is installed only if its signature names
+  the version it was signed for, and that version is the one the update feed
+  announces (#322). The feed itself is not signed, so a tampered feed could
+  otherwise have offered an older genuine release as a new one. Releases are
+  now always signed with their version.
+
 ## [0.13.1] - 2026-11-02
 
 ### Fixed

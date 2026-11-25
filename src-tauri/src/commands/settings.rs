@@ -1129,8 +1129,24 @@ fn lookup_failed(e: impl std::fmt::Display) -> CommandError {
     CommandError::coded("updates.lookupFailed", format!("Update lookup failed: {e}")).param("detail", e.to_string())
 }
 
+/// Why `download_and_install` refused. A signature that names no version,
+/// or another than the feed announces, means a tampered feed (#322: every
+/// release is signed for its version, the release workflow sees to it):
+/// said in the user's words — the plugin's own ("re-sign and re-publish…")
+/// are a publisher's.
+fn install_failed(e: tauri_plugin_updater::Error) -> CommandError {
+    use tauri_plugin_updater::Error;
+    match e {
+        Error::SignedVersionMismatch { .. } | Error::MissingSignedVersion => CommandError::coded(
+            "updates.signedVersion",
+            "This update is not the version it claims to be, so it was not installed. Download Syzify from its release page instead.",
+        ),
+        other => install_error(other),
+    }
+}
+
 /// The download or the signature check failed.
-fn install_failed(e: impl std::fmt::Display) -> CommandError {
+fn install_error(e: impl std::fmt::Display) -> CommandError {
     CommandError::coded("updates.installFailed", format!("Update install failed: {e}")).param("detail", e.to_string())
 }
 
@@ -1530,10 +1546,20 @@ mod tests {
             CommandError::coded("updates.lookupFailed", "Update lookup failed: offline").param("detail", "offline")
         );
         assert_eq!(
-            install_failed("bad signature"),
+            install_error("bad signature"),
             CommandError::coded("updates.installFailed", "Update install failed: bad signature")
                 .param("detail", "bad signature")
         );
+        // A signature for another version, or for none: a tampered feed,
+        // said so (#322); any other refusal keeps the plugin's words.
+        use tauri_plugin_updater::Error;
+        let mismatch = Error::SignedVersionMismatch { signed: "0.14.0".into(), announced: "0.20.0".into() };
+        for refused in [mismatch, Error::MissingSignedVersion] {
+            let e = install_failed(refused);
+            assert_eq!(e.code, Some("updates.signedVersion"), "{e}");
+            assert!(e.to_string().contains("release page"), "{e}");
+        }
+        assert_eq!(install_failed(Error::EmptyEndpoints).code, Some("updates.installFailed"));
         assert_eq!(
             not_downloadable_yet(),
             CommandError::coded(

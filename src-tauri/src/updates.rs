@@ -135,6 +135,14 @@ mod tests {
                 .unwrap()
                 .starts_with("https://github.com/Stasyanz/syzify/"));
         }
+        // The feed is unsigned: an update's signature must name the version
+        // the feed announces, or an old genuine release could pass as a new
+        // one (#322). Read the way the plugin reads it, so a misspelled key
+        // (taken for unknown, i.e. off) fails here, not at launch.
+        let plugin: tauri_plugin_updater::Config =
+            serde_json::from_value(conf["plugins"]["updater"].clone()).unwrap();
+        assert!(plugin.require_signed_version);
+        assert!(!plugin.allow_downgrades);
     }
 
     /// Privacy invariant: only the thin `install_update` command may touch

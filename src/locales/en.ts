@@ -1260,6 +1260,7 @@ export const en = {
   "error.updates.badStatus": "GitHub returned status {status}",
   "error.updates.lookupFailed": "Update lookup failed: {detail}",
   "error.updates.installFailed": "Update install failed: {detail}",
+  "error.updates.signedVersion": "This update is not the version it claims to be, so it was not installed. Download Syzify from its release page instead.",
   "error.training.unsupported": "Indoor training needs macOS",
   "error.training.none": "No trainer is connected",
   "error.training.busy": "A trainer is connected already",

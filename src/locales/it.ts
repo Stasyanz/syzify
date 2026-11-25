@@ -998,6 +998,7 @@ export const it: Messages = {
   "error.updates.badStatus": "GitHub ha risposto con lo stato {status}",
   "error.updates.lookupFailed": "Ricerca dell'aggiornamento non riuscita: {detail}",
   "error.updates.installFailed": "Installazione dell'aggiornamento non riuscita: {detail}",
+  "error.updates.signedVersion": "Questo aggiornamento non è la versione che dichiara di essere, quindi non è stato installato. Scarica Syzify dalla pagina della release.",
   "training.title": "Uscita sui rulli",
   "training.setup.title": "Dispositivi",
   "training.setup.intro": "Pedala per svegliare i rulli, poi avvia la ricerca. Prima chiudi Zwift e le altre app per rulli: i rulli ne ascoltano una sola alla volta.",

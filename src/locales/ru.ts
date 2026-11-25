@@ -1090,6 +1090,7 @@ export const ru: Messages = {
   "error.updates.badStatus": "GitHub ответил статусом {status}",
   "error.updates.lookupFailed": "Не удалось найти обновление: {detail}",
   "error.updates.installFailed": "Не удалось установить обновление: {detail}",
+  "error.updates.signedVersion": "Это обновление не той версии, за которую себя выдаёт, поэтому оно не установлено. Скачайте Syzify со страницы релиза.",
   "training.title": "Заезд на станке",
   "training.setup.title": "Устройства",
   "training.setup.intro": "Покрутите педали, чтобы станок проснулся, и начните поиск. Сначала закройте Zwift и другие программы для станка: станок слушается только одну из них.",
