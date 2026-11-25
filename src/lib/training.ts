@@ -48,3 +48,10 @@ export function devicesFor(found: readonly FoundDevice[], role: SensorRole): Fou
 export function canBegin(live: TrainingLive): boolean {
   return live.phase === "pairing" && live.links.some((l) => l.role === "trainer" && l.state === "connected");
 }
+
+/** A formatted value's number and its unit ("182 bpm" → "182", "bpm"), the
+ * last space apart; one with no unit ("1:23:45", "--") is a number alone. */
+export function splitUnit(value: string): [string, string | null] {
+  const m = /^(.*\S)\s+([^\d\s][^\d]*)$/u.exec(value);
+  return m ? [m[1], m[2]] : [value, null];
+}

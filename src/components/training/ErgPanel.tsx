@@ -43,7 +43,7 @@ function WorkoutProgress({ workout }: { workout: WorkoutLive }) {
   }
   return (
     <div className="flex flex-col gap-1" aria-label={t("training.workout.title")} role="group">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1">
         <span className="text-sm font-medium" translate="no">
           {workout.name}
         </span>
@@ -98,10 +98,11 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
   // A trainer without ERG: nothing to set, said why — before the ride
   // with a way out, during it with the brake being let go if it was on. A
   // workout picked still guides, and can still be stopped.
+  // The panel's rows and text are centred, the workout's too (#325).
   if (live.erg_unsupported) {
     return (
-      <section className="dash-card flex flex-col gap-2" aria-label={t("training.erg.title")}>
-        <div className="flex flex-wrap items-center gap-3">
+      <section className="dash-card flex flex-col gap-2 text-center" aria-label={t("training.erg.title")}>
+        <div className="flex flex-wrap items-center justify-center gap-3">
           <span className="text-xs uppercase tracking-wide text-faint">{t("training.erg.title")}</span>
           {following && (
             <button className={button} disabled={set.isPending} onClick={off}>
@@ -122,8 +123,8 @@ export function ErgPanel({ live, ftp }: { live: TrainingLive; ftp: number | null
     );
   }
   return (
-    <section className="dash-card flex flex-col gap-2" aria-label={t("training.erg.title")}>
-      <div className="flex flex-wrap items-center gap-3">
+    <section className="dash-card flex flex-col gap-2 text-center" aria-label={t("training.erg.title")}>
+      <div className="flex flex-wrap items-center justify-center gap-3">
         <span className="text-xs uppercase tracking-wide text-faint">{t("training.erg.title")}</span>
         {following ? (
           <>

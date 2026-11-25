@@ -5,7 +5,7 @@ import { api } from "../../lib/tauri";
 import { errorText } from "../../lib/errors";
 import { formatDistance, formatDuration, formatHR, formatPower, formatSpeed, formatWhole } from "../../lib/format";
 import { formatPercent, useT, type Translator } from "../../lib/i18n";
-import { canBegin, powerZone } from "../../lib/training";
+import { canBegin, powerZone, splitUnit } from "../../lib/training";
 import { confirmDialog } from "../../stores/confirmStore";
 import type { LinkStatus, TrainingLive } from "../../lib/types";
 import { useFinished } from "./useFinished";
@@ -61,10 +61,23 @@ function Links({ live }: { live: TrainingLive }) {
 }
 
 function Tile({ label, value, note }: { label: string; value: string; note?: ReactNode }) {
+  const [number, unit] = splitUnit(value);
   return (
     <div className="dash-card flex flex-col gap-1" role="group" aria-label={label}>
       <span className="text-xs uppercase tracking-wide text-faint">{label}</span>
-      <span className="text-3xl font-bold tabular-nums">{value}</span>
+      {/* The number large and the unit small, on one line as a head unit
+          has them: in a column as narrow as Settings' (#325), "182 bpm"
+          or "42.3 km/h" at one size would break onto two lines and push
+          the controls down mid-ride. */}
+      <span className="text-3xl font-bold tabular-nums whitespace-nowrap">
+        {number}
+        {unit && (
+          <>
+            {" "}
+            <span className="text-sm font-medium text-muted">{unit}</span>
+          </>
+        )}
+      </span>
       {note && <span className="text-xs text-muted">{note}</span>}
     </div>
   );
@@ -162,7 +175,8 @@ export function LiveRide({ live }: { live: TrainingLive }) {
         <Tile label={t("training.metric.avgPower")} value={formatPower(live.avg_watts)} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      {/* The ride's controls, centred under it (#325). */}
+      <div className="flex flex-wrap justify-center gap-2">
         {pairing ? (
           <>
             <button

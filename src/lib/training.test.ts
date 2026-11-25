@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canBegin, devicesFor, firstTarget, MAX_TARGET, pedalAddresses, powerZone, stepTarget, trainingSupported } from "./training";
+import { canBegin, devicesFor, firstTarget, MAX_TARGET, pedalAddresses, powerZone, splitUnit, stepTarget, trainingSupported } from "./training";
 
 describe("ERG targets", () => {
   it("start at an easy effort and step within the range", () => {
@@ -65,5 +65,24 @@ describe("devices and the start", () => {
     expect(canBegin(at("pairing", "connected"))).toBe(true);
     expect(canBegin(at("pairing", "searching"))).toBe(false);
     expect(canBegin(at("riding", "connected"))).toBe(false);
+  });
+});
+
+describe("splitUnit (#325)", () => {
+  it("splits a value at its unit, in any language and grouping", () => {
+    expect(splitUnit("182 bpm")).toEqual(["182", "bpm"]);
+    expect(splitUnit("42.3 km/h")).toEqual(["42.3", "km/h"]);
+    expect(splitUnit("120 уд/мин")).toEqual(["120", "уд/мин"]);
+    // A grouped number keeps its group space (a no-break one too).
+    expect(splitUnit("1,234 W")).toEqual(["1,234", "W"]);
+    expect(splitUnit("1\u00a0234 Вт")).toEqual(["1\u00a0234", "Вт"]);
+  });
+
+  it("leaves a value with no unit whole", () => {
+    expect(splitUnit("1:23:45")).toEqual(["1:23:45", null]);
+    expect(splitUnit("--")).toEqual(["--", null]);
+    // A grouped number with no unit is one number, not "1" and "234".
+    expect(splitUnit("1 234")).toEqual(["1 234", null]);
+    expect(splitUnit("")).toEqual(["", null]);
   });
 });

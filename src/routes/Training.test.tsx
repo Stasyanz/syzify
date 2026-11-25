@@ -598,6 +598,43 @@ describe("Training during the ride", () => {
     expect(screen.queryByLabelText("Target power")).toBeNull();
   });
 
+  it("centres the ERG panel, its text and the ride's controls (#325)", () => {
+    const centred = (el: HTMLElement) => {
+      const erg = screen.getByRole("region", { name: "ERG mode" });
+      expect(erg.classList.contains("text-center")).toBe(true);
+      expect(screen.getByText("ERG mode").parentElement!.classList.contains("justify-center")).toBe(true);
+      expect(el.parentElement!.classList.contains("justify-center")).toBe(true);
+    };
+    const workout = {
+      name: "SS",
+      step: 0,
+      steps: 2,
+      elapsed_s: 60,
+      total_s: 600,
+      step_left_s: 240,
+      free: false,
+      cadence: null,
+      next: null,
+      cue: null,
+      done: false,
+    };
+    hook.live = live({ erg: { target_w: 150, state: "holding" }, heart_rate: 182, workout });
+    renderPage();
+    centred(screen.getByText("Finish"));
+    // The workout's header too.
+    expect(screen.getByText("SS").parentElement!.classList.contains("justify-center")).toBe(true);
+    // A value's number large and its unit small, never broken apart.
+    const value = screen.getByRole("group", { name: "Heart rate" }).querySelector(".whitespace-nowrap")!;
+    expect(value.textContent).toBe("182 bpm");
+    expect(value.querySelector(".text-sm")!.textContent).toBe("bpm");
+    expect(screen.getByRole("group", { name: "Time" }).querySelector(".whitespace-nowrap .text-sm")).toBeNull();
+    cleanup();
+    // A trainer without ERG, before the ride: the same.
+    hook.live = live({ phase: "pairing", erg_unsupported: true });
+    renderPage();
+    centred(screen.getByText("Start"));
+  });
+
   it("says whether ERG is held by the pedals' watts or the trainer's (#275)", () => {
     const erg = { target_w: 200, state: "holding" as const };
     hook.live = live({ erg, power_match: { state: "matching", trainer_target_w: 182 } });
